@@ -5,13 +5,14 @@ defmodule AshScylla.MixProject do
     [
       app: :ash_scylla,
       version: "0.1.0",
-      elixir: "~> 1.19",
+      elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       name: "AshScylla",
-      source_url: "https://github.com/yourusername/ash_scylla",
-      homepage_url: "https://github.com/yourusername/ash_scylla",
-      docs: docs()
+      source_url: "https://github.com/ohhi-vn/ash_scylla",
+      homepage_url: "https://ohhi.vn",
+      docs: docs(),
+      package: package()
     ]
   end
 
@@ -19,6 +20,19 @@ defmodule AshScylla.MixProject do
   def application do
     [
       extra_applications: [:logger]
+    ]
+  end
+
+  defp package do
+    [
+      description: "An Ash Framework data layer for ScyllaDB/Apache Cassandra using Exandra",
+      licenses: ["Apache-2.0"],
+      links: %{
+        "GitHub" => "https://github.com/ohhi-vn/ash_scylla",
+        "Documentation" => "https://hexdocs.pm/ash_scylla",
+        "ScyllaDB" => "https://www.scylladb.com/",
+        "Ash Framework" => "https://ash-hq.org/"
+      }
     ]
   end
 
