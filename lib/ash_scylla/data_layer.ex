@@ -48,8 +48,7 @@ defmodule AshScylla.DataLayer do
   @behaviour Ash.DataLayer
 
   require Ecto.Query
-
-  alias Ash.Filter
+  require Xandra
 
   # ============================================================================
   # Data Layer Query Struct
@@ -195,12 +194,25 @@ defmodule AshScylla.DataLayer do
       {:ok, %{rows: rows}} ->
         records = Enum.map(rows, &to_ash_record(&1, resource))
         {:ok, records}
-      {:error, _} = error ->
-        error
+
+      {:error, %Xandra.Error{reason: reason}} ->
+        {:error, "ScyllaDB query failed: #{inspect(reason)}"}
+
+      {:error, %Xandra.ConnectionError{reason: reason}} ->
+        {:error, "ScyllaDB connection error: #{inspect(reason)}"}
+
+      {:error, error} ->
+        {:error, "Database error: #{inspect(error)}"}
     end
   rescue
+    e in Xandra.Error ->
+      {:error, "ScyllaDB error: #{Exception.message(e)}"}
+
+    e in Xandra.ConnectionError ->
+      {:error, "ScyllaDB connection error: #{Exception.message(e)}"}
+
     e ->
-      {:error, e}
+      {:error, "Unexpected error: #{Exception.message(e)}"}
   end
 
   # ============================================================================
@@ -288,14 +300,6 @@ defmodule AshScylla.DataLayer do
     || raise "No repo configured for #{inspect(resource)}"
   rescue
     _ -> raise "No repo configured for #{inspect(resource)}"
-  end
-
-  defp initial_query(resource) do
-    table = source(resource)
-
-    # For CQL/ScyllaDB, we'll use raw queries via repo.query/2
-    # This is a placeholder - in reality, we'd build CQL queries
-    %{resource: resource, table: table}
   end
 
   defp changeset_to_insert_attrs(changeset, resource) do
@@ -440,38 +444,6 @@ defmodule AshScylla.DataLayer do
   defp get_tenant(_resource) do
     # This should be configured per-resource or per-request
     nil
-  end
-
-  defp build_query(%__MODULE__{
-         filters: filters,
-         sorts: sorts,
-         limit: limit,
-         offset: offset,
-         select: select,
-         table: table
-       }) do
-    # Build CQL query string
-    query = "SELECT * FROM #{table}"
-    # This is a simplified version - full implementation would add WHERE, ORDER BY, etc.
-    query
-  end
-
-  defp add_filter_to_query(query, %Filter{}) do
-    # This is a simplified filter implementation
-    # A full implementation would need to parse the Ash filter expression
-    # and convert it to Ecto query conditions
-    query
-  end
-
-  defp sort_item_to_ecto(sort_item) do
-    field = Map.get(sort_item, :field)
-    direction = Map.get(sort_item, :direction, :asc)
-
-    case direction do
-      :asc -> {field, :asc}
-      :desc -> {field, :desc}
-      _ -> {field, :asc}
-    end
   end
 
   defp to_ash_record(record, resource) do
