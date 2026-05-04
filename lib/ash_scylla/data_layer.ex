@@ -1,3 +1,17 @@
+# Copyright [2024] AshScylla Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 defmodule AshScylla.DataLayer do
   @moduledoc """
   An Ash data layer for ScyllaDB using Exandra (Ecto adapter for Cassandra/ScyllaDB).
@@ -125,7 +139,7 @@ defmodule AshScylla.DataLayer do
         false
 
       :bulk_create ->
-        false
+        true
 
       :calculate ->
         false
@@ -198,24 +212,24 @@ defmodule AshScylla.DataLayer do
         records = Enum.map(rows, &to_ash_record(&1, resource))
         {:ok, records}
 
-      {:error, %Xandra.Error{reason: reason}} ->
-        {:error, "ScyllaDB query failed: #{inspect(reason)}"}
+      {:error, %Xandra.Error{} = error} ->
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
 
-      {:error, %Xandra.ConnectionError{reason: reason}} ->
-        {:error, "ScyllaDB connection error: #{inspect(reason)}"}
+      {:error, %Xandra.ConnectionError{} = error} ->
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
 
       {:error, error} ->
-        {:error, "Database error: #{inspect(error)}"}
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
     end
   rescue
     e in Xandra.Error ->
-      {:error, "ScyllaDB error: #{Exception.message(e)}"}
+      {:error, AshScylla.Error.wrap_xandra_error(e)}
 
     e in Xandra.ConnectionError ->
-      {:error, "ScyllaDB connection error: #{Exception.message(e)}"}
+      {:error, AshScylla.Error.wrap_xandra_error(e)}
 
     e ->
-      {:error, "Unexpected error: #{Exception.message(e)}"}
+      {:error, AshScylla.Error.wrap_xandra_error(e)}
   end
 
   # ============================================================================
@@ -272,9 +286,67 @@ defmodule AshScylla.DataLayer do
     {:ok, %{data_layer_query | tenant: tenant}}
   end
 
-  # ============================================================================
-  # Optional Callbacks - Source
-  # ============================================================================
+  @impl Ash.DataLayer
+  def bulk_create(resource, changesets, _opts) do
+    repo = repo(resource)
+    table = source(resource)
+    tenant = get_tenant(resource)
+
+    # Get TTL and consistency from resource DSL
+    ttl = AshScylla.DataLayer.Dsl.ttl(resource)
+    consistency = AshScylla.DataLayer.Dsl.consistency(resource)
+
+    # Build batch insert statements
+    statements =
+      Enum.map(changesets, fn changeset ->
+        attrs = changeset_to_insert_attrs(changeset, resource)
+
+        {fields, values} =
+          attrs
+          |> Enum.with_index()
+          |> Enum.map(fn {{k, v}, _i} -> {"#{k}", v} end)
+          |> Enum.unzip()
+
+        using_clause = if ttl do
+          " USING TTL #{ttl}"
+        else
+          ""
+        end
+
+        query = """
+        INSERT INTO #{table} (#{Enum.join(fields, ", ")})
+        VALUES (#{Enum.map(1..length(values), fn _ -> "?" end) |> Enum.join(", ")})#{using_clause}
+        """
+
+        {query, values}
+      end)
+
+    # Execute batch insert
+    opts = if tenant, do: [prefix: tenant], else: []
+    opts = if consistency, do: Keyword.put(opts, :consistency, consistency), else: opts
+
+    case AshScylla.DataLayer.Batch.batch_insert(repo, statements, opts) do
+      {:ok, _} ->
+        # Fetch created records
+        records =
+          changesets
+          |> Enum.map(fn changeset ->
+            attrs = changeset_to_insert_attrs(changeset, resource)
+            to_ash_record(attrs, resource)
+          end)
+
+        {:ok, records}
+
+      {:error, %Xandra.Error{} = error} ->
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
+
+      {:error, %Xandra.ConnectionError{} = error} ->
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
+
+      {:error, error} ->
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
+    end
+  end
 
   @impl Ash.DataLayer
   def source(resource) do
@@ -336,16 +408,31 @@ defmodule AshScylla.DataLayer do
   defp do_insert(attrs, resource, repo) do
     table = source(resource)
     tenant = get_tenant(resource)
-
     opts = if tenant, do: [prefix: tenant], else: []
+
+    # Get TTL and consistency from resource DSL
+    ttl = AshScylla.DataLayer.Dsl.ttl(resource)
+    consistency = AshScylla.DataLayer.Dsl.consistency(resource)
+
+    # Add TTL to opts if configured
+    opts = if ttl, do: Keyword.put(opts, :ttl, ttl), else: opts
+    # Add consistency to opts if configured
+    opts = if consistency, do: Keyword.put(opts, :consistency, consistency), else: opts
 
     # Build the CQL INSERT statement for ScyllaDB
     {fields, values} =
       attrs |> Enum.with_index() |> Enum.map(fn {{k, v}, i} -> {"#{k}", v, i} end) |> Enum.unzip()
 
+    # Add USING TTL clause if configured
+    using_clause = if ttl do
+      " USING TTL #{ttl}"
+    else
+      ""
+    end
+
     query = """
     INSERT INTO #{table} (#{Enum.join(fields, ", ")})
-    VALUES (#{Enum.map(1..length(values), fn _ -> "?" end) |> Enum.join(", ")})
+    VALUES (#{Enum.map(1..length(values), fn _ -> "?" end) |> Enum.join(", ")})#{using_clause}
     """
 
     case repo.query(query, values, opts) do
@@ -353,11 +440,19 @@ defmodule AshScylla.DataLayer do
         # Fetch the created record
         case fetch_by_primary_key(attrs, resource, repo, tenant) do
           {:ok, record} -> {:ok, to_ash_record(record, resource)}
+          {:error, %Xandra.Error{} = error} -> {:error, AshScylla.Error.wrap_xandra_error(error)}
+          {:error, %Xandra.ConnectionError{} = error} -> {:error, AshScylla.Error.wrap_xandra_error(error)}
           error -> error
         end
 
-      {:error, _} = error ->
-        error
+      {:error, %Xandra.Error{} = error} ->
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
+
+      {:error, %Xandra.ConnectionError{} = error} ->
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
+
+      {:error, error} ->
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
     end
   end
 
@@ -385,11 +480,19 @@ defmodule AshScylla.DataLayer do
       {:ok, _} ->
         case fetch_by_primary_key(pk, resource, repo, tenant) do
           {:ok, record} -> {:ok, to_ash_record(record, resource)}
+          {:error, %Xandra.Error{} = error} -> {:error, AshScylla.Error.wrap_xandra_error(error)}
+          {:error, %Xandra.ConnectionError{} = error} -> {:error, AshScylla.Error.wrap_xandra_error(error)}
           error -> error
         end
 
-      {:error, _} = error ->
-        error
+      {:error, %Xandra.Error{} = error} ->
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
+
+      {:error, %Xandra.ConnectionError{} = error} ->
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
+
+      {:error, error} ->
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
     end
   end
 
@@ -408,8 +511,17 @@ defmodule AshScylla.DataLayer do
     """
 
     case repo.query(query, pk_values, opts) do
-      {:ok, _} -> :ok
-      {:error, _} = error -> error
+      {:ok, _} ->
+        :ok
+
+      {:error, %Xandra.Error{} = error} ->
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
+
+      {:error, %Xandra.ConnectionError{} = error} ->
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
+
+      {:error, error} ->
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
     end
   end
 
@@ -429,8 +541,14 @@ defmodule AshScylla.DataLayer do
       {:ok, %{rows: [row | _]}} ->
         {:ok, row}
 
-      {:error, _} = error ->
-        error
+      {:error, %Xandra.Error{} = error} ->
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
+
+      {:error, %Xandra.ConnectionError{} = error} ->
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
+
+      {:error, error} ->
+        {:error, AshScylla.Error.wrap_xandra_error(error)}
     end
   end
 

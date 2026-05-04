@@ -1,3 +1,17 @@
+# Copyright [2024] AshScylla Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 defmodule AshScylla.DataLayer.QueryBuilder do
   @moduledoc """
   Query building functions for AshScylla data layer.
@@ -187,23 +201,31 @@ defmodule AshScylla.DataLayer.QueryBuilder do
 
   def filter_to_cql(%{operator: op, left: left, right: right}) do
     {left_cql, left_params} = filter_to_cql(left)
-    {_right_cql, right_params} = filter_to_cql(right)
 
-    {cql_op, cql_right} = case op do
-      :eq -> {"=", "?"}
-      :not_eq -> {"!=", "?"}
-      :gt -> {">", "?"}
-      :gte -> {">=", "?"}
-      :lt -> {"<", "?"}
-      :lte -> {"<=", "?"}
-      :in -> {"IN", "(#{Enum.map(1..length(right_params), fn _ -> "?" end) |> Enum.join(", ")}"}
-      :contains -> {"LIKE", "?"}
-      :starts_with -> {"LIKE", "?%"}
-      :ends_with -> {"LIKE", "%?"}
-      _ -> {"=", "?"}
+    # Special handling for IN operator to correctly expand list values
+    {cql_op, cql_right, all_params} = case {op, right} do
+      {:in, %{value: values}} when is_list(values) ->
+        placeholders = Enum.map(1..length(values), fn _ -> "?" end) |> Enum.join(", ")
+        {"IN", "(#{placeholders})", left_params ++ values}
+      _ ->
+        {_right_cql, right_params} = filter_to_cql(right)
+        {op_str, cql_r} = case op do
+          :eq -> {"=", "?"}
+          :not_eq -> {"!=", "?"}
+          :gt -> {">", "?"}
+          :gte -> {">=", "?"}
+          :lt -> {"<", "?"}
+          :lte -> {"<=", "?"}
+          :in -> {"IN", "(#{Enum.map(1..length(right_params), fn _ -> "?" end) |> Enum.join(", ")}"}
+          :contains -> {"LIKE", "?"}
+          :starts_with -> {"LIKE", "?%"}
+          :ends_with -> {"LIKE", "%?"}
+          _ -> {"=", "?"}
+        end
+        {op_str, cql_r, left_params ++ right_params}
     end
 
-    {"#{left_cql} #{cql_op} #{cql_right}", left_params ++ right_params}
+    {"#{left_cql} #{cql_op} #{cql_right}", all_params}
   end
 
   def filter_to_cql(%{value: value}) do

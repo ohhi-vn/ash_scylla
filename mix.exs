@@ -25,7 +25,9 @@ defmodule AshScylla.MixProject do
       {:exandra, "~> 0.9"},
       {:ecto, "~> 3.12"},
       {:ecto_sql, "~> 3.12"},
-      {:testcontainers, "~> 2.0", only: [:test, :dev]}
+      {:testcontainers, "~> 2.0", only: [:test, :dev]},
+      {:benchee, "~> 1.1", only: [:dev, :test]},
+      {:benchee_html, "~> 1.0", only: [:dev, :test]}
     ]
   end
 end

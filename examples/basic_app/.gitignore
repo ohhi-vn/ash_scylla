@@ -1,0 +1,19 @@
+# Elixir
+/_build/
+/deps/
+*.o
+*.beam
+*.plt
+*.swp
+*.swo
+*~
+.#*
+erl_crash.dump
+/dev/null
+.elixir_ls/
+mix.lock
+
+# IDE
+.vscode/
+.idea/
+*.iml

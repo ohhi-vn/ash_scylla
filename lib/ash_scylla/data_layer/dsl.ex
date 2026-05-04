@@ -1,3 +1,17 @@
+# Copyright [2024] AshScylla Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 defmodule AshScylla.DataLayer.Dsl do
   @moduledoc """
   DSL extensions for configuring ScyllaDB-specific options on Ash resources.
@@ -36,6 +50,7 @@ defmodule AshScylla.DataLayer.Dsl do
   - `:consistency` - The consistency level for reads/writes
   - `:ttl` - Default TTL for inserted records (in seconds)
   - `:secondary_index` - Define secondary indexes for non-primary key columns
+  - `:materialized_view` - Define materialized views with different primary key structure
   """
 
   @doc """
@@ -48,11 +63,21 @@ defmodule AshScylla.DataLayer.Dsl do
         keyspace "my_keyspace"
         consistency :quorum
         ttl 3600
+
+        # Define secondary indexes for non-primary key columns
+        secondary_index :email
+        secondary_index [:name, :age]
+
+        # Define materialized views
+        materialized_view :users_by_email,
+          primary_key: [:email, :id],
+          include_columns: [:name, :age]
       end
   """
   defmacro ash_scylla(do: block) do
     quote do
       @ash_scylla_secondary_indexes []
+      @ash_scylla_materialized_views []
 
       unquote(block)
       |> Keyword.new()
@@ -93,6 +118,15 @@ defmodule AshScylla.DataLayer.Dsl do
               raise "Invalid secondary_index configuration"
           end
 
+        {:materialized_view, {view_name, view_config}} when is_atom(view_name) ->
+          @ash_scylla_materialized_views [
+            %{name: view_name, config: view_config}
+            | @ash_scylla_materialized_views
+          ]
+
+        {:materialized_view, view_config} when is_list(view_config) ->
+          raise "materialized_view requires a name, e.g. materialized_view :view_name, primary_key: [...]"
+
         other ->
           raise "Unknown ash_scylla option: #{inspect(other)}"
       end)
@@ -105,6 +139,10 @@ defmodule AshScylla.DataLayer.Dsl do
 
       def __ash_scylla__(:secondary_indexes) do
         Module.get_attribute(__MODULE__, :ash_scylla_secondary_indexes) || []
+      end
+
+      def __ash_scylla__(:materialized_views) do
+        Module.get_attribute(__MODULE__, :ash_scylla_materialized_views) || []
       end
 
       def __ash_scylla__(_opt), do: nil
@@ -166,6 +204,21 @@ defmodule AshScylla.DataLayer.Dsl do
   def secondary_indexes(resource) do
     if function_exported?(resource, :__ash_scylla__, 1) do
       resource.__ash_scylla__(:secondary_indexes)
+    else
+      []
+    end
+  end
+
+  @doc """
+  Gets the materialized views defined for a resource.
+
+  Returns a list of maps with keys:
+  - `:name` - the view name (atom)
+  - `:config` - the view configuration keyword list
+  """
+  def materialized_views(resource) do
+    if function_exported?(resource, :__ash_scylla__, 1) do
+      resource.__ash_scylla__(:materialized_views)
     else
       []
     end
