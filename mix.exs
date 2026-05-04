@@ -7,7 +7,11 @@ defmodule AshScylla.MixProject do
       version: "0.1.0",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      name: "AshScylla",
+      source_url: "https://github.com/yourusername/ash_scylla",
+      homepage_url: "https://github.com/yourusername/ash_scylla",
+      docs: docs()
     ]
   end
 
@@ -18,16 +22,45 @@ defmodule AshScylla.MixProject do
     ]
   end
 
+  defp docs do
+    [
+      main: "AshScylla",
+      logo: "assets/logo.svg",
+      extras: ["README.md", "USAGE_GUIDE.md", "IMPLEMENTATION_SUMMARY.md", "ERROR_HANDLING.md"],
+      groups_for_modules: [
+        "Core": [
+          AshScylla,
+          AshScylla.DataLayer,
+          AshScylla.Repo,
+          AshScylla.Migration
+        ],
+        "Data Layer Modules": [
+          AshScylla.DataLayer.Dsl,
+          AshScylla.DataLayer.QueryBuilder,
+          AshScylla.DataLayer.Batch,
+          AshScylla.DataLayer.MaterializedView,
+          AshScylla.DataLayer.Pagination
+        ],
+        "Error Handling": [
+          AshScylla.Error,
+          AshScylla.Error.ScyllaError
+        ]
+      ]
+    ]
+  end
+
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ash, "~> 3.0"},
-      {:exandra, "~> 0.9"},
-      {:ecto, "~> 3.12"},
-      {:ecto_sql, "~> 3.12"},
-      {:testcontainers, "~> 2.0", only: [:test, :dev]},
-      {:benchee, "~> 1.1", only: [:dev, :test]},
-      {:benchee_html, "~> 1.0", only: [:dev, :test]}
+      {:ash, "~> 3.24"},
+      {:exandra, "~> 1.0"},
+      {:ecto, "~> 3.13"},
+      {:ecto_sql, "~> 3.13"},
+      {:testcontainers, "~> 2.3", only: [:test, :dev]},
+      {:benchee, "~> 1.5", only: [:dev, :test]},
+      {:benchee_html, "~> 1.0", only: [:dev, :test]},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:ex_doc, "~> 0.40", only: :dev, runtime: false}
     ]
   end
 end
