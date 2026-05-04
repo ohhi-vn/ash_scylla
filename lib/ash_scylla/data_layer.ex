@@ -50,6 +50,8 @@ defmodule AshScylla.DataLayer do
   require Ecto.Query
   require Xandra
 
+  alias AshScylla.DataLayer.QueryBuilder
+
   # ============================================================================
   # Data Layer Query Struct
   # ============================================================================
@@ -184,13 +186,14 @@ defmodule AshScylla.DataLayer do
 
   @impl Ash.DataLayer
   def run_query(data_layer_query, resource) do
-    %__MODULE__{repo: repo, table: table, tenant: tenant} = data_layer_query
+    %__MODULE__{repo: repo, table: _table, tenant: tenant} = data_layer_query
 
-    # Build a simple SELECT query
-    query = "SELECT * FROM #{table}"
+    # Build the optimized query with filters, sorts, limit, offset
+    {query, params} = QueryBuilder.build_optimized_query(data_layer_query)
+
     opts = if tenant, do: [prefix: tenant], else: []
 
-    case repo.query(query, opts) do
+    case repo.query(query, params, opts) do
       {:ok, %{rows: rows}} ->
         records = Enum.map(rows, &to_ash_record(&1, resource))
         {:ok, records}

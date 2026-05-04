@@ -69,6 +69,66 @@ defmodule AshScylla.Migration do
   end
 
   @doc """
+  Generates CQL CREATE INDEX statements for secondary indexes.
+
+  Returns a list of CQL strings that should be executed in migrations.
+
+  ## Example
+
+      defmodule MyApp.Repo.Migrations.CreateUserIndexes do
+        use Ecto.Migration
+
+        def change do
+          AshScylla.Migration.create_secondary_indexes_cql(MyApp.User)
+          |> Enum.each(&execute/1)
+        end
+      end
+  """
+  def create_secondary_indexes_cql(resource) do
+    case AshScylla.DataLayer.Dsl.secondary_indexes(resource) do
+      [] -> []
+      indexes ->
+        table_name = get_table_name(resource)
+
+        indexes
+        |> Enum.map(fn idx ->
+          index_name = idx.name || generate_index_name(table_name, idx.columns)
+          columns = idx.columns |> Enum.map(&to_string/1) |> Enum.join(", ")
+
+          "CREATE INDEX IF NOT EXISTS #{index_name} ON #{table_name} (#{columns})"
+        end)
+    end
+  end
+
+  @doc """
+  Generates a CQL DROP INDEX statement for a secondary index.
+  """
+  def drop_secondary_index_cql(_resource, index_name) do
+    "DROP INDEX IF EXISTS #{index_name}"
+  end
+
+  defp get_table_name(resource) do
+    resource
+    |> Module.get_attribute(:table)
+    |> to_string()
+    |> case do
+      "" ->
+        resource
+        |> Module.split()
+        |> List.last()
+        |> Macro.underscore()
+
+      name ->
+        name
+    end
+  end
+
+  defp generate_index_name(table_name, columns) do
+    column_str = columns |> Enum.map(&to_string/1) |> Enum.join("_")
+    "idx_#{table_name}_#{column_str}"
+  end
+
+  @doc """
   Returns the keyspace for a resource if configured via DSL.
   Note: This is a placeholder for future DSL implementation.
   """

@@ -22,8 +22,46 @@ defmodule AshScylla.Repo do
 
   - `:nodes` - List of ScyllaDB/Cassandra nodes to connect to
   - `:keyspace` - The keyspace to use
-  - `:pool_size` - The number of connections in the pool
-  - `:sync_connect` - Timeout for initial connection (in milliseconds)
+  - `:pool_size` - The number of connections in the pool (default: 10)
+  - `:sync_connect` - Timeout for initial connection in milliseconds (default: 5000)
+  - `:pool_timeout` - Timeout for checking out a connection from the pool in milliseconds (default: 5000)
+  - `:queue_target` - Target queue time in microseconds for connection checkout (default: 50_000)
+  - `:queue_interval` - Interval to measure queue target in milliseconds (default: 1000)
+  - `:connect_timeout` - Timeout for establishing TCP connection in milliseconds (default: 5000)
+  - `:request_timeout` - Timeout for queries in milliseconds (default: 120_000)
+  - `:log` - Log options for the repo
+
+  ## Connection Pool Tuning Examples
+
+  Basic configuration:
+
+      config :my_app, MyApp.Repo,
+        nodes: ["127.0.0.1:9042"],
+        keyspace: "my_app_dev",
+        pool_size: 10,
+        sync_connect: 10_000
+
+  Production configuration with optimized timeouts:
+
+      config :my_app, MyApp.Repo,
+        nodes: ["scylla-1:9042", "scylla-2:9042", "scylla-3:9042"],
+        keyspace: "my_app_prod",
+        pool_size: 50,
+        sync_connect: 30_000,
+        pool_timeout: 15_000,
+        queue_target: 100_000,
+        queue_interval: 2000,
+        connect_timeout: 10_000,
+        request_timeout: 300_000
+
+  Development configuration:
+
+      config :my_app, MyApp.Repo,
+        nodes: ["127.0.0.1:9042"],
+        keyspace: "my_app_dev",
+        pool_size: 5,
+        sync_connect: 5_000,
+        request_timeout: 60_000
   """
 
   defmacro __using__(opts) do

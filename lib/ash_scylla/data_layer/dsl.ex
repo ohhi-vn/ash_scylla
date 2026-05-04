@@ -13,11 +13,19 @@ defmodule AshScylla.DataLayer.Dsl do
           keyspace "my_keyspace"
           consistency :quorum
           ttl 3600
+
+          # Define secondary indexes for non-primary key columns
+          secondary_index :email
+          secondary_index [:name, :age]
+          secondary_index :status, name: "idx_user_status"
         end
 
         attributes do
           uuid_primary_key :id
           attribute :name, :string
+          attribute :email, :string
+          attribute :status, :string
+          attribute :age, :integer
         end
       end
 
@@ -27,6 +35,7 @@ defmodule AshScylla.DataLayer.Dsl do
   - `:keyspace` - The keyspace to use (overrides repo default)
   - `:consistency` - The consistency level for reads/writes
   - `:ttl` - Default TTL for inserted records (in seconds)
+  - `:secondary_index` - Define secondary indexes for non-primary key columns
   """
 
   @doc """
@@ -43,6 +52,8 @@ defmodule AshScylla.DataLayer.Dsl do
   """
   defmacro ash_scylla(do: block) do
     quote do
+      @ash_scylla_secondary_indexes []
+
       unquote(block)
       |> Keyword.new()
       |> Enum.each(fn
@@ -58,6 +69,30 @@ defmodule AshScylla.DataLayer.Dsl do
         {:ttl, val} ->
           @ash_scylla_ttl val
 
+        {:secondary_index, index_config} ->
+          case index_config do
+            column when is_atom(column) ->
+              @ash_scylla_secondary_indexes [
+                %{columns: [column], name: nil, options: []}
+                | @ash_scylla_secondary_indexes
+              ]
+
+            columns when is_list(columns) ->
+              @ash_scylla_secondary_indexes [
+                %{columns: columns, name: nil, options: []}
+                | @ash_scylla_secondary_indexes
+              ]
+
+            {column, opts} when is_atom(column) ->
+              @ash_scylla_secondary_indexes [
+                %{columns: [column], name: opts[:name], options: opts}
+                | @ash_scylla_secondary_indexes
+              ]
+
+            _ ->
+              raise "Invalid secondary_index configuration"
+          end
+
         other ->
           raise "Unknown ash_scylla option: #{inspect(other)}"
       end)
@@ -67,6 +102,11 @@ defmodule AshScylla.DataLayer.Dsl do
       def __ash_scylla__(:keyspace), do: Module.get_attribute(__MODULE__, :ash_scylla_keyspace)
       def __ash_scylla__(:consistency), do: Module.get_attribute(__MODULE__, :ash_scylla_consistency)
       def __ash_scylla__(:ttl), do: Module.get_attribute(__MODULE__, :ash_scylla_ttl)
+
+      def __ash_scylla__(:secondary_indexes) do
+        Module.get_attribute(__MODULE__, :ash_scylla_secondary_indexes) || []
+      end
+
       def __ash_scylla__(_opt), do: nil
     end
   end
@@ -113,5 +153,29 @@ defmodule AshScylla.DataLayer.Dsl do
     else
       nil
     end
+  end
+
+  @doc """
+  Gets the secondary indexes defined for a resource.
+
+  Returns a list of maps with keys:
+  - `:columns` - list of column names (atoms)
+  - `:name` - optional custom index name
+  - `:options` - additional options
+  """
+  def secondary_indexes(resource) do
+    if function_exported?(resource, :__ash_scylla__, 1) do
+      resource.__ash_scylla__(:secondary_indexes)
+    else
+      []
+    end
+  end
+
+  @doc """
+  Checks if a column has a secondary index defined.
+  """
+  def has_secondary_index?(resource, column) do
+    indexes = secondary_indexes(resource)
+    Enum.any?(indexes, fn idx -> column in idx.columns end)
   end
 end
