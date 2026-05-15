@@ -67,11 +67,12 @@ defmodule AshScylla.Migration do
       |> Enum.map(fn attr -> Keyword.get(attr, :name) end)
       |> Enum.join(", ")
 
-    clustering_order = if primary_keys != "" do
-      "WITH CLUSTERING ORDER BY (#{primary_keys} DESC)"
-    else
-      ""
-    end
+    clustering_order =
+      if primary_keys != "" do
+        "WITH CLUSTERING ORDER BY (#{primary_keys} DESC)"
+      else
+        ""
+      end
 
     cql = """
     CREATE TABLE #{table_name} (
@@ -100,7 +101,9 @@ defmodule AshScylla.Migration do
   """
   def create_secondary_indexes_cql(resource) do
     case AshScylla.DataLayer.Dsl.secondary_indexes(resource) do
-      [] -> []
+      [] ->
+        []
+
       indexes ->
         table_name = get_table_name(resource)
 
@@ -199,21 +202,34 @@ defmodule AshScylla.Migration do
     "  #{name} #{type_str}#{primary_key}#{nullable}"
   end
 
+  @type_mapping %{
+    :uuid => "UUID",
+    :string => "TEXT",
+    :integer => "BIGINT",
+    :boolean => "BOOLEAN",
+    :utc_datetime => "TIMESTAMP",
+    :date => "DATE",
+    :time => "TIME"
+  }
+
   defp ash_type_to_cql_type(type, opts) when is_atom(type) do
-    base_type = case type do
-      :uuid -> "UUID"
-      :string -> "TEXT"
-      :integer -> "BIGINT"
-      :boolean -> "BOOLEAN"
-      :utc_datetime -> "TIMESTAMP"
-      :date -> "DATE"
-      :time -> "TIME"
-      :map -> "MAP<#{Keyword.get(opts, :key_type, "TEXT")}, #{Keyword.get(opts, :value_type, "TEXT")}>"
-      :array -> "LIST<#{Keyword.get(opts, :element_type, "TEXT")}>"
-      :set -> "SET<#{Keyword.get(opts, :element_type, "TEXT")}>"
-      :udt -> Keyword.get(opts, :type_name, "frozen<undefined>")
-      _ -> "TEXT"
-    end
+    base_type =
+      case type do
+        :map ->
+          "MAP<#{Keyword.get(opts, :key_type, "TEXT")}, #{Keyword.get(opts, :value_type, "TEXT")}>"
+
+        :array ->
+          "LIST<#{Keyword.get(opts, :element_type, "TEXT")}>"
+
+        :set ->
+          "SET<#{Keyword.get(opts, :element_type, "TEXT")}>"
+
+        :udt ->
+          Keyword.get(opts, :type_name, "frozen<undefined>")
+
+        type ->
+          Map.get(@type_mapping, type, "TEXT")
+      end
 
     if Keyword.get(opts, :frozen), do: "frozen<#{base_type}>", else: base_type
   end

@@ -95,28 +95,8 @@ defmodule AshScylla.DataLayer.Dsl do
           @ash_scylla_ttl val
 
         {:secondary_index, index_config} ->
-          case index_config do
-            column when is_atom(column) ->
-              @ash_scylla_secondary_indexes [
-                %{columns: [column], name: nil, options: []}
-                | @ash_scylla_secondary_indexes
-              ]
-
-            columns when is_list(columns) ->
-              @ash_scylla_secondary_indexes [
-                %{columns: columns, name: nil, options: []}
-                | @ash_scylla_secondary_indexes
-              ]
-
-            {column, opts} when is_atom(column) ->
-              @ash_scylla_secondary_indexes [
-                %{columns: [column], name: opts[:name], options: opts}
-                | @ash_scylla_secondary_indexes
-              ]
-
-            _ ->
-              raise "Invalid secondary_index configuration"
-          end
+          parsed = AshScylla.DataLayer.Dsl.parse_secondary_index(index_config)
+          @ash_scylla_secondary_indexes [parsed | @ash_scylla_secondary_indexes]
 
         {:materialized_view, {view_name, view_config}} when is_atom(view_name) ->
           @ash_scylla_materialized_views [
@@ -134,7 +114,10 @@ defmodule AshScylla.DataLayer.Dsl do
       # Generate getter functions at compile time
       def __ash_scylla__(:table), do: Module.get_attribute(__MODULE__, :ash_scylla_table)
       def __ash_scylla__(:keyspace), do: Module.get_attribute(__MODULE__, :ash_scylla_keyspace)
-      def __ash_scylla__(:consistency), do: Module.get_attribute(__MODULE__, :ash_scylla_consistency)
+
+      def __ash_scylla__(:consistency),
+        do: Module.get_attribute(__MODULE__, :ash_scylla_consistency)
+
       def __ash_scylla__(:ttl), do: Module.get_attribute(__MODULE__, :ash_scylla_ttl)
 
       def __ash_scylla__(:secondary_indexes) do
@@ -147,6 +130,23 @@ defmodule AshScylla.DataLayer.Dsl do
 
       def __ash_scylla__(_opt), do: nil
     end
+  end
+
+  @doc false
+  def parse_secondary_index(column) when is_atom(column) do
+    %{columns: [column], name: nil, options: []}
+  end
+
+  def parse_secondary_index(columns) when is_list(columns) do
+    %{columns: columns, name: nil, options: []}
+  end
+
+  def parse_secondary_index({column, opts}) when is_atom(column) do
+    %{columns: [column], name: opts[:name], options: opts}
+  end
+
+  def parse_secondary_index(invalid) do
+    raise "Invalid secondary_index configuration: #{inspect(invalid)}"
   end
 
   @doc """

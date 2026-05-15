@@ -4,7 +4,7 @@ defmodule AshScylla.MixProject do
   def project do
     [
       app: :ash_scylla,
-      version: "0.1.0",
+      version: "0.1.1",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -42,7 +42,7 @@ defmodule AshScylla.MixProject do
       logo: "assets/logo.svg",
       extras: ["README.md", "USAGE_GUIDE.md", "IMPLEMENTATION_SUMMARY.md", "ERROR_HANDLING.md"],
       groups_for_modules: [
-        "Core": [
+        Core: [
           AshScylla,
           AshScylla.DataLayer,
           AshScylla.Repo,
@@ -74,7 +74,8 @@ defmodule AshScylla.MixProject do
       {:benchee, "~> 1.5", only: [:dev, :test]},
       {:benchee_html, "~> 1.0", only: [:dev, :test]},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:ex_doc, "~> 0.40", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.40", only: :dev, runtime: false},
+      {:reactor, "~> 1.0"}
     ]
   end
 end

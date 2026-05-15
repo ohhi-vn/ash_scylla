@@ -35,52 +35,29 @@ defmodule AshScylla.DataLayer.Batch do
       DataLayer.Batch.batch_insert(repo, statements)
   """
   def batch_insert(repo, statements, opts \\ []) do
-    case statements do
-      [] -> {:ok, []}
-      _ ->
-        # Build BATCH statement
-        {batch_query, all_params} =
-          statements
-          |> Enum.with_index()
-          |> Enum.reduce({"BATCH BEGIN\n", []}, fn {{query, params}, _i}, {acc_q, acc_p} ->
-            {"#{acc_q}  #{query};\n", acc_p ++ params}
-          end)
-
-        batch_query = "#{batch_query}APPLY BATCH;"
-
-        repo.query(batch_query, all_params, opts)
-    end
+    build_batch_query(statements, repo, opts)
   end
 
   @doc """
   Executes a batch of UPDATE statements.
   """
   def batch_update(repo, statements, opts \\ []) do
-    case statements do
-      [] -> {:ok, []}
-      _ ->
-        # Build BATCH statement
-        {batch_query, all_params} =
-          statements
-          |> Enum.with_index()
-          |> Enum.reduce({"BATCH BEGIN\n", []}, fn {{query, params}, _i}, {acc_q, acc_p} ->
-            {"#{acc_q}  #{query};\n", acc_p ++ params}
-          end)
-
-        batch_query = "#{batch_query}APPLY BATCH;"
-
-        repo.query(batch_query, all_params, opts)
-    end
+    build_batch_query(statements, repo, opts)
   end
 
   @doc """
   Executes a batch of DELETE statements.
   """
   def batch_delete(repo, statements, opts \\ []) do
+    build_batch_query(statements, repo, opts)
+  end
+
+  defp build_batch_query(statements, repo, opts) do
     case statements do
-      [] -> {:ok, []}
+      [] ->
+        {:ok, []}
+
       _ ->
-        # Build BATCH statement
         {batch_query, all_params} =
           statements
           |> Enum.with_index()

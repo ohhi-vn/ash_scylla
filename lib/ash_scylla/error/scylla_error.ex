@@ -264,40 +264,35 @@ defmodule AshScylla.Error.ScyllaError do
 
   # Private functions
 
+  @error_patterns [
+    {"SyntaxException", :syntax_error, []},
+    {"InvalidRequestException", :query_error, [{"unconfigured table", :schema_error}]},
+    {"AlreadyExistsException", :already_exists, []},
+    {"NotFoundException", :not_found, []},
+    {"UnauthorizedException", :unauthorized, []},
+    {"OverloadedException", :overloaded, []},
+    {"ReadTimeoutException", :timeout, []},
+    {"WriteTimeoutException", :timeout, []},
+    {"UnavailableException", :consistency_error, []}
+  ]
+
   defp categorize_xandra_error(reason) when is_binary(reason) do
-    cond do
-      String.contains?(reason, "SyntaxException") ->
-        {:syntax_error, %{reason: reason}}
+    Enum.find_value(@error_patterns, {:unknown, %{reason: reason}}, fn
+      {pattern, type, sub_patterns} ->
+        if String.contains?(reason, pattern) do
+          case sub_patterns do
+            [{sub_pattern, sub_type}] ->
+              if String.contains?(reason, sub_pattern) do
+                {sub_type, %{type: :table_not_found, reason: reason}}
+              else
+                {type, %{reason: reason}}
+              end
 
-      String.contains?(reason, "InvalidRequestException") ->
-        if String.contains?(reason, "unconfigured table") do
-          {:schema_error, %{type: :table_not_found, reason: reason}}
-        else
-          {:query_error, %{reason: reason}}
+            [] ->
+              {type, %{reason: reason}}
+          end
         end
-
-      String.contains?(reason, "AlreadyExistsException") ->
-        {:already_exists, %{reason: reason}}
-
-      String.contains?(reason, "NotFoundException") ->
-        {:not_found, %{reason: reason}}
-
-      String.contains?(reason, "UnauthorizedException") ->
-        {:unauthorized, %{reason: reason}}
-
-      String.contains?(reason, "OverloadedException") ->
-        {:overloaded, %{reason: reason}}
-
-      String.contains?(reason, "ReadTimeoutException") or
-          String.contains?(reason, "WriteTimeoutException") ->
-        {:timeout, %{reason: reason}}
-
-      String.contains?(reason, "UnavailableException") ->
-        {:consistency_error, %{reason: reason}}
-
-      true ->
-        {:unknown, %{reason: reason}}
-    end
+    end)
   end
 
   defp categorize_xandra_error(reason) do
@@ -315,7 +310,7 @@ defmodule AshScylla.Error.ScyllaError do
     inspect(reason)
   end
 
-# Suggestion helpers
+  # Suggestion helpers
 
   defp query_error_suggestion(%{reason: reason}) do
     cond do

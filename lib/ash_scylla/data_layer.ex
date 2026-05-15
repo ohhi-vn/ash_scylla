@@ -66,6 +66,20 @@ defmodule AshScylla.DataLayer do
 
   alias AshScylla.DataLayer.QueryBuilder
 
+  @supported_features MapSet.new([
+                        :create,
+                        :read,
+                        :update,
+                        :destroy,
+                        :filter,
+                        :sort,
+                        :limit,
+                        :offset,
+                        :select,
+                        :multitenancy,
+                        :bulk_create
+                      ])
+
   # ============================================================================
   # Data Layer Query Struct
   # ============================================================================
@@ -99,72 +113,30 @@ defmodule AshScylla.DataLayer do
   # ============================================================================
 
   @impl Ash.DataLayer
-  def can?(_resource_or_dsl, feature) do
+  @spec can?(Ash.Resource.t() | Ash.DataLayer.t(), atom()) :: boolean()
+  def can?(_resource_or_dsl, {feature, _arg}) do
     case feature do
-      # Core CRUD operations
-      :create ->
-        true
-
-      :read ->
-        true
-
-      :update ->
-        true
-
-      :destroy ->
-        true
-
-      # Query features
-      :filter ->
-        true
-
-      :sort ->
-        true
-
-      :limit ->
-        true
-
-      :offset ->
-        true
-
-      :select ->
-        true
-
-      # Multitenancy (keyspace-based)
-      :multitenancy ->
-        true
-
-      # Not supported features
-      :transact ->
-        false
-
-      :bulk_create ->
-        true
-
-      :calculate ->
-        false
-
-      :combine ->
-        false
-
-      {:aggregate, _} ->
-        false
-
-      {:join, _} ->
-        false
-
-      {:lateral_join, _} ->
-        false
-
-      {:lock, _} ->
-        false
-
-      _ ->
-        false
+      :aggregate -> false
+      :join -> false
+      :lateral_join -> false
+      :lock -> false
+      :calculate -> false
+      :combine -> false
+      :transact -> false
+      _ -> false
     end
   end
 
+  def can?(_resource_or_dsl, feature) when is_atom(feature) do
+    MapSet.member?(@supported_features, feature)
+  end
+
+  def can?(_resource_or_dsl, _other) do
+    false
+  end
+
   @impl Ash.DataLayer
+  @spec resource_to_query(Ash.Resource.t(), Ash.Domain.t()) :: t()
   def resource_to_query(resource, _domain) do
     %__MODULE__{
       resource: resource,
@@ -174,6 +146,7 @@ defmodule AshScylla.DataLayer do
   end
 
   @impl Ash.DataLayer
+  @spec create(Ash.Resource.t(), Ash.Changeset.t()) :: {:ok, Ash.Resource.t()} | {:error, term()}
   def create(resource, changeset) do
     repo = repo(resource)
 
@@ -183,6 +156,7 @@ defmodule AshScylla.DataLayer do
   end
 
   @impl Ash.DataLayer
+  @spec update(Ash.Resource.t(), Ash.Changeset.t()) :: {:ok, Ash.Resource.t()} | {:error, term()}
   def update(resource, changeset) do
     repo = repo(resource)
 
@@ -192,6 +166,7 @@ defmodule AshScylla.DataLayer do
   end
 
   @impl Ash.DataLayer
+  @spec destroy(Ash.Resource.t(), Ash.Changeset.t()) :: :ok | {:error, term()}
   def destroy(resource, changeset) do
     repo = repo(resource)
 
@@ -199,6 +174,7 @@ defmodule AshScylla.DataLayer do
   end
 
   @impl Ash.DataLayer
+  @spec run_query(t(), Ash.Resource.t()) :: {:ok, [Ash.Resource.t()]} | {:error, term()}
   def run_query(data_layer_query, resource) do
     %__MODULE__{repo: repo, table: _table, tenant: tenant} = data_layer_query
 
@@ -237,6 +213,7 @@ defmodule AshScylla.DataLayer do
   # ============================================================================
 
   @impl Ash.DataLayer
+  @spec filter(t(), term(), Ash.Resource.t()) :: {:ok, t()}
   def filter(data_layer_query, filter, _resource) do
     %__MODULE__{filters: filters} = data_layer_query
 
@@ -248,6 +225,7 @@ defmodule AshScylla.DataLayer do
   # ============================================================================
 
   @impl Ash.DataLayer
+  @spec sort(t(), term(), Ash.Resource.t()) :: {:ok, t()}
   def sort(data_layer_query, sort, _resource) do
     %__MODULE__{sorts: sorts} = data_layer_query
 
@@ -259,11 +237,13 @@ defmodule AshScylla.DataLayer do
   # ============================================================================
 
   @impl Ash.DataLayer
+  @spec limit(t(), pos_integer(), Ash.Resource.t()) :: {:ok, t()}
   def limit(data_layer_query, limit, _resource) do
     {:ok, %{data_layer_query | limit: limit}}
   end
 
   @impl Ash.DataLayer
+  @spec offset(t(), pos_integer(), Ash.Resource.t()) :: {:ok, t()}
   def offset(data_layer_query, offset, _resource) do
     {:ok, %{data_layer_query | offset: offset}}
   end
@@ -273,6 +253,7 @@ defmodule AshScylla.DataLayer do
   # ============================================================================
 
   @impl Ash.DataLayer
+  @spec select(t(), list(atom()), Ash.Resource.t()) :: {:ok, t()}
   def select(data_layer_query, select, _resource) do
     {:ok, %{data_layer_query | select: select}}
   end
@@ -282,15 +263,18 @@ defmodule AshScylla.DataLayer do
   # ============================================================================
 
   @impl Ash.DataLayer
+  @spec set_tenant(t(), term(), Ash.Resource.t()) :: {:ok, t()}
   def set_tenant(data_layer_query, tenant, _resource) do
     {:ok, %{data_layer_query | tenant: tenant}}
   end
 
   @impl Ash.DataLayer
+  @spec bulk_create(Ash.Resource.t(), [Ash.Changeset.t()], keyword()) ::
+          {:ok, [Ash.Resource.t()]} | {:error, term()}
   def bulk_create(resource, changesets, _opts) do
     repo = repo(resource)
     table = source(resource)
-    tenant = get_tenant(resource)
+    keyspace = AshScylla.DataLayer.Dsl.keyspace(resource)
 
     # Get TTL and consistency from resource DSL
     ttl = AshScylla.DataLayer.Dsl.ttl(resource)
@@ -307,11 +291,12 @@ defmodule AshScylla.DataLayer do
           |> Enum.map(fn {{k, v}, _i} -> {"#{k}", v} end)
           |> Enum.unzip()
 
-        using_clause = if ttl do
-          " USING TTL #{ttl}"
-        else
-          ""
-        end
+        using_clause =
+          if ttl do
+            " USING TTL #{ttl}"
+          else
+            ""
+          end
 
         query = """
         INSERT INTO #{table} (#{Enum.join(fields, ", ")})
@@ -322,8 +307,10 @@ defmodule AshScylla.DataLayer do
       end)
 
     # Execute batch insert
-    opts = if tenant, do: [prefix: tenant], else: []
-    opts = if consistency, do: Keyword.put(opts, :consistency, consistency), else: opts
+    opts =
+      []
+      |> maybe_put(:prefix, keyspace)
+      |> maybe_put(:consistency, consistency)
 
     case AshScylla.DataLayer.Batch.batch_insert(repo, statements, opts) do
       {:ok, _} ->
@@ -337,18 +324,13 @@ defmodule AshScylla.DataLayer do
 
         {:ok, records}
 
-      {:error, %Xandra.Error{} = error} ->
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
-
-      {:error, %Xandra.ConnectionError{} = error} ->
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
-
       {:error, error} ->
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
+        handle_scylla_result({:error, error})
     end
   end
 
   @impl Ash.DataLayer
+  @spec source(Ash.Resource.t()) :: String.t()
   def source(resource) do
     # Get the table name from the resource configuration
     # This is typically configured via `table "name"` in the resource DSL
@@ -370,11 +352,10 @@ defmodule AshScylla.DataLayer do
 
   defp repo(resource) do
     # Get the repo from the resource configuration
-    resource
-    |> Module.get_attribute(:repo)
-    || raise "No repo configured for #{inspect(resource)}"
-  rescue
-    _ -> raise "No repo configured for #{inspect(resource)}"
+    case Module.get_attribute(resource, :repo) do
+      nil -> raise "No repo configured for #{inspect(resource)}"
+      repo -> repo
+    end
   end
 
   defp changeset_to_insert_attrs(changeset, resource) do
@@ -407,59 +388,38 @@ defmodule AshScylla.DataLayer do
 
   defp do_insert(attrs, resource, repo) do
     table = source(resource)
-    tenant = get_tenant(resource)
-    opts = if tenant, do: [prefix: tenant], else: []
+    opts = build_opts(resource)
 
-    # Get TTL and consistency from resource DSL
+    # Get TTL from resource DSL
     ttl = AshScylla.DataLayer.Dsl.ttl(resource)
-    consistency = AshScylla.DataLayer.Dsl.consistency(resource)
-
-    # Add TTL to opts if configured
-    opts = if ttl, do: Keyword.put(opts, :ttl, ttl), else: opts
-    # Add consistency to opts if configured
-    opts = if consistency, do: Keyword.put(opts, :consistency, consistency), else: opts
 
     # Build the CQL INSERT statement for ScyllaDB
     {fields, values} =
       attrs |> Enum.with_index() |> Enum.map(fn {{k, v}, i} -> {"#{k}", v, i} end) |> Enum.unzip()
 
     # Add USING TTL clause if configured
-    using_clause = if ttl do
-      " USING TTL #{ttl}"
-    else
-      ""
-    end
+    using_clause =
+      if ttl do
+        " USING TTL #{ttl}"
+      else
+        ""
+      end
 
     query = """
     INSERT INTO #{table} (#{Enum.join(fields, ", ")})
     VALUES (#{Enum.map(1..length(values), fn _ -> "?" end) |> Enum.join(", ")})#{using_clause}
     """
 
-    case repo.query(query, values, opts) do
-      {:ok, _} ->
-        # Fetch the created record
-        case fetch_by_primary_key(attrs, resource, repo, tenant) do
-          {:ok, record} -> {:ok, to_ash_record(record, resource)}
-          {:error, %Xandra.Error{} = error} -> {:error, AshScylla.Error.wrap_xandra_error(error)}
-          {:error, %Xandra.ConnectionError{} = error} -> {:error, AshScylla.Error.wrap_xandra_error(error)}
-          error -> error
-        end
-
-      {:error, %Xandra.Error{} = error} ->
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
-
-      {:error, %Xandra.ConnectionError{} = error} ->
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
-
-      {:error, error} ->
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
+    with {:ok, _} <- repo.query(query, values, opts),
+         {:ok, record} <- fetch_by_primary_key(attrs, resource, repo) do
+      {:ok, to_ash_record(record, resource)}
     end
+    |> handle_scylla_result()
   end
 
   defp do_update(attrs, changeset, resource, repo) do
     table = source(resource)
-    tenant = get_tenant(resource)
-    opts = if tenant, do: [prefix: tenant], else: []
+    opts = build_opts(resource)
 
     # Build UPDATE statement
     set_clauses = Enum.map(attrs, fn {k, _v} -> "#{k} = ?" end)
@@ -476,30 +436,16 @@ defmodule AshScylla.DataLayer do
     WHERE #{Enum.join(pk_clause, " AND ")}
     """
 
-    case repo.query(query, values ++ pk_values, opts) do
-      {:ok, _} ->
-        case fetch_by_primary_key(pk, resource, repo, tenant) do
-          {:ok, record} -> {:ok, to_ash_record(record, resource)}
-          {:error, %Xandra.Error{} = error} -> {:error, AshScylla.Error.wrap_xandra_error(error)}
-          {:error, %Xandra.ConnectionError{} = error} -> {:error, AshScylla.Error.wrap_xandra_error(error)}
-          error -> error
-        end
-
-      {:error, %Xandra.Error{} = error} ->
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
-
-      {:error, %Xandra.ConnectionError{} = error} ->
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
-
-      {:error, error} ->
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
+    with {:ok, _} <- repo.query(query, values ++ pk_values, opts),
+         {:ok, record} <- fetch_by_primary_key(pk, resource, repo) do
+      {:ok, to_ash_record(record, resource)}
     end
+    |> handle_scylla_result()
   end
 
   defp do_delete(changeset, resource, repo) do
     table = source(resource)
-    tenant = get_tenant(resource)
-    opts = if tenant, do: [prefix: tenant], else: []
+    opts = build_opts(resource)
 
     pk = get_primary_key(changeset, resource)
     pk_clause = Enum.map(pk, fn {k, _} -> "#{k} = ?" end)
@@ -514,18 +460,12 @@ defmodule AshScylla.DataLayer do
       {:ok, _} ->
         :ok
 
-      {:error, %Xandra.Error{} = error} ->
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
-
-      {:error, %Xandra.ConnectionError{} = error} ->
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
-
       {:error, error} ->
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
+        handle_scylla_result({:error, error})
     end
   end
 
-  defp fetch_by_primary_key(pk, resource, repo, _tenant) do
+  defp fetch_by_primary_key(pk, resource, repo) do
     table = source(resource)
 
     pk_clause = Enum.map(pk, fn {k, _} -> "#{k} = ?" end)
@@ -541,14 +481,8 @@ defmodule AshScylla.DataLayer do
       {:ok, %{rows: [row | _]}} ->
         {:ok, row}
 
-      {:error, %Xandra.Error{} = error} ->
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
-
-      {:error, %Xandra.ConnectionError{} = error} ->
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
-
       {:error, error} ->
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
+        handle_scylla_result({:error, error})
     end
   end
 
@@ -562,20 +496,43 @@ defmodule AshScylla.DataLayer do
     end)
   end
 
-  defp get_tenant(_resource) do
-    # This should be configured per-resource or per-request
-    nil
+  defp to_ash_record(record, resource) do
+    resource
+    |> Ash.Resource.Info.attributes()
+    |> Enum.reduce(%{}, fn attr, acc ->
+      value = Map.get(record, attr.name)
+      Map.put(acc, attr.name, value)
+    end)
   end
 
-  defp to_ash_record(record, resource) do
-    # Convert the record (map or struct) to a format Ash expects
-    # Ash expects a map with the attribute values
-    attrs =
-      Enum.reduce(Ash.Resource.Info.attributes(resource), %{}, fn attr, acc ->
-        value = Map.get(record, attr.name) || Map.get(record, String.to_atom(attr.name))
-        Map.put(acc, attr.name, value)
-      end)
+  # Build repo query options from resource configuration (keyspace, TTL, consistency).
+  defp build_opts(resource) do
+    keyspace = AshScylla.DataLayer.Dsl.keyspace(resource)
+    ttl = AshScylla.DataLayer.Dsl.ttl(resource)
+    consistency = AshScylla.DataLayer.Dsl.consistency(resource)
 
-    attrs
+    []
+    |> maybe_put(:prefix, keyspace)
+    |> maybe_put(:ttl, ttl)
+    |> maybe_put(:consistency, consistency)
+  end
+
+  defp maybe_put(opts, _key, nil), do: opts
+  defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
+
+  # Normalize ScyllaDB/Xandra errors into AshScylla errors.
+  defp handle_scylla_result({:ok, _} = ok), do: ok
+  defp handle_scylla_result(:ok), do: :ok
+
+  defp handle_scylla_result({:error, %Xandra.Error{} = error}) do
+    {:error, AshScylla.Error.wrap_xandra_error(error)}
+  end
+
+  defp handle_scylla_result({:error, %Xandra.ConnectionError{} = error}) do
+    {:error, AshScylla.Error.wrap_xandra_error(error)}
+  end
+
+  defp handle_scylla_result({:error, error}) do
+    {:error, AshScylla.Error.wrap_xandra_error(error)}
   end
 end

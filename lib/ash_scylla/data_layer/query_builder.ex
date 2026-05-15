@@ -35,6 +35,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   If filters are on columns with secondary indexes, the query will
   use those indexes automatically.
   """
+  @spec build_optimized_query(DataLayer.t()) :: {String.t(), list()}
   def build_optimized_query(%DataLayer{
         table: table,
         filters: filters,
@@ -45,10 +46,10 @@ defmodule AshScylla.DataLayer.QueryBuilder do
       }) do
     # Build SELECT clause
     select_clause =
-      if select && length(select) > 0 do
-        select |> Enum.map(&"#{&1}") |> Enum.join(", ")
-      else
-        "*"
+      case select do
+        nil -> "*"
+        [] -> "*"
+        columns -> Enum.map_join(columns, ", ", &"#{&1}")
       end
 
     base_query = "SELECT #{select_clause} FROM #{table}"
@@ -56,27 +57,32 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     # Build WHERE clause from filters
     {where_clause, params} = build_where_clause(filters)
 
-    query = if String.length(where_clause) > 0 do
-      "#{base_query} WHERE #{where_clause}"
-    else
-      base_query
-    end
+    query =
+      if String.length(where_clause) > 0 do
+        "#{base_query} WHERE #{where_clause}"
+      else
+        base_query
+      end
 
     # Build ORDER BY clause
     {order_clause, order_params} = build_order_by(sorts)
-    query = if String.length(order_clause) > 0 do
-      "#{query} ORDER BY #{order_clause}"
-    else
-      query
-    end
+
+    query =
+      if String.length(order_clause) > 0 do
+        "#{query} ORDER BY #{order_clause}"
+      else
+        query
+      end
+
     params = params ++ order_params
 
     # Add LIMIT
-    {query, params} = if limit do
-      {"#{query} LIMIT ?", params ++ [limit]}
-    else
-      {query, params}
-    end
+    {query, params} =
+      if limit do
+        {"#{query} LIMIT ?", params ++ [limit]}
+      else
+        {query, params}
+      end
 
     # Add OFFSET (note: OFFSET in CQL requires special handling)
     if offset do
@@ -91,20 +97,25 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   @doc """
   Builds WHERE clause from Ash filters.
   """
+  @spec build_where_clause(list()) :: {String.t(), list()}
   def build_where_clause(filters) do
     case filters do
-      [] -> {"", []}
+      [] ->
+        {"", []}
+
       _ ->
-        # Combine all filters with AND
         {clause, params} =
           filters
           |> Enum.map(&filter_to_cql/1)
           |> Enum.reduce({"", []}, fn {c, p}, {acc_c, acc_p} ->
-            {if String.length(acc_c) > 0 do
-               "#{acc_c} AND #{c}"
-             else
-               c
-             end, acc_p ++ p}
+            joined =
+              if acc_c == "" do
+                c
+              else
+                "#{acc_c} AND #{c}"
+              end
+
+            {joined, acc_p ++ p}
           end)
 
         {clause, params}
@@ -114,15 +125,20 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   @doc """
   Builds ORDER BY clause from sort items.
   """
+  @spec build_order_by(list()) :: {String.t(), list()}
   def build_order_by(sorts) do
     case sorts do
-      [] -> {"", []}
+      [] ->
+        {"", []}
+
       _ ->
-        clauses = Enum.map(sorts, fn sort_item ->
-          field = Map.get(sort_item, :field)
-          direction = Map.get(sort_item, :direction, :asc)
-          "#{field} #{direction}"
-        end)
+        clauses =
+          Enum.map(sorts, fn sort_item ->
+            field = Map.get(sort_item, :field)
+            direction = Map.get(sort_item, :direction, :asc)
+            "#{field} #{direction}"
+          end)
+
         {Enum.join(clauses, ", "), []}
     end
   end
@@ -133,6 +149,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   Returns `{:ok, indexed_columns}` if the filter can use indexes,
   or `{:error, reason}` if it cannot.
   """
+  @spec can_use_secondary_index?(term(), list()) :: {:ok, list()} | {:error, term()}
   def can_use_secondary_index?(resource, filters) do
     indexed_columns =
       resource
@@ -145,9 +162,12 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     # Check if all filter columns have secondary indexes
     # Note: Secondary indexes work best with equality checks
     case filter_columns do
-      [] -> {:error, :no_filters}
+      [] ->
+        {:error, :no_filters}
+
       cols ->
         all_indexed = cols |> Enum.all?(fn col -> MapSet.member?(indexed_columns, col) end)
+
         if all_indexed do
           {:ok, cols}
         else
@@ -159,17 +179,14 @@ defmodule AshScylla.DataLayer.QueryBuilder do
 
   defp get_filter_columns(filters) do
     filters
-    |> Enum.flat_map(fn filter ->
-      case filter do
-        %{left: %{name: name}} when not is_nil(name) -> [name]
-        %{expression: expr} -> get_filter_columns([expr])
-        %{left: left, right: right} ->
-          get_filter_columns([left, right])
-        _ -> []
-      end
-    end)
+    |> Enum.flat_map(&extract_filter_columns/1)
     |> Enum.uniq()
   end
+
+  defp extract_filter_columns(%{left: %{name: name}}) when not is_nil(name), do: [name]
+  defp extract_filter_columns(%{expression: expr}), do: get_filter_columns([expr])
+  defp extract_filter_columns(%{left: left, right: right}), do: get_filter_columns([left, right])
+  defp extract_filter_columns(_), do: []
 
   @doc """
   Converts Ash filter expressions to CQL.
@@ -177,6 +194,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   Note: For secondary indexes to be used, filters should be equality checks
   on indexed columns. Range queries on secondary indexes are not recommended.
   """
+  @spec filter_to_cql(map()) :: {String.t(), list()}
   def filter_to_cql(%{expression: expression}) do
     filter_to_cql(expression)
   end
@@ -188,44 +206,47 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     case op do
       :and ->
         {"(#{left_cql}) AND (#{right_cql})", left_params ++ right_params}
+
       :or ->
         {"(#{left_cql}) OR (#{right_cql})", left_params ++ right_params}
+
       _ ->
         {"", []}
     end
   end
 
-  def filter_to_cql(%{expression: expression}) do
-    filter_to_cql(expression)
-  end
+  @operator_mapping %{
+    :eq => "=",
+    :not_eq => "!=",
+    :gt => ">",
+    :gte => ">=",
+    :lt => "<",
+    :lte => "<=",
+    :contains => "LIKE",
+    :starts_with => "LIKE",
+    :ends_with => "LIKE"
+  }
+
+  @operator_values %{
+    :contains => "?",
+    :starts_with => "%?",
+    :ends_with => "?%"
+  }
 
   def filter_to_cql(%{operator: op, left: left, right: right}) do
     {left_cql, left_params} = filter_to_cql(left)
 
-    # Special handling for IN operator to correctly expand list values
-    {cql_op, cql_right, all_params} = case {op, right} do
+    case {op, right} do
       {:in, %{value: values}} when is_list(values) ->
-        placeholders = Enum.map(1..length(values), fn _ -> "?" end) |> Enum.join(", ")
-        {"IN", "(#{placeholders})", left_params ++ values}
+        placeholders = Enum.map_join(1..length(values), ", ", fn _ -> "?" end)
+        {"#{left_cql} IN (#{placeholders})", left_params ++ values}
+
       _ ->
         {_right_cql, right_params} = filter_to_cql(right)
-        {op_str, cql_r} = case op do
-          :eq -> {"=", "?"}
-          :not_eq -> {"!=", "?"}
-          :gt -> {">", "?"}
-          :gte -> {">=", "?"}
-          :lt -> {"<", "?"}
-          :lte -> {"<=", "?"}
-          :in -> {"IN", "(#{Enum.map(1..length(right_params), fn _ -> "?" end) |> Enum.join(", ")}"}
-          :contains -> {"LIKE", "?"}
-          :starts_with -> {"LIKE", "?%"}
-          :ends_with -> {"LIKE", "%?"}
-          _ -> {"=", "?"}
-        end
-        {op_str, cql_r, left_params ++ right_params}
+        cql_op = Map.get(@operator_mapping, op, "=")
+        cql_val = Map.get(@operator_values, op, "?")
+        {"#{left_cql} #{cql_op} #{cql_val}", left_params ++ right_params}
     end
-
-    {"#{left_cql} #{cql_op} #{cql_right}", all_params}
   end
 
   def filter_to_cql(%{value: value}) do
@@ -236,7 +257,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     {"#{name}", []}
   end
 
-  def filter_to_cql(_) do
-    {"1=1", []}  # Fallback
+  def filter_to_cql(unknown) do
+    raise ArgumentError, "Unknown filter expression: #{inspect(unknown)}"
   end
 end
