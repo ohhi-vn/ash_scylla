@@ -8,11 +8,13 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# WITHOUT REQUIRED WARRANTIES OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
 defmodule AshScylla.Migration do
+  alias AshScylla.DataLayer.Dsl
+
   @moduledoc """
   Helpers for working with ScyllaDB migrations using Exandra.
 
@@ -31,14 +33,33 @@ defmodule AshScylla.Migration do
           execute "CREATE TABLE users (id UUID PRIMARY KEY, name TEXT, email TEXT)"
         end
       end
+
+  ## Important Note on `create_table_cql/1`
+
+  This function reads compile-time module attributes (`:table`, `:attributes`)
+  set by the Ash resource DSL. It is intended to be called at compile time
+  within a migration module (e.g., inside a `defmacro` or at the module top level).
+  It will not work correctly at runtime when called with a resource module that
+  has already been compiled, because `Module.get_attribute/2` only works during
+  compilation of that module.
+
+  For runtime use, prefer passing explicit parameters or use the AshScylla DSL
+  getter functions (`AshScylla.DataLayer.Dsl.table/1`) combined with
+  `Ash.Resource.Info.attributes/1`.
   """
 
   @doc """
   Generates a CQL CREATE TABLE statement for an Ash resource.
 
+  **Important:** This function reads compile-time module attributes (`:table`, `:attributes`)
+  and must be called during the resource module's compilation. For runtime use,
+  build the CQL explicitly or use `Ash.Resource.Info.attributes/1` combined with
+  `AshScylla.DataLayer.Dsl.table/1`.
+
   Note: This is a helper that returns a CQL string.
   You need to execute this in an Ecto migration using `execute/1`.
   """
+  @spec create_table_cql(module()) :: String.t()
   def create_table_cql(resource) do
     table_name =
       resource
@@ -64,8 +85,7 @@ defmodule AshScylla.Migration do
       resource
       |> Module.get_attribute(:attributes)
       |> Enum.filter(fn attr -> Keyword.get(attr, :primary_key) end)
-      |> Enum.map(fn attr -> Keyword.get(attr, :name) end)
-      |> Enum.join(", ")
+      |> Enum.map_join(", ", fn attr -> Keyword.get(attr, :name) end)
 
     clustering_order =
       if primary_keys != "" do
@@ -74,13 +94,11 @@ defmodule AshScylla.Migration do
         ""
       end
 
-    cql = """
+    """
     CREATE TABLE #{table_name} (
       #{Enum.join(attributes, ",\n  ")}
     ) #{clustering_order}
     """
-
-    cql
   end
 
   @doc """
@@ -99,8 +117,9 @@ defmodule AshScylla.Migration do
         end
       end
   """
+  @spec create_secondary_indexes_cql(module()) :: [String.t()]
   def create_secondary_indexes_cql(resource) do
-    case AshScylla.DataLayer.Dsl.secondary_indexes(resource) do
+    case Dsl.secondary_indexes(resource) do
       [] ->
         []
 
@@ -110,7 +129,7 @@ defmodule AshScylla.Migration do
         indexes
         |> Enum.map(fn idx ->
           index_name = idx.name || generate_index_name(table_name, idx.columns)
-          columns = idx.columns |> Enum.map(&to_string/1) |> Enum.join(", ")
+          columns = idx.columns |> Enum.map_join(", ", &to_string/1)
 
           "CREATE INDEX IF NOT EXISTS #{index_name} ON #{table_name} (#{columns})"
         end)
@@ -120,28 +139,29 @@ defmodule AshScylla.Migration do
   @doc """
   Generates a CQL DROP INDEX statement for a secondary index.
   """
+  @spec drop_secondary_index_cql(module(), String.t()) :: String.t()
   def drop_secondary_index_cql(_resource, index_name) do
     "DROP INDEX IF EXISTS #{index_name}"
   end
 
+  @spec get_table_name(module()) :: String.t()
   defp get_table_name(resource) do
-    resource
-    |> Module.get_attribute(:table)
-    |> to_string()
-    |> case do
-      "" ->
+    # Try DSL getter first (works at runtime), then fall back to compile-time attribute
+    case Dsl.table(resource) do
+      nil ->
         resource
         |> Module.split()
         |> List.last()
         |> Macro.underscore()
 
       name ->
-        name
+        to_string(name)
     end
   end
 
+  @spec generate_index_name(String.t(), [atom()]) :: String.t()
   defp generate_index_name(table_name, columns) do
-    column_str = columns |> Enum.map(&to_string/1) |> Enum.join("_")
+    column_str = columns |> Enum.map_join("_", &to_string/1)
     "idx_#{table_name}_#{column_str}"
   end
 
@@ -149,6 +169,7 @@ defmodule AshScylla.Migration do
   Returns the keyspace for a resource if configured via DSL.
   Note: This is a placeholder for future DSL implementation.
   """
+  @spec keyspace(module()) :: String.t() | nil
   def keyspace(_resource) do
     nil
   end
@@ -166,29 +187,32 @@ defmodule AshScylla.Migration do
   This generates:
       CREATE TYPE full_name (first_name TEXT, last_name TEXT)
   """
+  @spec create_type(String.t(), keyword()) :: String.t()
   def create_type(type_name, do: block) do
     fields =
       block
       |> Keyword.new()
-      |> Enum.map(fn {name, {type, opts}} ->
+      |> Enum.map_join(",\n", fn {name, {type, opts}} ->
         type_str = ash_type_to_cql_type(type, opts)
         "  #{name} #{type_str}"
       end)
 
     """
     CREATE TYPE IF NOT EXISTS #{type_name} (
-    #{Enum.join(fields, ",\n")}
+    #{fields}
     )
     """
   end
 
   @doc """
-  Drop a User Defined Type (UDt) in ScyllaDB.
+  Drop a User Defined Type (UDT) in ScyllaDB.
   """
+  @spec drop_type(String.t()) :: String.t()
   def drop_type(type_name) do
     "DROP TYPE IF EXISTS #{type_name}"
   end
 
+  @spec attribute_to_cql(keyword()) :: String.t()
   defp attribute_to_cql(attr) do
     name = Keyword.get(attr, :name)
     type = Keyword.get(attr, :type, :string)
@@ -197,9 +221,9 @@ defmodule AshScylla.Migration do
     type_str = ash_type_to_cql_type(type, opts)
 
     primary_key = if Keyword.get(attr, :primary_key), do: " PRIMARY KEY", else: ""
-    nullable = unless Keyword.get(attr, :allow_nil, true), do: " NOT NULL", else: ""
+    nullable = if Keyword.get(attr, :allow_nil, true), do: "", else: " NOT NULL"
 
-    "  #{name} #{type_str}#{primary_key}#{nullable}"
+    "#{name} #{type_str}#{primary_key}#{nullable}"
   end
 
   @type_mapping %{
@@ -212,6 +236,7 @@ defmodule AshScylla.Migration do
     :time => "TIME"
   }
 
+  @spec ash_type_to_cql_type(atom(), keyword()) :: String.t()
   defp ash_type_to_cql_type(type, opts) when is_atom(type) do
     base_type =
       case type do
@@ -227,8 +252,8 @@ defmodule AshScylla.Migration do
         :udt ->
           Keyword.get(opts, :type_name, "frozen<undefined>")
 
-        type ->
-          Map.get(@type_mapping, type, "TEXT")
+        mapped_type ->
+          Map.get(@type_mapping, mapped_type, "TEXT")
       end
 
     if Keyword.get(opts, :frozen), do: "frozen<#{base_type}>", else: base_type

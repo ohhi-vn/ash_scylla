@@ -8,7 +8,7 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# WITHOUT REQUIRED WARRANTIES OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -85,6 +85,7 @@ defmodule AshScylla.Repo do
       @doc """
       Returns the configured keyspace for this repo.
       """
+      @spec keyspace() :: String.t() | nil
       def keyspace do
         config = __MODULE__.config()
         Keyword.get(config, :keyspace)
@@ -93,8 +94,11 @@ defmodule AshScylla.Repo do
       @doc """
       Creates the keyspace if it doesn't exist.
       """
+      @spec create_keyspace(String.t() | nil) :: {:ok, term()} | {:error, term()}
       def create_keyspace(keyspace_name \\ nil) do
         keyspace = keyspace_name || keyspace()
+
+        validate_keyspace!(keyspace)
 
         query = """
         CREATE KEYSPACE IF NOT EXISTS #{keyspace}
@@ -107,11 +111,30 @@ defmodule AshScylla.Repo do
       @doc """
       Drops the keyspace if it exists.
       """
+      @spec drop_keyspace(String.t() | nil) :: {:ok, term()} | {:error, term()}
       def drop_keyspace(keyspace_name \\ nil) do
         keyspace = keyspace_name || keyspace()
 
+        validate_keyspace!(keyspace)
+
         query = "DROP KEYSPACE IF EXISTS #{keyspace}"
         __MODULE__.query(query, [])
+      end
+
+      @valid_keyspace_regex ~r/^[a-zA-Z_][a-zA-Z0-9_]{0,47}$/
+
+      @spec validate_keyspace!(String.t()) :: :ok
+      defp validate_keyspace!(keyspace) do
+        unless is_binary(keyspace) do
+          raise ArgumentError, "Keyspace name must be a string, got: #{inspect(keyspace)}"
+        end
+
+        unless Regex.match?(@valid_keyspace_regex, keyspace) do
+          raise ArgumentError,
+                "Invalid keyspace name: #{inspect(keyspace)}. Keyspace names must match #{@valid_keyspace_regex.source}"
+        end
+
+        :ok
       end
     end
   end

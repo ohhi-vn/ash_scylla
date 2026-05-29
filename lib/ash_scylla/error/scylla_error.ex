@@ -42,6 +42,8 @@ defmodule AshScylla.Error.ScyllaError do
       end
   """
 
+  require Logger
+
   alias __MODULE__
 
   @type t :: %__MODULE__{
@@ -62,160 +64,78 @@ defmodule AshScylla.Error.ScyllaError do
     :original_error
   ]
 
+  # Maps Xandra connection error reason atoms to ScyllaError types
+  @connection_error_types %{
+    closed: :connection_closed,
+    timeout: :connection_timeout,
+    econnrefused: :connection_refused,
+    ehostunreach: :host_unreachable
+  }
+
+  # Maps Xandra error reason atoms to error categories and types
+  @error_atom_patterns [
+    {:write_timeout, :timeout, %{}},
+    {:read_timeout, :timeout, %{}},
+    {:read_failure, :timeout, %{}},
+    {:write_failure, :timeout, %{}},
+    {:unavailable, :consistency_error, %{}},
+    {:overloaded, :overloaded, %{}},
+    {:prepared_query_mismatch, :query_error, %{}},
+    {:already_exists, :already_exists, %{}},
+    {:not_found, :not_found, %{}},
+    {:authentication_error, :unauthorized, %{}},
+    {:protocol_error, :query_error, %{}},
+    {:configuration_error, :query_error, %{}},
+    {:invalid_query, :query_error, %{}},
+    {:syntax_error, :syntax_error, %{}},
+    {:unauthorized, :unauthorized, %{}},
+    {:is_bootstrapping, :consistency_error, %{}},
+    {:truncate_error, :query_error, %{}},
+    {:function_failure, :query_error, %{}}
+  ]
+
+  # Maps binary reason patterns to error categories and types
+  @error_patterns [
+    {"SyntaxException", :syntax_error, []},
+    {"InvalidRequestException", :query_error, [{"unconfigured table", :schema_error}]},
+    {"AlreadyExistsException", :already_exists, []},
+    {"NotFoundException", :not_found, []},
+    {"UnauthorizedException", :unauthorized, []},
+    {"OverloadedException", :overloaded, []},
+    {"ReadTimeoutException", :timeout, []},
+    {"WriteTimeoutException", :timeout, []},
+    {"UnavailableException", :consistency_error, []}
+  ]
+
   @doc """
   Creates a ScyllaError from a Xandra.Error.
   """
+  @spec from_xandra_error(Xandra.Error.t()) :: t()
   def from_xandra_error(%Xandra.Error{} = error) do
     reason = error.reason
+    {category, type, details} = categorize_xandra_error(reason)
 
-    case categorize_xandra_error(reason) do
-      {:query_error, details} ->
-        %ScyllaError{
-          type: :query_error,
-          reason: reason,
-          message: "Query execution failed: #{format_reason(reason)}",
-          suggestion: query_error_suggestion(details),
-          original_error: error
-        }
-
-      {:syntax_error, details} ->
-        %ScyllaError{
-          type: :syntax_error,
-          reason: reason,
-          message: "CQL syntax error: #{format_reason(reason)}",
-          suggestion: syntax_error_suggestion(details),
-          original_error: error
-        }
-
-      {:schema_error, details} ->
-        %ScyllaError{
-          type: :schema_error,
-          reason: reason,
-          message: "Schema error: #{format_reason(reason)}",
-          suggestion: schema_error_suggestion(details),
-          original_error: error
-        }
-
-      {:unauthorized, details} ->
-        %ScyllaError{
-          type: :unauthorized,
-          reason: reason,
-          message: "Unauthorized: #{format_reason(reason)}",
-          suggestion: unauthorized_suggestion(details),
-          original_error: error
-        }
-
-      {:overloaded, details} ->
-        %ScyllaError{
-          type: :overloaded,
-          reason: reason,
-          message: "ScyllaDB node is overloaded: #{format_reason(reason)}",
-          suggestion: overloaded_suggestion(details),
-          original_error: error
-        }
-
-      {:timeout, details} ->
-        %ScyllaError{
-          type: :timeout,
-          reason: reason,
-          message: "Query timeout: #{format_reason(reason)}",
-          suggestion: timeout_suggestion(details),
-          original_error: error
-        }
-
-      {:already_exists, details} ->
-        %ScyllaError{
-          type: :already_exists,
-          reason: reason,
-          message: "Resource already exists: #{format_reason(reason)}",
-          suggestion: already_exists_suggestion(details),
-          original_error: error
-        }
-
-      {:not_found, details} ->
-        %ScyllaError{
-          type: :not_found,
-          reason: reason,
-          message: "Resource not found: #{format_reason(reason)}",
-          suggestion: not_found_suggestion(details),
-          original_error: error
-        }
-
-      {:consistency_error, details} ->
-        %ScyllaError{
-          type: :consistency_error,
-          reason: reason,
-          message: "Consistency level not met: #{format_reason(reason)}",
-          suggestion: consistency_error_suggestion(details),
-          original_error: error
-        }
-
-      {:unknown, _} ->
-        %ScyllaError{
-          type: :unknown,
-          reason: reason,
-          message: "Unknown ScyllaDB error: #{format_reason(reason)}",
-          suggestion: "Check ScyllaDB logs for more details.",
-          original_error: error
-        }
-    end
+    build_error(type, reason, category, details, error)
   end
 
   @doc """
   Creates a ScyllaError from a Xandra.ConnectionError.
   """
+  @spec from_xandra_connection_error(Xandra.ConnectionError.t()) :: t()
   def from_xandra_connection_error(%Xandra.ConnectionError{} = error) do
     reason = error.reason
 
-    case reason do
-      :closed ->
+    case classify_connection_error(reason) do
+      {:ok, type, message, suggestion} ->
         %ScyllaError{
-          type: :connection_closed,
+          type: type,
           reason: reason,
-          message: "Connection to ScyllaDB was closed",
-          suggestion: "Check if ScyllaDB is running and network connectivity is available.",
+          message: message,
+          suggestion: suggestion,
           original_error: error
         }
 
-      :timeout ->
-        %ScyllaError{
-          type: :connection_timeout,
-          reason: reason,
-          message: "Connection to ScyllaDB timed out",
-          suggestion:
-            "Increase connection timeout in repo config or check network latency to ScyllaDB nodes.",
-          original_error: error
-        }
-
-      :econnrefused ->
-        %ScyllaError{
-          type: :connection_refused,
-          reason: reason,
-          message: "Connection to ScyllaDB was refused",
-          suggestion:
-            "Check if ScyllaDB is running on the configured host/port and firewall rules allow connections.",
-          original_error: error
-        }
-
-      :ehostunreach ->
-        %ScyllaError{
-          type: :host_unreachable,
-          reason: reason,
-          message: "ScyllaDB host is unreachable",
-          suggestion: "Check network connectivity and that the ScyllaDB node is online.",
-          original_error: error
-        }
-
-      {:unreachable, _host} ->
-        %ScyllaError{
-          type: :host_unreachable,
-          reason: reason,
-          message: "ScyllaDB host is unreachable: #{inspect(reason)}",
-          suggestion: "Check network connectivity and that the ScyllaDB node is online.",
-          original_error: error
-        }
-
-      _ ->
+      {:fallback, _reason} ->
         %ScyllaError{
           type: :connection_error,
           reason: reason,
@@ -229,6 +149,7 @@ defmodule AshScylla.Error.ScyllaError do
   @doc """
   Creates a ScyllaError from a generic error.
   """
+  @spec from_error(term()) :: t()
   def from_error(error) do
     %ScyllaError{
       type: :generic_error,
@@ -242,6 +163,7 @@ defmodule AshScylla.Error.ScyllaError do
   @doc """
   Converts the error to a human-readable string.
   """
+  @spec to_string(t()) :: String.t()
   def to_string(%ScyllaError{} = error) do
     base_message = "[#{error.type}] #{error.message}"
 
@@ -262,45 +184,247 @@ defmodule AshScylla.Error.ScyllaError do
     base_message <> suggestion_text <> query_text
   end
 
+  @doc """
+  Creates a ScyllaError with query context.
+
+  Convenience function for wrapping an error that includes the query
+  that caused it.
+  """
+  @spec with_query(t(), String.t()) :: t()
+  def with_query(%ScyllaError{} = error, query) when is_binary(query) do
+    %ScyllaError{error | query: query}
+  end
+
+  @doc """
+  Creates a ScyllaError from a Xandra.Error with query context.
+  """
+  @spec from_xandra_error(Xandra.Error.t(), String.t() | nil) :: t()
+  def from_xandra_error(%Xandra.Error{} = error, query) when is_binary(query) do
+    error
+    |> from_xandra_error()
+    |> with_query(query)
+  end
+
+  def from_xandra_error(%Xandra.Error{} = error, nil) do
+    from_xandra_error(error)
+  end
+
+  @doc """
+  Creates a ScyllaError from a Xandra.ConnectionError with query context.
+  """
+  @spec from_xandra_connection_error(Xandra.ConnectionError.t(), String.t() | nil) :: t()
+  def from_xandra_connection_error(%Xandra.ConnectionError{} = error, query)
+      when is_binary(query) do
+    error
+    |> from_xandra_connection_error()
+    |> with_query(query)
+  end
+
+  def from_xandra_connection_error(%Xandra.ConnectionError{} = error, nil) do
+    from_xandra_connection_error(error)
+  end
+
   # Private functions
 
-  @error_patterns [
-    {"SyntaxException", :syntax_error, []},
-    {"InvalidRequestException", :query_error, [{"unconfigured table", :schema_error}]},
-    {"AlreadyExistsException", :already_exists, []},
-    {"NotFoundException", :not_found, []},
-    {"UnauthorizedException", :unauthorized, []},
-    {"OverloadedException", :overloaded, []},
-    {"ReadTimeoutException", :timeout, []},
-    {"WriteTimeoutException", :timeout, []},
-    {"UnavailableException", :consistency_error, []}
-  ]
+  # --- Connection error classification ---
+
+  defp classify_connection_error(reason) when is_atom(reason) do
+    case Map.fetch(@connection_error_types, reason) do
+      {:ok, type} ->
+        {message, suggestion} = connection_error_message(type)
+        {:ok, type, message, suggestion}
+
+      :error ->
+        classify_connection_error_fallback(reason)
+    end
+  end
+
+  defp classify_connection_error({:unreachable, _host}) do
+    {:ok, :host_unreachable, "ScyllaDB host is unreachable",
+     "Check network connectivity and that the ScyllaDB node is online."}
+  end
+
+  defp classify_connection_error(reason) do
+    classify_connection_error_fallback(reason)
+  end
+
+  defp classify_connection_error_fallback(reason) do
+    Logger.warning("Unknown Xandra connection error reason: #{inspect(reason)}")
+    {:fallback, reason}
+  end
+
+  defp connection_error_message(:connection_closed) do
+    {"Connection to ScyllaDB was closed",
+     "Check if ScyllaDB is running and network connectivity is available."}
+  end
+
+  defp connection_error_message(:connection_timeout) do
+    {"Connection to ScyllaDB timed out",
+     "Increase connection timeout in repo config or check network latency to ScyllaDB nodes."}
+  end
+
+  defp connection_error_message(:connection_refused) do
+    {"Connection to ScyllaDB was refused",
+     "Check if ScyllaDB is running on the configured host/port and firewall rules allow connections."}
+  end
+
+  defp connection_error_message(:host_unreachable) do
+    {"ScyllaDB host is unreachable",
+     "Check network connectivity and that the ScyllaDB node is online."}
+  end
+
+  # --- Xandra error categorization ---
+
+  defp categorize_xandra_error(reason) when is_atom(reason) do
+    case List.keyfind(@error_atom_patterns, reason, 0) do
+      {^reason, type, details} ->
+        {type, type, details}
+
+      nil ->
+        Logger.warning("Unknown Xandra error atom reason: #{inspect(reason)}")
+        {:unknown, :unknown, %{reason: reason}}
+    end
+  end
 
   defp categorize_xandra_error(reason) when is_binary(reason) do
-    Enum.find_value(@error_patterns, {:unknown, %{reason: reason}}, fn
+    Enum.find_value(@error_patterns, {:unknown, :unknown, %{reason: reason}}, fn
       {pattern, type, sub_patterns} ->
         if String.contains?(reason, pattern) do
           case sub_patterns do
             [{sub_pattern, sub_type}] ->
               if String.contains?(reason, sub_pattern) do
-                {sub_type, %{type: :table_not_found, reason: reason}}
+                {sub_type, sub_type, %{type: :table_not_found, reason: reason}}
               else
-                {type, %{reason: reason}}
+                {type, type, %{reason: reason}}
               end
 
             [] ->
-              {type, %{reason: reason}}
+              {type, type, %{reason: reason}}
           end
         end
     end)
   end
 
   defp categorize_xandra_error(reason) do
-    {:unknown, %{reason: reason}}
+    Logger.warning("Unknown Xandra error reason type: #{inspect(reason)}")
+    {:unknown, :unknown, %{reason: reason}}
   end
 
+  # --- Error builder ---
+
+  defp build_error(:query_error, reason, _category, details, error) do
+    %ScyllaError{
+      type: :query_error,
+      reason: reason,
+      message: "Query execution failed: #{format_reason(reason)}",
+      suggestion: query_error_suggestion(details),
+      original_error: error
+    }
+  end
+
+  defp build_error(:syntax_error, reason, _category, _details, error) do
+    %ScyllaError{
+      type: :syntax_error,
+      reason: reason,
+      message: "CQL syntax error: #{format_reason(reason)}",
+      suggestion: syntax_error_suggestion(),
+      original_error: error
+    }
+  end
+
+  defp build_error(:schema_error, reason, _category, details, error) do
+    %ScyllaError{
+      type: :schema_error,
+      reason: reason,
+      message: "Schema error: #{format_reason(reason)}",
+      suggestion: schema_error_suggestion(details),
+      original_error: error
+    }
+  end
+
+  defp build_error(:unauthorized, reason, _category, _details, error) do
+    %ScyllaError{
+      type: :unauthorized,
+      reason: reason,
+      message: "Unauthorized: #{format_reason(reason)}",
+      suggestion: unauthorized_suggestion(),
+      original_error: error
+    }
+  end
+
+  defp build_error(:overloaded, reason, _category, _details, error) do
+    %ScyllaError{
+      type: :overloaded,
+      reason: reason,
+      message: "ScyllaDB node is overloaded: #{format_reason(reason)}",
+      suggestion: overloaded_suggestion(),
+      original_error: error
+    }
+  end
+
+  defp build_error(:timeout, reason, _category, _details, error) do
+    %ScyllaError{
+      type: :timeout,
+      reason: reason,
+      message: "Query timeout: #{format_reason(reason)}",
+      suggestion: timeout_suggestion(),
+      original_error: error
+    }
+  end
+
+  defp build_error(:already_exists, reason, _category, _details, error) do
+    %ScyllaError{
+      type: :already_exists,
+      reason: reason,
+      message: "Resource already exists: #{format_reason(reason)}",
+      suggestion: already_exists_suggestion(),
+      original_error: error
+    }
+  end
+
+  defp build_error(:not_found, reason, _category, _details, error) do
+    %ScyllaError{
+      type: :not_found,
+      reason: reason,
+      message: "Resource not found: #{format_reason(reason)}",
+      suggestion: not_found_suggestion(),
+      original_error: error
+    }
+  end
+
+  defp build_error(:consistency_error, reason, _category, _details, error) do
+    %ScyllaError{
+      type: :consistency_error,
+      reason: reason,
+      message: "Consistency level not met: #{format_reason(reason)}",
+      suggestion: consistency_error_suggestion(),
+      original_error: error
+    }
+  end
+
+  defp build_error(:unknown, reason, _category, _details, error) do
+    %ScyllaError{
+      type: :unknown,
+      reason: reason,
+      message: "Unknown ScyllaDB error: #{format_reason(reason)}",
+      suggestion: "Check ScyllaDB logs for more details.",
+      original_error: error
+    }
+  end
+
+  defp build_error(type, reason, _category, _details, error) do
+    %ScyllaError{
+      type: type,
+      reason: reason,
+      message: "ScyllaDB error: #{format_reason(reason)}",
+      suggestion: "Check ScyllaDB logs for more details.",
+      original_error: error
+    }
+  end
+
+  # --- Formatting ---
+
   defp format_reason(reason) when is_binary(reason) do
-    # Clean up the reason string
     reason
     |> String.replace(~r/^\w+:/, "")
     |> String.trim()
@@ -310,9 +434,9 @@ defmodule AshScylla.Error.ScyllaError do
     inspect(reason)
   end
 
-  # Suggestion helpers
+  # --- Suggestion helpers ---
 
-  defp query_error_suggestion(%{reason: reason}) do
+  defp query_error_suggestion(%{reason: reason}) when is_binary(reason) do
     cond do
       String.contains?(reason, "PRIMARY KEY") ->
         "Check that you're providing all primary key columns in your query."
@@ -328,7 +452,11 @@ defmodule AshScylla.Error.ScyllaError do
     end
   end
 
-  defp syntax_error_suggestion(_details) do
+  defp query_error_suggestion(_details) do
+    "Review the CQL query syntax and ensure all referenced columns exist."
+  end
+
+  defp syntax_error_suggestion do
     "Check the CQL syntax. Common issues:\n" <>
       "- Missing or extra commas\n" <>
       "- Incorrect keyword usage\n" <>
@@ -346,14 +474,14 @@ defmodule AshScylla.Error.ScyllaError do
     "Check that all referenced tables, columns, and keyspaces exist and are properly configured."
   end
 
-  defp unauthorized_suggestion(_details) do
+  defp unauthorized_suggestion do
     "Check that:\n" <>
       "1. The user has the necessary permissions\n" <>
       "2. Authentication credentials are correct\n" <>
       "3. Role-based access control is properly configured"
   end
 
-  defp overloaded_suggestion(_details) do
+  defp overloaded_suggestion do
     "The ScyllaDB node is overloaded. Consider:\n" <>
       "1. Increasing the request timeout\n" <>
       "2. Reducing the query load\n" <>
@@ -361,7 +489,7 @@ defmodule AshScylla.Error.ScyllaError do
       "4. Checking for inefficient queries"
   end
 
-  defp timeout_suggestion(_details) do
+  defp timeout_suggestion do
     "Query timed out. Consider:\n" <>
       "1. Increasing the request_timeout in repo configuration\n" <>
       "2. Optimizing the query (add more specific WHERE clauses)\n" <>
@@ -369,21 +497,21 @@ defmodule AshScylla.Error.ScyllaError do
       "4. Checking ScyllaDB node performance"
   end
 
-  defp already_exists_suggestion(_details) do
+  defp already_exists_suggestion do
     "The resource already exists. Consider:\n" <>
       "1. Using IF NOT EXISTS in your CQL\n" <>
       "2. Checking if the record already exists before inserting\n" <>
       "3. Using UPDATE instead of INSERT if appropriate"
   end
 
-  defp not_found_suggestion(_details) do
+  defp not_found_suggestion do
     "The resource was not found. Check that:\n" <>
       "1. The table/keyspace exists\n" <>
       "2. You're using the correct names\n" <>
       "3. The resource hasn't been dropped"
   end
 
-  defp consistency_error_suggestion(_details) do
+  defp consistency_error_suggestion do
     "The required consistency level was not met. Consider:\n" <>
       "1. Lowering the consistency level (e.g., from QUORUM to ONE)\n" <>
       "2. Ensuring enough replicas are available\n" <>

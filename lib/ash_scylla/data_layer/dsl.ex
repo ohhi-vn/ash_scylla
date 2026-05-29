@@ -8,7 +8,7 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# WITHOUT REQUIRED WARRANTIES OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -53,6 +53,8 @@ defmodule AshScylla.DataLayer.Dsl do
   - `:materialized_view` - Define materialized views with different primary key structure
   """
 
+  require Logger
+
   @doc """
   Macro for configuring ScyllaDB options in Ash resources.
 
@@ -74,65 +76,100 @@ defmodule AshScylla.DataLayer.Dsl do
           include_columns: [:name, :age]
       end
   """
+  @spec ash_scylla(keyword()) :: Macro.t()
   defmacro ash_scylla(do: block) do
-    quote do
-      @ash_scylla_secondary_indexes []
-      @ash_scylla_materialized_views []
+    # Transform DSL calls in the block into setter function calls.
+    # `table "users"`       -> `__set_table__(__MODULE__, "users")`
+    # `keyspace "my_ks"`    -> `__set_keyspace__(__MODULE__, "my_ks")`
+    # etc.
+    transformed =
+      Macro.prewalk(block, fn
+        {:table, meta, [value]} ->
+          {:__set_table__, meta, [{:__MODULE__, [], nil}, value]}
 
-      unquote(block)
-      |> Keyword.new()
-      |> Enum.each(fn
-        {:table, val} ->
-          @ash_scylla_table val
+        {:keyspace, meta, [value]} ->
+          {:__set_keyspace__, meta, [{:__MODULE__, [], nil}, value]}
 
-        {:keyspace, val} ->
-          @ash_scylla_keyspace val
+        {:consistency, meta, [value]} ->
+          {:__set_consistency__, meta, [{:__MODULE__, [], nil}, value]}
 
-        {:consistency, val} ->
-          @ash_scylla_consistency val
+        {:ttl, meta, [value]} ->
+          {:__set_ttl__, meta, [{:__MODULE__, [], nil}, value]}
 
-        {:ttl, val} ->
-          @ash_scylla_ttl val
+        {:secondary_index, meta, args} ->
+          index_config =
+            case args do
+              [column] when is_atom(column) ->
+                quote do: AshScylla.DataLayer.Dsl.parse_secondary_index(unquote(column))
 
-        {:secondary_index, index_config} ->
-          parsed = AshScylla.DataLayer.Dsl.parse_secondary_index(index_config)
-          @ash_scylla_secondary_indexes [parsed | @ash_scylla_secondary_indexes]
+              [columns] when is_list(columns) ->
+                quote do: AshScylla.DataLayer.Dsl.parse_secondary_index(unquote(columns))
 
-        {:materialized_view, {view_name, view_config}} when is_atom(view_name) ->
-          @ash_scylla_materialized_views [
-            %{name: view_name, config: view_config}
-            | @ash_scylla_materialized_views
-          ]
+              [{column, opts}] when is_atom(column) ->
+                quote do:
+                        AshScylla.DataLayer.Dsl.parse_secondary_index(
+                          {unquote(column), unquote(opts)}
+                        )
+            end
 
-        {:materialized_view, view_config} when is_list(view_config) ->
+          {:__add_secondary_index__, meta, [{:__MODULE__, [], nil}, index_config]}
+
+        {:materialized_view, meta, [{view_name, view_config}]} when is_atom(view_name) ->
+          view_map =
+            quote do: %{
+                    name: unquote(view_name),
+                    config: unquote(view_config)
+                  }
+
+          {:__add_materialized_view__, meta, [{:__MODULE__, [], nil}, view_map]}
+
+        {:materialized_view, _meta, [view_config]} when is_list(view_config) ->
           raise "materialized_view requires a name, e.g. materialized_view :view_name, primary_key: [...]"
 
         other ->
-          raise "Unknown ash_scylla option: #{inspect(other)}"
+          other
       end)
 
+    quote do
+      @ash_scylla_table nil
+      @ash_scylla_keyspace nil
+      @ash_scylla_consistency nil
+      @ash_scylla_ttl nil
+      @ash_scylla_secondary_indexes []
+      @ash_scylla_materialized_views []
+
+      unquote(transformed)
+
       # Generate getter functions at compile time
-      def __ash_scylla__(:table), do: Module.get_attribute(__MODULE__, :ash_scylla_table)
-      def __ash_scylla__(:keyspace), do: Module.get_attribute(__MODULE__, :ash_scylla_keyspace)
+      @doc false
+      def __ash_scylla__(:table), do: @ash_scylla_table
 
-      def __ash_scylla__(:consistency),
-        do: Module.get_attribute(__MODULE__, :ash_scylla_consistency)
+      @doc false
+      def __ash_scylla__(:keyspace), do: @ash_scylla_keyspace
 
-      def __ash_scylla__(:ttl), do: Module.get_attribute(__MODULE__, :ash_scylla_ttl)
+      @doc false
+      def __ash_scylla__(:consistency), do: @ash_scylla_consistency
 
+      @doc false
+      def __ash_scylla__(:ttl), do: @ash_scylla_ttl
+
+      @doc false
       def __ash_scylla__(:secondary_indexes) do
-        Module.get_attribute(__MODULE__, :ash_scylla_secondary_indexes) || []
+        @ash_scylla_secondary_indexes
       end
 
+      @doc false
       def __ash_scylla__(:materialized_views) do
-        Module.get_attribute(__MODULE__, :ash_scylla_materialized_views) || []
+        @ash_scylla_materialized_views
       end
 
+      @doc false
       def __ash_scylla__(_opt), do: nil
     end
   end
 
   @doc false
+  @spec parse_secondary_index(atom() | list() | {atom(), keyword()}) :: map()
   def parse_secondary_index(column) when is_atom(column) do
     %{columns: [column], name: nil, options: []}
   end
@@ -152,6 +189,7 @@ defmodule AshScylla.DataLayer.Dsl do
   @doc """
   Gets the configured table name for a resource.
   """
+  @spec table(module()) :: String.t() | nil
   def table(resource) do
     if function_exported?(resource, :__ash_scylla__, 1) do
       resource.__ash_scylla__(:table)
@@ -163,6 +201,7 @@ defmodule AshScylla.DataLayer.Dsl do
   @doc """
   Gets the configured keyspace for a resource.
   """
+  @spec keyspace(module()) :: String.t() | nil
   def keyspace(resource) do
     if function_exported?(resource, :__ash_scylla__, 1) do
       resource.__ash_scylla__(:keyspace)
@@ -174,6 +213,7 @@ defmodule AshScylla.DataLayer.Dsl do
   @doc """
   Gets the configured consistency level for a resource.
   """
+  @spec consistency(module()) :: atom() | nil
   def consistency(resource) do
     if function_exported?(resource, :__ash_scylla__, 1) do
       resource.__ash_scylla__(:consistency)
@@ -185,6 +225,7 @@ defmodule AshScylla.DataLayer.Dsl do
   @doc """
   Gets the configured TTL for a resource.
   """
+  @spec ttl(module()) :: pos_integer() | nil
   def ttl(resource) do
     if function_exported?(resource, :__ash_scylla__, 1) do
       resource.__ash_scylla__(:ttl)
@@ -201,6 +242,7 @@ defmodule AshScylla.DataLayer.Dsl do
   - `:name` - optional custom index name
   - `:options` - additional options
   """
+  @spec secondary_indexes(module()) :: [map()]
   def secondary_indexes(resource) do
     if function_exported?(resource, :__ash_scylla__, 1) do
       resource.__ash_scylla__(:secondary_indexes)
@@ -216,6 +258,7 @@ defmodule AshScylla.DataLayer.Dsl do
   - `:name` - the view name (atom)
   - `:config` - the view configuration keyword list
   """
+  @spec materialized_views(module()) :: [map()]
   def materialized_views(resource) do
     if function_exported?(resource, :__ash_scylla__, 1) do
       resource.__ash_scylla__(:materialized_views)
@@ -227,8 +270,51 @@ defmodule AshScylla.DataLayer.Dsl do
   @doc """
   Checks if a column has a secondary index defined.
   """
+  @spec has_secondary_index?(module(), atom()) :: boolean()
   def has_secondary_index?(resource, column) do
     indexes = secondary_indexes(resource)
     Enum.any?(indexes, fn idx -> column in idx.columns end)
+  end
+
+  # ============================================================================
+  # DSL setter functions — called by the DSL body at compile time
+  # ============================================================================
+
+  @doc false
+  @spec __set_table__(module(), String.t()) :: :ok
+  def __set_table__(module, value) do
+    Module.put_attribute(module, :ash_scylla_table, value)
+  end
+
+  @doc false
+  @spec __set_keyspace__(module(), String.t()) :: :ok
+  def __set_keyspace__(module, value) do
+    Module.put_attribute(module, :ash_scylla_keyspace, value)
+  end
+
+  @doc false
+  @spec __set_consistency__(module(), atom()) :: :ok
+  def __set_consistency__(module, value) do
+    Module.put_attribute(module, :ash_scylla_consistency, value)
+  end
+
+  @doc false
+  @spec __set_ttl__(module(), pos_integer()) :: :ok
+  def __set_ttl__(module, value) do
+    Module.put_attribute(module, :ash_scylla_ttl, value)
+  end
+
+  @doc false
+  @spec __add_secondary_index__(module(), map()) :: :ok
+  def __add_secondary_index__(module, index_config) do
+    current = Module.get_attribute(module, :ash_scylla_secondary_indexes)
+    Module.put_attribute(module, :ash_scylla_secondary_indexes, [index_config | current])
+  end
+
+  @doc false
+  @spec __add_materialized_view__(module(), map()) :: :ok
+  def __add_materialized_view__(module, view_config) do
+    current = Module.get_attribute(module, :ash_scylla_materialized_views)
+    Module.put_attribute(module, :ash_scylla_materialized_views, [view_config | current])
   end
 end

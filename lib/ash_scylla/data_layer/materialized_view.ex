@@ -8,7 +8,7 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# WITHOUT REQUIRED WARRANTIES OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -57,6 +57,7 @@ defmodule AshScylla.DataLayer.MaterializedView do
   @doc """
   Generates CQL for creating a materialized view.
   """
+  @spec create_view_cql(atom(), String.t(), keyword()) :: String.t()
   def create_view_cql(view_name, base_table, view_config) do
     primary_key = Keyword.fetch!(view_config, :primary_key)
     include_columns = Keyword.get(view_config, :include_columns, [])
@@ -73,15 +74,17 @@ defmodule AshScylla.DataLayer.MaterializedView do
         where_clause
       else
         primary_key
-        |> Enum.map(&"#{&1} IS NOT NULL")
-        |> Enum.join(" AND ")
+        |> Enum.map_join(" AND ", &"#{&1} IS NOT NULL")
       end
 
     # Build PRIMARY KEY definition
     pk_def =
       case primary_key do
-        [partition_key] -> "(#{partition_key})"
-        [partition_key | clustering_keys] -> "(#{partition_key}, #{Enum.join(clustering_keys, ", ")})"
+        [partition_key] ->
+          "(#{partition_key})"
+
+        [partition_key | clustering_keys] ->
+          "(#{partition_key}, #{Enum.join(clustering_keys, ", ")})"
       end
 
     # Build CLUSTERING ORDER if specified
@@ -89,8 +92,7 @@ defmodule AshScylla.DataLayer.MaterializedView do
       if clustering_order != [] do
         order_str =
           clustering_order
-          |> Enum.map(fn {col, dir} -> "#{col} #{dir}" end)
-          |> Enum.join(", ")
+          |> Enum.map_join(", ", fn {col, dir} -> "#{col} #{dir}" end)
 
         " WITH CLUSTERING ORDER BY (#{order_str})"
       else
@@ -109,6 +111,7 @@ defmodule AshScylla.DataLayer.MaterializedView do
   @doc """
   Generates CQL for dropping a materialized view.
   """
+  @spec drop_view_cql(atom()) :: String.t()
   def drop_view_cql(view_name) do
     "DROP MATERIALIZED VIEW IF EXISTS #{view_name}"
   end
@@ -116,6 +119,7 @@ defmodule AshScylla.DataLayer.MaterializedView do
   @doc """
   Validates a materialized view configuration.
   """
+  @spec validate_view_config(keyword()) :: :ok | {:error, String.t()}
   def validate_view_config(view_config) do
     with {:ok, _} <- validate_primary_key(view_config),
          {:ok, _} <- validate_columns(view_config) do
@@ -123,6 +127,7 @@ defmodule AshScylla.DataLayer.MaterializedView do
     end
   end
 
+  @spec validate_primary_key(keyword()) :: {:ok, :valid} | {:error, String.t()}
   defp validate_primary_key(view_config) do
     case Keyword.get(view_config, :primary_key) do
       nil -> {:error, "primary_key is required for materialized view"}
@@ -131,6 +136,7 @@ defmodule AshScylla.DataLayer.MaterializedView do
     end
   end
 
+  @spec validate_columns(keyword()) :: {:ok, :valid} | {:error, String.t()}
   defp validate_columns(view_config) do
     primary_key = Keyword.fetch!(view_config, :primary_key)
     include_columns = Keyword.get(view_config, :include_columns, [])

@@ -62,9 +62,16 @@ defmodule AshScylla.DataLayer do
   @behaviour Ash.DataLayer
 
   require Ecto.Query
+  require Logger
   require Xandra
 
+  alias Ash.Resource.Info
+  alias Ash.Type.UUID
+  alias AshScylla.DataLayer.Batch
+  alias AshScylla.DataLayer.Dsl
   alias AshScylla.DataLayer.QueryBuilder
+
+  @dialyzer :no_match
 
   @supported_features MapSet.new([
                         :create,
@@ -113,20 +120,7 @@ defmodule AshScylla.DataLayer do
   # ============================================================================
 
   @impl Ash.DataLayer
-  @spec can?(Ash.Resource.t() | Ash.DataLayer.t(), atom()) :: boolean()
-  def can?(_resource_or_dsl, {feature, _arg}) do
-    case feature do
-      :aggregate -> false
-      :join -> false
-      :lateral_join -> false
-      :lock -> false
-      :calculate -> false
-      :combine -> false
-      :transact -> false
-      _ -> false
-    end
-  end
-
+  @spec can?(Ash.Resource.t() | Ash.DataLayer.t(), atom() | {atom(), term()}) :: boolean()
   def can?(_resource_or_dsl, feature) when is_atom(feature) do
     MapSet.member?(@supported_features, feature)
   end
@@ -138,10 +132,12 @@ defmodule AshScylla.DataLayer do
   @impl Ash.DataLayer
   @spec resource_to_query(Ash.Resource.t(), Ash.Domain.t()) :: t()
   def resource_to_query(resource, _domain) do
+    table = source(resource)
+
     %__MODULE__{
       resource: resource,
       repo: repo(resource),
-      table: source(resource)
+      table: table
     }
   end
 
@@ -183,28 +179,41 @@ defmodule AshScylla.DataLayer do
 
     opts = if tenant, do: [prefix: tenant], else: []
 
+    Logger.debug(
+      "Executing run_query: #{query} with params #{inspect(params)} opts #{inspect(opts)}"
+    )
+
     case repo.query(query, params, opts) do
       {:ok, %{rows: rows}} ->
         records = Enum.map(rows, &to_ash_record(&1, resource))
         {:ok, records}
 
       {:error, %Xandra.Error{} = error} ->
+        Logger.warning("Xandra error in run_query repo.query: #{Exception.message(error)}")
         {:error, AshScylla.Error.wrap_xandra_error(error)}
 
       {:error, %Xandra.ConnectionError{} = error} ->
+        Logger.warning(
+          "Xandra connection error in run_query repo.query: #{Exception.message(error)}"
+        )
+
         {:error, AshScylla.Error.wrap_xandra_error(error)}
 
       {:error, error} ->
+        Logger.error("Unexpected error in run_query repo.query: #{inspect(error)}")
         {:error, AshScylla.Error.wrap_xandra_error(error)}
     end
   rescue
     e in Xandra.Error ->
+      Logger.warning("Xandra error in run_query: #{Exception.message(e)}")
       {:error, AshScylla.Error.wrap_xandra_error(e)}
 
     e in Xandra.ConnectionError ->
+      Logger.warning("Xandra connection error in run_query: #{Exception.message(e)}")
       {:error, AshScylla.Error.wrap_xandra_error(e)}
 
     e ->
+      Logger.error("Unexpected error in run_query: #{Exception.message(e)}")
       {:error, AshScylla.Error.wrap_xandra_error(e)}
   end
 
@@ -274,34 +283,39 @@ defmodule AshScylla.DataLayer do
   def bulk_create(resource, changesets, _opts) do
     repo = repo(resource)
     table = source(resource)
-    keyspace = AshScylla.DataLayer.Dsl.keyspace(resource)
+    keyspace = Dsl.keyspace(resource)
 
     # Get TTL and consistency from resource DSL
-    ttl = AshScylla.DataLayer.Dsl.ttl(resource)
-    consistency = AshScylla.DataLayer.Dsl.consistency(resource)
+    ttl = Dsl.ttl(resource)
+    consistency = Dsl.consistency(resource)
+
+    sanitized_table = sanitize_identifier(table)
 
     # Build batch insert statements
     statements =
       Enum.map(changesets, fn changeset ->
         attrs = changeset_to_insert_attrs(changeset, resource)
 
-        {fields, values} =
-          attrs
-          |> Enum.with_index()
-          |> Enum.map(fn {{k, v}, _i} -> {"#{k}", v} end)
-          |> Enum.unzip()
+        {sanitized_fields, values} =
+          Enum.reduce(attrs, {[], []}, fn {k, v}, {fs, vs} ->
+            {[sanitize_identifier(to_string(k)) | fs], [v | vs]}
+          end)
 
-        using_clause =
-          if ttl do
-            " USING TTL #{ttl}"
-          else
-            ""
-          end
+        sanitized_fields = Enum.reverse(sanitized_fields)
+        values = :lists.reverse(values)
+        field_count = length(sanitized_fields)
 
-        query = """
-        INSERT INTO #{table} (#{Enum.join(fields, ", ")})
-        VALUES (#{Enum.map(1..length(values), fn _ -> "?" end) |> Enum.join(", ")})#{using_clause}
-        """
+        query =
+          IO.iodata_to_binary([
+            "INSERT INTO ",
+            sanitized_table,
+            " (",
+            Enum.join(sanitized_fields, ", "),
+            ") VALUES (",
+            Enum.map_join(1..field_count, ", ", fn _ -> "?" end),
+            ")",
+            if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
+          ])
 
         {query, values}
       end)
@@ -309,10 +323,16 @@ defmodule AshScylla.DataLayer do
     # Execute batch insert
     opts =
       []
-      |> maybe_put(:prefix, keyspace)
+      |> maybe_put(:prefix, sanitize_keyspace(keyspace))
       |> maybe_put(:consistency, consistency)
 
-    case AshScylla.DataLayer.Batch.batch_insert(repo, statements, opts) do
+    Logger.info("Bulk creating #{length(changesets)} records in table #{table}")
+
+    Logger.warning(
+      "bulk_create returns records constructed from changeset attributes, not from DB. DB defaults/triggers may not be reflected."
+    )
+
+    case Batch.batch_insert(repo, statements, opts) do
       {:ok, _} ->
         # Fetch created records
         records =
@@ -332,29 +352,77 @@ defmodule AshScylla.DataLayer do
   @impl Ash.DataLayer
   @spec source(Ash.Resource.t()) :: String.t()
   def source(resource) do
-    # Get the table name from the resource configuration
-    # This is typically configured via `table "name"` in the resource DSL
-    resource
-    |> Module.get_attribute(:table)
-    |> to_string()
+    # Cache the resolved table name per resource to avoid repeated Module.get_attribute calls.
+    # This function is called multiple times per request (create, update, delete, fetch).
+    case Process.get({__MODULE__, :source, resource}) do
+      nil ->
+        name =
+          resource
+          |> Module.get_attribute(:table)
+          |> to_string()
+
+        resolved =
+          case name do
+            "" ->
+              resource
+              |> Module.split()
+              |> List.last()
+              |> Macro.underscore()
+
+            _ ->
+              name
+          end
+
+        resolved = sanitize_identifier(resolved)
+        Process.put({__MODULE__, :source, resource}, resolved)
+        resolved
+
+      cached ->
+        cached
+    end
   rescue
     _ ->
-      # Fallback to resource name
-      resource
-      |> Module.split()
-      |> List.last()
-      |> Macro.underscore()
+      name =
+        resource
+        |> Module.split()
+        |> List.last()
+        |> Macro.underscore()
+
+      sanitize_identifier(name)
   end
 
   # ============================================================================
   # Helper Functions
   # ============================================================================
 
+  @valid_identifier ~r/^[a-zA-Z_][a-zA-Z0-9_]*$/
+
+  @doc false
+  @spec sanitize_identifier(String.t()) :: String.t()
+  defp sanitize_identifier(name) when is_binary(name) do
+    if Regex.match?(@valid_identifier, name) do
+      name
+    else
+      raise ArgumentError,
+            "Invalid identifier: #{inspect(name)}. Identifiers must match ~r/^[a-zA-Z_][a-zA-Z0-9_]*$/"
+    end
+  end
+
   defp repo(resource) do
-    # Get the repo from the resource configuration
-    case Module.get_attribute(resource, :repo) do
-      nil -> raise "No repo configured for #{inspect(resource)}"
-      repo -> repo
+    # Cache the repo module per resource to avoid repeated Module.get_attribute calls.
+    case Process.get({__MODULE__, :repo, resource}) do
+      nil ->
+        case Module.get_attribute(resource, :repo) do
+          nil ->
+            raise "No repo configured for #{inspect(resource)}"
+
+          repo ->
+            Process.put({__MODULE__, :repo, resource}, repo)
+            repo
+        end
+
+      cached ->
+        cached
     end
   end
 
@@ -363,7 +431,7 @@ defmodule AshScylla.DataLayer do
 
     # Add primary key if not present and autogenerate is configured
     attrs =
-      Enum.reduce(Ash.Resource.Info.attributes(resource), attrs, fn attr, acc ->
+      Enum.reduce(Info.attributes(resource), attrs, fn attr, acc ->
         if attr.primary_key? && attr.autogenerate? && !Map.has_key?(acc, attr.name) do
           Map.put(acc, attr.name, autogenerate_value(attr))
         else
@@ -380,7 +448,7 @@ defmodule AshScylla.DataLayer do
 
   defp autogenerate_value(attr) do
     case attr.type do
-      Ash.Type.UUID -> Ecto.UUID.generate()
+      UUID -> Ecto.UUID.generate()
       Ash.Type.Integer -> nil
       _ -> nil
     end
@@ -389,26 +457,33 @@ defmodule AshScylla.DataLayer do
   defp do_insert(attrs, resource, repo) do
     table = source(resource)
     opts = build_opts(resource)
+    ttl = Dsl.ttl(resource)
 
-    # Get TTL from resource DSL
-    ttl = AshScylla.DataLayer.Dsl.ttl(resource)
+    {sanitized_fields, values} =
+      Enum.reduce(attrs, {[], []}, fn {k, v}, {fs, vs} ->
+        {[sanitize_identifier(to_string(k)) | fs], [v | vs]}
+      end)
 
-    # Build the CQL INSERT statement for ScyllaDB
-    {fields, values} =
-      attrs |> Enum.with_index() |> Enum.map(fn {{k, v}, i} -> {"#{k}", v, i} end) |> Enum.unzip()
+    # Both lists are reversed (prepended), so reverse back
+    sanitized_fields = Enum.reverse(sanitized_fields)
+    values = :lists.reverse(values)
 
-    # Add USING TTL clause if configured
-    using_clause =
-      if ttl do
-        " USING TTL #{ttl}"
-      else
-        ""
-      end
+    sanitized_table = sanitize_identifier(table)
+    field_count = length(sanitized_fields)
 
-    query = """
-    INSERT INTO #{table} (#{Enum.join(fields, ", ")})
-    VALUES (#{Enum.map(1..length(values), fn _ -> "?" end) |> Enum.join(", ")})#{using_clause}
-    """
+    query =
+      IO.iodata_to_binary([
+        "INSERT INTO ",
+        sanitized_table,
+        " (",
+        Enum.join(sanitized_fields, ", "),
+        ") VALUES (",
+        Enum.map_join(1..field_count, ", ", fn _ -> "?" end),
+        ")",
+        if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
+      ])
+
+    Logger.debug("Executing INSERT: #{query} with params #{inspect(values)}")
 
     with {:ok, _} <- repo.query(query, values, opts),
          {:ok, record} <- fetch_by_primary_key(attrs, resource, repo) do
@@ -420,21 +495,39 @@ defmodule AshScylla.DataLayer do
   defp do_update(attrs, changeset, resource, repo) do
     table = source(resource)
     opts = build_opts(resource)
+    sanitized_table = sanitize_identifier(table)
 
-    # Build UPDATE statement
-    set_clauses = Enum.map(attrs, fn {k, _v} -> "#{k} = ?" end)
-    values = Map.values(attrs)
+    # Build SET clauses and values in a single pass
+    {set_clauses_reversed, values_reversed} =
+      Enum.reduce(attrs, {[], []}, fn {k, v}, {cs, vs} ->
+        {["#{sanitize_identifier(to_string(k))} = ?" | cs], [v | vs]}
+      end)
 
-    # Get primary key for WHERE clause
+    set_clauses = Enum.reverse(set_clauses_reversed)
+    values = :lists.reverse(values_reversed)
+
+    # Build WHERE clause from primary key
     pk = get_primary_key(changeset, resource)
-    pk_clause = Enum.map(pk, fn {k, _} -> "#{k} = ?" end)
-    pk_values = Map.values(pk)
 
-    query = """
-    UPDATE #{table}
-    SET #{Enum.join(set_clauses, ", ")}
-    WHERE #{Enum.join(pk_clause, " AND ")}
-    """
+    {pk_clauses_reversed, pk_values_reversed} =
+      Enum.reduce(pk, {[], []}, fn {k, v}, {cs, vs} ->
+        {["#{sanitize_identifier(to_string(k))} = ?" | cs], [v | vs]}
+      end)
+
+    pk_clauses = Enum.reverse(pk_clauses_reversed)
+    pk_values = :lists.reverse(pk_values_reversed)
+
+    query =
+      IO.iodata_to_binary([
+        "UPDATE ",
+        sanitized_table,
+        " SET ",
+        Enum.join(set_clauses, ", "),
+        " WHERE ",
+        Enum.join(pk_clauses, " AND ")
+      ])
+
+    Logger.debug("Executing UPDATE: #{query} with params #{inspect(values ++ pk_values)}")
 
     with {:ok, _} <- repo.query(query, values ++ pk_values, opts),
          {:ok, record} <- fetch_by_primary_key(pk, resource, repo) do
@@ -446,15 +539,26 @@ defmodule AshScylla.DataLayer do
   defp do_delete(changeset, resource, repo) do
     table = source(resource)
     opts = build_opts(resource)
-
     pk = get_primary_key(changeset, resource)
-    pk_clause = Enum.map(pk, fn {k, _} -> "#{k} = ?" end)
-    pk_values = Map.values(pk)
+    sanitized_table = sanitize_identifier(table)
 
-    query = """
-    DELETE FROM #{table}
-    WHERE #{Enum.join(pk_clause, " AND ")}
-    """
+    {pk_clauses_reversed, pk_values_reversed} =
+      Enum.reduce(pk, {[], []}, fn {k, v}, {cs, vs} ->
+        {["#{sanitize_identifier(to_string(k))} = ?" | cs], [v | vs]}
+      end)
+
+    pk_clauses = Enum.reverse(pk_clauses_reversed)
+    pk_values = :lists.reverse(pk_values_reversed)
+
+    query =
+      IO.iodata_to_binary([
+        "DELETE FROM ",
+        sanitized_table,
+        " WHERE ",
+        Enum.join(pk_clauses, " AND ")
+      ])
+
+    Logger.debug("Executing DELETE: #{query} with params #{inspect(pk_values)}")
 
     case repo.query(query, pk_values, opts) do
       {:ok, _} ->
@@ -467,15 +571,26 @@ defmodule AshScylla.DataLayer do
 
   defp fetch_by_primary_key(pk, resource, repo) do
     table = source(resource)
+    sanitized_table = sanitize_identifier(table)
 
-    pk_clause = Enum.map(pk, fn {k, _} -> "#{k} = ?" end)
-    pk_values = Map.values(pk)
+    {pk_clauses_reversed, pk_values_reversed} =
+      Enum.reduce(pk, {[], []}, fn {k, v}, {cs, vs} ->
+        {["#{sanitize_identifier(to_string(k))} = ?" | cs], [v | vs]}
+      end)
 
-    query = """
-    SELECT * FROM #{table}
-    WHERE #{Enum.join(pk_clause, " AND ")}
-    LIMIT 1
-    """
+    pk_clauses = Enum.reverse(pk_clauses_reversed)
+    pk_values = :lists.reverse(pk_values_reversed)
+
+    query =
+      IO.iodata_to_binary([
+        "SELECT * FROM ",
+        sanitized_table,
+        " WHERE ",
+        Enum.join(pk_clauses, " AND "),
+        " LIMIT 1"
+      ])
+
+    Logger.debug("Executing SELECT: #{query} with params #{inspect(pk_values)}")
 
     case repo.query(query, pk_values) do
       {:ok, %{rows: [row | _]}} ->
@@ -487,7 +602,7 @@ defmodule AshScylla.DataLayer do
   end
 
   defp get_primary_key(changeset, resource) do
-    Enum.reduce(Ash.Resource.Info.attributes(resource), %{}, fn attr, acc ->
+    Enum.reduce(Info.attributes(resource), %{}, fn attr, acc ->
       if attr.primary_key? do
         Map.put(acc, attr.name, Map.get(changeset.attributes, attr.name))
       else
@@ -497,25 +612,31 @@ defmodule AshScylla.DataLayer do
   end
 
   defp to_ash_record(record, resource) do
-    resource
-    |> Ash.Resource.Info.attributes()
-    |> Enum.reduce(%{}, fn attr, acc ->
-      value = Map.get(record, attr.name)
-      Map.put(acc, attr.name, value)
-    end)
+    attrs =
+      resource
+      |> Info.attributes()
+      |> Enum.reduce(%{}, fn attr, acc ->
+        value = Map.get(record, attr.name)
+        Map.put(acc, attr.name, value)
+      end)
+
+    struct(resource, attrs)
   end
 
   # Build repo query options from resource configuration (keyspace, TTL, consistency).
   defp build_opts(resource) do
-    keyspace = AshScylla.DataLayer.Dsl.keyspace(resource)
-    ttl = AshScylla.DataLayer.Dsl.ttl(resource)
-    consistency = AshScylla.DataLayer.Dsl.consistency(resource)
+    keyspace = Dsl.keyspace(resource)
+    ttl = Dsl.ttl(resource)
+    consistency = Dsl.consistency(resource)
 
     []
-    |> maybe_put(:prefix, keyspace)
+    |> maybe_put(:prefix, sanitize_keyspace(keyspace))
     |> maybe_put(:ttl, ttl)
     |> maybe_put(:consistency, consistency)
   end
+
+  defp sanitize_keyspace(nil), do: nil
+  defp sanitize_keyspace(keyspace), do: sanitize_identifier(keyspace)
 
   defp maybe_put(opts, _key, nil), do: opts
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
@@ -525,14 +646,17 @@ defmodule AshScylla.DataLayer do
   defp handle_scylla_result(:ok), do: :ok
 
   defp handle_scylla_result({:error, %Xandra.Error{} = error}) do
+    Logger.warning("Xandra error: #{Exception.message(error)}")
     {:error, AshScylla.Error.wrap_xandra_error(error)}
   end
 
   defp handle_scylla_result({:error, %Xandra.ConnectionError{} = error}) do
+    Logger.warning("Xandra connection error: #{Exception.message(error)}")
     {:error, AshScylla.Error.wrap_xandra_error(error)}
   end
 
   defp handle_scylla_result({:error, error}) do
+    Logger.error("Unexpected error: #{inspect(error)}")
     {:error, AshScylla.Error.wrap_xandra_error(error)}
   end
 end
