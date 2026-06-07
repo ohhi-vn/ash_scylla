@@ -33,7 +33,7 @@ AshScylla enables you to use **ScyllaDB** or **Apache Cassandra** as a persisten
 
 ### Prerequisites
 
-- Elixir 1.19+
+- Elixir 1.17+
 - Running ScyllaDB or Cassandra instance
 - Basic knowledge of Ash Framework
 
@@ -44,7 +44,7 @@ Add `ash_scylla` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ash_scylla, "~> 0.1.0"}
+    {:ash_scylla, "~> 0.2.0"}
   ]
 end
 ```
@@ -364,12 +364,29 @@ For detailed documentation, see:
 Run the test suite:
 
 ```bash
-# Unit tests
+# Unit tests (no ScyllaDB required)
+mix test --exclude integration
+
+# All tests including integration (requires Docker for testcontainers)
 mix test
 
-# Integration tests (requires Docker for testcontainers)
+# Integration tests only
 mix test test/scylla_integration_test.exs
 ```
+
+### Test Structure
+
+| File | Description |
+|------|-------------|
+| `test/ash_scylla_test.exs` | Core DataLayer and DSL unit tests |
+| `test/edge_cases_test.exs` | Edge cases for QueryBuilder, Batch, Pagination, MaterializedView, Migration |
+| `test/error_edge_cases_test.exs` | Comprehensive error handling edge cases |
+| `test/ash_scylla/error_test.exs` | Error wrapping, retry logic, and formatting tests |
+| `test/ash_scylla/dsl_repo_migration_test.exs` | DSL configuration, Repo, and Migration tests |
+| `test/ash_scylla/query_builder_test.exs` | QueryBuilder and Pagination unit tests |
+| `test/ash_scylla/batch_materialized_view_test.exs` | Batch operations and MaterializedView tests |
+| `test/integration_test.exs` | Integration test placeholder |
+| `test/scylla_integration_test.exs` | Full integration tests with testcontainers |
 
 Integration tests use [testcontainers](https://github.com/testcontainers/testcontainers-elixir) to spin up a ScyllaDB instance automatically.
 

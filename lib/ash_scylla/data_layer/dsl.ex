@@ -85,16 +85,21 @@ defmodule AshScylla.DataLayer.Dsl do
     transformed =
       Macro.prewalk(block, fn
         {:table, meta, [value]} ->
-          {:__set_table__, meta, [{:__MODULE__, [], nil}, value]}
+          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_table__]},
+           meta, [{:__MODULE__, [], nil}, value]}
 
         {:keyspace, meta, [value]} ->
-          {:__set_keyspace__, meta, [{:__MODULE__, [], nil}, value]}
+          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_keyspace__]},
+           meta, [{:__MODULE__, [], nil}, value]}
 
         {:consistency, meta, [value]} ->
-          {:__set_consistency__, meta, [{:__MODULE__, [], nil}, value]}
+          {{:., meta,
+            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_consistency__]}, meta,
+           [{:__MODULE__, [], nil}, value]}
 
         {:ttl, meta, [value]} ->
-          {:__set_ttl__, meta, [{:__MODULE__, [], nil}, value]}
+          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_ttl__]}, meta,
+           [{:__MODULE__, [], nil}, value]}
 
         {:secondary_index, meta, args} ->
           index_config =
@@ -110,9 +115,17 @@ defmodule AshScylla.DataLayer.Dsl do
                         AshScylla.DataLayer.Dsl.parse_secondary_index(
                           {unquote(column), unquote(opts)}
                         )
+
+              [column, opts] when is_atom(column) and is_list(opts) ->
+                quote do:
+                        AshScylla.DataLayer.Dsl.parse_secondary_index(
+                          {unquote(column), unquote(opts)}
+                        )
             end
 
-          {:__add_secondary_index__, meta, [{:__MODULE__, [], nil}, index_config]}
+          {{:., meta,
+            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__add_secondary_index__]},
+           meta, [{:__MODULE__, [], nil}, index_config]}
 
         {:materialized_view, meta, [{view_name, view_config}]} when is_atom(view_name) ->
           view_map =
@@ -121,7 +134,9 @@ defmodule AshScylla.DataLayer.Dsl do
                     config: unquote(view_config)
                   }
 
-          {:__add_materialized_view__, meta, [{:__MODULE__, [], nil}, view_map]}
+          {{:., meta,
+            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__add_materialized_view__]},
+           meta, [{:__MODULE__, [], nil}, view_map]}
 
         {:materialized_view, _meta, [view_config]} when is_list(view_config) ->
           raise "materialized_view requires a name, e.g. materialized_view :view_name, primary_key: [...]"

@@ -409,10 +409,17 @@ defmodule AshScylla.DataLayer do
   end
 
   defp repo(resource) do
-    # Cache the repo module per resource to avoid repeated Module.get_attribute calls.
+    # Cache the repo module per resource to avoid repeated lookups.
     case Process.get({__MODULE__, :repo, resource}) do
       nil ->
-        case Module.get_attribute(resource, :repo) do
+        repo =
+          try do
+            Module.get_attribute(resource, :repo)
+          rescue
+            ArgumentError -> nil
+          end
+
+        case repo do
           nil ->
             raise "No repo configured for #{inspect(resource)}"
 

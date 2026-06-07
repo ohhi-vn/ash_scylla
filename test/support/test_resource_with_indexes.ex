@@ -1,4 +1,4 @@
-defmodule AshScylla.TestResource do
+defmodule AshScylla.TestResourceWithIndexes do
   @moduledoc """
   A test resource for demonstrating AshScylla usage with secondary indexes.
   """
@@ -6,6 +6,8 @@ defmodule AshScylla.TestResource do
   use Ash.Resource,
     domain: nil,
     data_layer: AshScylla.DataLayer
+
+  import AshScylla.DataLayer.Dsl
 
   ash_scylla do
     table "test_users"

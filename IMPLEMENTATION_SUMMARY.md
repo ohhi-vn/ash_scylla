@@ -74,11 +74,17 @@ AshScylla is a comprehensive data layer for the Ash Framework that enables persi
 
 | File | Purpose |
 |------|---------|
-| `test/ash_scylla_test.exs` | Basic unit tests |
+| `test/ash_scylla_test.exs` | Core DataLayer and DSL unit tests |
+| `test/edge_cases_test.exs` | Edge cases for all modules |
+| `test/error_edge_cases_test.exs` | Error handling edge cases |
+| `test/ash_scylla/error_test.exs` | Error wrapping, retry, formatting |
+| `test/ash_scylla/dsl_repo_migration_test.exs` | DSL, Repo, Migration tests |
+| `test/ash_scylla/query_builder_test.exs` | QueryBuilder and Pagination |
+| `test/ash_scylla/batch_materialized_view_test.exs` | Batch and MaterializedView |
 | `test/scylla_integration_test.exs` | Integration tests with testcontainers |
-| `test/comprehensive_test.exs` | Comprehensive feature tests |
 | `test/support/test_repo.ex` | Test repo configuration |
-| `test/support/test_resource.ex` | Test resource definitions |
+| `test/support/test_resource.ex` | Basic test resource |
+| `test/support/test_resource_with_indexes.ex` | Test resource with full DSL config |
 
 ---
 
@@ -247,12 +253,13 @@ Retry delays are tailored to error types:
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| `ash` | ~> 3.0 | Ash Framework |
-| `exandra` | ~> 0.9 | Ecto adapter for ScyllaDB/Cassandra |
-| `ecto` | ~> 3.12 | Ecto for database interaction |
-| `ecto_sql` | ~> 3.12 | SQL support for Ecto |
-| `testcontainers` | ~> 2.0 | Testcontainers for integration tests (test only) |
-| `benchee` | ~> 1.1 | Benchmarking (dev/test only) |
+| `ash` | ~> 3.24 | Ash Framework |
+| `exandra` | ~> 1.0 | Ecto adapter for ScyllaDB/Cassandra |
+| `ecto` | ~> 3.13 | Ecto for database interaction |
+| `ecto_sql` | ~> 3.13 | SQL support for Ecto |
+| `reactor` | ~> 1.0 | Reactor for Ash workflows |
+| `testcontainers` | ~> 2.3 | Testcontainers for integration tests (test only) |
+| `benchee` | ~> 1.5 | Benchmarking (dev/test only) |
 
 ---
 
@@ -261,6 +268,7 @@ Retry delays are tailored to error types:
 ### ✅ Working Features
 
 - Compiles successfully with no errors
+- 200+ tests covering core, edge cases, and error handling
 - Unit tests pass
 - Integration tests with real ScyllaDB (using testcontainers)
 - Full CRUD operations
