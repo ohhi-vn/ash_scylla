@@ -145,9 +145,10 @@ defmodule AshScylla.DataLayer.FilterValidatorTest do
         %{operator: :eq, left: %{name: :col_b}, right: %{value: "b"}}
       ]
 
-      error = assert_raise AshScylla.Error, fn ->
-        FilterValidator.validate_filters(ResourceWithPKOnly, filters)
-      end
+      error =
+        assert_raise AshScylla.Error, fn ->
+          FilterValidator.validate_filters(ResourceWithPKOnly, filters)
+        end
 
       assert error.message =~ "col_a"
       assert error.message =~ "col_b"
@@ -159,9 +160,10 @@ defmodule AshScylla.DataLayer.FilterValidatorTest do
         %{operator: :eq, left: %{name: :same_col}, right: %{value: "b"}}
       ]
 
-      error = assert_raise AshScylla.Error, fn ->
-        FilterValidator.validate_filters(ResourceWithPKOnly, filters)
-      end
+      error =
+        assert_raise AshScylla.Error, fn ->
+          FilterValidator.validate_filters(ResourceWithPKOnly, filters)
+        end
 
       # The column name appears in the filter list and in the suggestion.
       # Split gives n+1 segments for n occurrences.

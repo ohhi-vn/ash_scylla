@@ -8,13 +8,13 @@ defmodule AshScylla.TestResource do
     data_layer: AshScylla.DataLayer
 
   attributes do
-    uuid_primary_key :id
-    attribute :name, :string
-    attribute :email, :string
-    attribute :age, :integer
+    uuid_primary_key(:id)
+    attribute(:name, :string)
+    attribute(:email, :string)
+    attribute(:age, :integer)
   end
 
   actions do
-    defaults [:create, :read, :update, :destroy]
+    defaults([:create, :read, :update, :destroy])
   end
 end

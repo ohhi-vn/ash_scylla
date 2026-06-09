@@ -643,7 +643,6 @@ defmodule AshScylla.EdgeCasesTest do
             %{columns: [:e], name: nil, options: []},
             %{columns: [:s], name: nil, options: []},
             %{columns: [:c], name: "idx_c", options: []}
-
           ]
 
         def __ash_scylla__(:table), do: "ev"
@@ -655,7 +654,6 @@ defmodule AshScylla.EdgeCasesTest do
     end
 
     test "drop_secondary_index_cql" do
-
       assert "DROP INDEX IF EXISTS idx" = Migration.drop_secondary_index_cql(nil, "idx")
     end
 

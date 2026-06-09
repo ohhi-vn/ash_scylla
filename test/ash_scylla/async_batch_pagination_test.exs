@@ -50,19 +50,23 @@ defmodule AshScylla.DataLayer.AsyncBatchTest do
       data_layer: AshScylla.DataLayer
 
     attributes do
-      uuid_primary_key :id
-      attribute :name, :string
-      attribute :email, :string
+      uuid_primary_key(:id)
+      attribute(:name, :string)
+      attribute(:email, :string)
     end
 
     actions do
-      defaults [:create, :read]
+      defaults([:create, :read])
     end
   end
 
   describe "batch_insert_async/3" do
     setup do
-      {:ok, _pid} = TrackingRepo.start_link()
+      case TrackingRepo.start_link() do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+      end
+
       :ok
     end
 
@@ -137,18 +141,17 @@ defmodule AshScylla.DataLayer.AsyncBatchTest do
 
     test "handles empty statement list" do
       assert {:ok, :completed} =
-               Batch.batch_insert_async(SimpleMockRepo, [],
-                 resource: TestResourceForPartition
-               )
+               Batch.batch_insert_async(SimpleMockRepo, [], resource: TestResourceForPartition)
     end
 
     test "executes multiple groups concurrently" do
       TrackingRepo.clear_calls()
 
       # Create statements that will be grouped into different buckets
-      statements = for i <- 1..10 do
-        {"INSERT INTO t (id) VALUES (?)", [i]}
-      end
+      statements =
+        for i <- 1..10 do
+          {"INSERT INTO t (id) VALUES (?)", [i]}
+        end
 
       assert {:ok, :completed} =
                Batch.batch_insert_async(TrackingRepo, statements,

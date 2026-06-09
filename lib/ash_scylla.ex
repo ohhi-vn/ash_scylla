@@ -50,6 +50,7 @@ defmodule AshScylla do
   @doc """
   Returns the version of AshScylla.
   """
+  @spec version() :: String.t()
   def version do
     {:ok, version} = :application.get_key(:ash_scylla, :vsn)
     to_string(version)

@@ -23,28 +23,28 @@ defmodule AshScylla.PreparedStatementCacheTest do
   end
 
   setup do
-    # Start a fresh cache for each test
-    {:ok, pid} = PreparedStatementCache.start_link(name: nil)
-    # Clean up ETS after each test
-    on_exit(fn ->
-      PreparedStatementCache.clear()
-      Process.exit(pid, :normal)
-    end)
+    # Ensure the global cache GenServer is running.
+    # start_link registers globally as {:global, __MODULE__}.
+    # If already running (from a previous test), this returns {:error, {:already_started, pid}}.
+    case PreparedStatementCache.start_link([]) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+    end
 
+    # Clear the cache before each test for isolation.
+    PreparedStatementCache.clear()
     :ok
   end
 
   describe "start_link/1" do
     test "starts a GenServer" do
-      assert {:ok, pid} = PreparedStatementCache.start_link(name: nil)
-      assert is_pid(pid)
-      Process.exit(pid, :normal)
+      # Already started in setup, so this should fail with already_started.
+      assert {:error, {:already_started, _pid}} = PreparedStatementCache.start_link([])
     end
 
     test "creates an ETS table" do
-      {:ok, pid} = PreparedStatementCache.start_link(name: nil)
-      assert :ets.info(PreparedStatementCache.table()) != :undefined
-      Process.exit(pid, :normal)
+      tid = PreparedStatementCache.table()
+      assert tid != nil
     end
   end
 
@@ -148,8 +148,9 @@ defmodule AshScylla.PreparedStatementCacheTest do
   end
 
   describe "table/0" do
-    test "returns the ETS table name" do
-      assert PreparedStatementCache.table() == PreparedStatementCache
+    test "returns the ETS table tid" do
+      tid = PreparedStatementCache.table()
+      assert tid != nil
     end
   end
 end

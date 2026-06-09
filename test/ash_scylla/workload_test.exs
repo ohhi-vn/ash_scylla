@@ -42,27 +42,27 @@ defmodule AshScylla.WorkloadTest do
     import AshScylla.DataLayer.Dsl
 
     ash_scylla do
-      table "workload_test"
-      keyspace "workload_ks"
-      consistency :quorum
-      ttl 3600
-      pagination :token
+      table("workload_test")
+      keyspace("workload_ks")
+      consistency(:quorum)
+      ttl(3600)
+      pagination(:token)
 
-      secondary_index :email
-      secondary_index :status
-      per_action_consistency read: :one, create: :quorum
+      secondary_index(:email)
+      secondary_index(:status)
+      per_action_consistency(read: :one, create: :quorum)
     end
 
     attributes do
-      uuid_primary_key :id
-      attribute :name, :string
-      attribute :email, :string
-      attribute :status, :string
-      attribute :age, :integer
+      uuid_primary_key(:id)
+      attribute(:name, :string)
+      attribute(:email, :string)
+      attribute(:status, :string)
+      attribute(:age, :integer)
     end
 
     actions do
-      defaults [:create, :read, :update, :destroy]
+      defaults([:create, :read, :update, :destroy])
     end
   end
 
@@ -141,19 +141,34 @@ defmodule AshScylla.WorkloadTest do
         # Simple select all
         Task.async(fn ->
           QueryBuilder.build_optimized_query(%DataLayer{
-            table: "t", filters: [], sorts: [], limit: nil,
-            offset: nil, select: nil, resource: nil, repo: nil, tenant: nil
+            table: "t",
+            filters: [],
+            sorts: [],
+            limit: nil,
+            offset: nil,
+            select: nil,
+            resource: nil,
+            repo: nil,
+            tenant: nil
           })
         end),
         # Complex with many filters
         Task.async(fn ->
-          filters = Enum.map(1..10, fn i ->
-            %{operator: :eq, left: %{name: :"col_#{i}"}, right: %{value: i}}
-          end)
+          filters =
+            Enum.map(1..10, fn i ->
+              %{operator: :eq, left: %{name: :"col_#{i}"}, right: %{value: i}}
+            end)
 
           QueryBuilder.build_optimized_query(%DataLayer{
-            table: "t", filters: filters, sorts: [{:a, :asc}, {:b, :desc}],
-            limit: 100, offset: nil, select: [:a, :b, :c], resource: nil, repo: nil, tenant: nil
+            table: "t",
+            filters: filters,
+            sorts: [{:a, :asc}, {:b, :desc}],
+            limit: 100,
+            offset: nil,
+            select: [:a, :b, :c],
+            resource: nil,
+            repo: nil,
+            tenant: nil
           })
         end),
         # IN operator
@@ -161,7 +176,13 @@ defmodule AshScylla.WorkloadTest do
           QueryBuilder.build_optimized_query(%DataLayer{
             table: "t",
             filters: [%{operator: :in, left: %{name: :id}, right: %{value: Enum.to_list(1..50)}}],
-            sorts: [], limit: 10, offset: nil, select: nil, resource: nil, repo: nil, tenant: nil
+            sorts: [],
+            limit: 10,
+            offset: nil,
+            select: nil,
+            resource: nil,
+            repo: nil,
+            tenant: nil
           })
         end)
       ]
@@ -204,6 +225,7 @@ defmodule AshScylla.WorkloadTest do
               FilterValidator.validate_filters(WorkloadResource, [
                 %{operator: :eq, left: %{name: :nonexistent}, right: %{value: "x"}}
               ])
+
               :no_error
             rescue
               e in AshScylla.Error -> {:error, e.message}
@@ -213,10 +235,11 @@ defmodule AshScylla.WorkloadTest do
 
       results = Task.await_many(tasks, 15_000)
       assert length(results) == 20
+
       assert Enum.all?(results, fn
-        {:error, msg} -> String.contains?(msg, "requires a secondary index")
-        _ -> false
-      end)
+               {:error, msg} -> String.contains?(msg, "requires a secondary index")
+               _ -> false
+             end)
     end
 
     test "mixed valid and invalid filters under concurrent load" do
@@ -234,6 +257,7 @@ defmodule AshScylla.WorkloadTest do
             FilterValidator.validate_filters(WorkloadResource, [
               %{operator: :eq, left: %{name: :created_at}, right: %{value: "2024-01-01"}}
             ])
+
             :no_error
           rescue
             _ -> :caught_error
@@ -241,7 +265,9 @@ defmodule AshScylla.WorkloadTest do
         end)
       end
 
-      tasks = Enum.map(1..40, fn i -> if rem(i, 2) == 0, do: valid_task.(), else: invalid_task.() end)
+      tasks =
+        Enum.map(1..40, fn i -> if rem(i, 2) == 0, do: valid_task.(), else: invalid_task.() end)
+
       results = Task.await_many(tasks, 15_000)
       assert length(results) == 40
 
@@ -257,11 +283,11 @@ defmodule AshScylla.WorkloadTest do
 
   describe "prepared statement cache under concurrent access" do
     setup do
-      {:ok, pid} = PreparedStatementCache.start_link(name: nil)
-      on_exit(fn ->
-        PreparedStatementCache.clear()
-        Process.exit(pid, :normal)
-      end)
+      case PreparedStatementCache.start_link([]) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+      end
+
       :ok
     end
 
@@ -277,7 +303,12 @@ defmodule AshScylla.WorkloadTest do
 
       results = Task.await_many(tasks, 15_000)
       assert length(results) == 20
-      assert Enum.all?(results, fn {:ok, _} -> true; _ -> false end)
+
+      assert Enum.all?(results, fn
+               {:ok, _} -> true
+               _ -> false
+             end)
+
       assert PreparedStatementCache.size() == 20
     end
 
@@ -295,34 +326,41 @@ defmodule AshScylla.WorkloadTest do
         end)
 
       results = Task.await_many(tasks, 15_000)
-      assert Enum.all?(results, fn {:ok, ^stmt} -> true; _ -> false end)
+
+      assert Enum.all?(results, fn
+               {:ok, ^stmt} -> true
+               _ -> false
+             end)
+
       assert PreparedStatementCache.size() == 1
     end
 
     test "concurrent prepare and invalidate don't crash" do
       cql = "SELECT * FROM t WHERE id = ?"
 
-      tasks = Enum.map(1..30, fn i ->
-        Task.async(fn ->
-          case rem(i, 3) do
-            0 -> PreparedStatementCache.prepare(WorkloadMockRepo, cql)
-            1 -> PreparedStatementCache.invalidate(cql)
-            2 -> PreparedStatementCache.size()
-          end
+      tasks =
+        Enum.map(1..30, fn i ->
+          Task.async(fn ->
+            case rem(i, 3) do
+              0 -> PreparedStatementCache.prepare(WorkloadMockRepo, cql)
+              1 -> PreparedStatementCache.invalidate(cql)
+              2 -> PreparedStatementCache.size()
+            end
+          end)
         end)
-      end)
 
       results = Task.await_many(tasks, 15_000)
       assert length(results) == 30
     end
 
     test "cache survives high concurrent churn" do
-      tasks = Enum.map(1..100, fn i ->
-        Task.async(fn ->
-          cql = "SELECT * FROM t#{rem(i, 10)} WHERE id = ?"
-          PreparedStatementCache.prepare(WorkloadMockRepo, cql)
+      tasks =
+        Enum.map(1..100, fn i ->
+          Task.async(fn ->
+            cql = "SELECT * FROM t#{rem(i, 10)} WHERE id = ?"
+            PreparedStatementCache.prepare(WorkloadMockRepo, cql)
+          end)
         end)
-      end)
 
       Task.await_many(tasks, 30_000)
       # At most 10 unique CQLs
@@ -360,7 +398,11 @@ defmodule AshScylla.WorkloadTest do
 
       results = Task.await_many(tasks, 30_000)
       assert length(results) == 50
-      assert Enum.all?(results, fn {:ok, _} -> true; _ -> false end)
+
+      assert Enum.all?(results, fn
+               {:ok, _} -> true
+               _ -> false
+             end)
 
       # Collect telemetry messages
       messages = collect_telemetry_messages(50, 15_000)
@@ -460,9 +502,10 @@ defmodule AshScylla.WorkloadTest do
 
   describe "async batch execution" do
     test "processes 500 statements across multiple partition groups" do
-      statements = Enum.map(1..500, fn i ->
-        {"INSERT INTO t (id, name) VALUES (?, ?)", [i, "User#{i}"]}
-      end)
+      statements =
+        Enum.map(1..500, fn i ->
+          {"INSERT INTO t (id, name) VALUES (?, ?)", [i, "User#{i}"]}
+        end)
 
       assert {:ok, :completed} =
                Batch.batch_insert_async(WorkloadMockRepo, statements,
@@ -475,15 +518,14 @@ defmodule AshScylla.WorkloadTest do
       statements = [{"INSERT INTO t (id) VALUES (?)", [1]}]
 
       assert {:ok, :completed} =
-               Batch.batch_insert_async(WorkloadMockRepo, statements,
-                 resource: WorkloadResource
-               )
+               Batch.batch_insert_async(WorkloadMockRepo, statements, resource: WorkloadResource)
     end
 
     test "propagates errors from one group without affecting others" do
-      statements = Enum.map(1..20, fn i ->
-        {"INSERT INTO t (id) VALUES (?)", [i]}
-      end)
+      statements =
+        Enum.map(1..20, fn i ->
+          {"INSERT INTO t (id) VALUES (?)", [i]}
+        end)
 
       assert {:error, :mock_error} =
                Batch.batch_insert_async(FailingMockRepo, statements,
@@ -499,18 +541,24 @@ defmodule AshScylla.WorkloadTest do
       tasks = [
         Task.async(fn ->
           Batch.batch_insert_async(WorkloadMockRepo, batch1,
-            resource: WorkloadResource, max_concurrency: 4
+            resource: WorkloadResource,
+            max_concurrency: 4
           )
         end),
         Task.async(fn ->
           Batch.batch_insert_async(WorkloadMockRepo, batch2,
-            resource: WorkloadResource, max_concurrency: 4
+            resource: WorkloadResource,
+            max_concurrency: 4
           )
         end)
       ]
 
       results = Task.await_many(tasks, 30_000)
-      assert Enum.all?(results, fn {:ok, :completed} -> true; _ -> false end)
+
+      assert Enum.all?(results, fn
+               {:ok, :completed} -> true
+               _ -> false
+             end)
     end
   end
 
@@ -544,11 +592,12 @@ defmodule AshScylla.WorkloadTest do
       tasks =
         Enum.map(1..50, fn i ->
           Task.async(fn ->
-            filters = case rem(i, 3) do
-              0 -> [status: "active"]
-              1 -> [status: "active", age: i]
-              2 -> []
-            end
+            filters =
+              case rem(i, 3) do
+                0 -> [status: "active"]
+                1 -> [status: "active", age: i]
+                2 -> []
+              end
 
             page_size = 10 + rem(i, 90)
             token = if rem(i, 2) == 0, do: Pagination.encode_page_token("token_#{i}"), else: nil
@@ -595,29 +644,37 @@ defmodule AshScylla.WorkloadTest do
       read_count = 80
       write_count = 20
 
-      read_tasks = Enum.map(1..read_count, fn i ->
-        Task.async(fn ->
-          QueryBuilder.build_optimized_query(%DataLayer{
-            table: "users",
-            filters: [%{operator: :eq, left: %{name: :id}, right: %{value: "uuid-#{i}"}}],
-            sorts: [], limit: 1, offset: nil, select: nil,
-            resource: WorkloadResource, repo: nil, tenant: nil
-          })
+      read_tasks =
+        Enum.map(1..read_count, fn i ->
+          Task.async(fn ->
+            QueryBuilder.build_optimized_query(%DataLayer{
+              table: "users",
+              filters: [%{operator: :eq, left: %{name: :id}, right: %{value: "uuid-#{i}"}}],
+              sorts: [],
+              limit: 1,
+              offset: nil,
+              select: nil,
+              resource: WorkloadResource,
+              repo: nil,
+              tenant: nil
+            })
+          end)
         end)
-      end)
 
-      write_tasks = Enum.map(1..write_count, fn i ->
-        Task.async(fn ->
-          statements = [
-            {"INSERT INTO users (id, name, email) VALUES (?, ?, ?)",
-             ["uuid-#{i}", "User#{i}", "user#{i}@example.com"]}
-          ]
+      write_tasks =
+        Enum.map(1..write_count, fn i ->
+          Task.async(fn ->
+            statements = [
+              {"INSERT INTO users (id, name, email) VALUES (?, ?, ?)",
+               ["uuid-#{i}", "User#{i}", "user#{i}@example.com"]}
+            ]
 
-          Batch.batch_insert_async(WorkloadMockRepo, statements,
-            resource: WorkloadResource, max_concurrency: 2
-          )
+            Batch.batch_insert_async(WorkloadMockRepo, statements,
+              resource: WorkloadResource,
+              max_concurrency: 2
+            )
+          end)
         end)
-      end)
 
       all_tasks = read_tasks ++ write_tasks
       results = Task.await_many(all_tasks, 30_000)
@@ -629,40 +686,52 @@ defmodule AshScylla.WorkloadTest do
         assert String.contains?(cql, "SELECT")
       end)
 
-      Enum.each(write_results, fn {:ok, :completed} -> :ok; other -> flunk("Unexpected: #{inspect(other)}") end)
+      Enum.each(write_results, fn
+        {:ok, :completed} -> :ok
+        other -> flunk("Unexpected: #{inspect(other)}")
+      end)
     end
 
     test "simulates burst traffic with 200 concurrent operations" do
-      tasks = Enum.map(1..200, fn i ->
-        Task.async(fn ->
-          case rem(i, 4) do
-            0 ->
-              # Read query
-              QueryBuilder.build_optimized_query(%DataLayer{
-                table: "users", filters: [], sorts: [{:name, :asc}],
-                limit: 10, offset: nil, select: [:id, :name],
-                resource: nil, repo: nil, tenant: nil
-              })
+      tasks =
+        Enum.map(1..200, fn i ->
+          Task.async(fn ->
+            case rem(i, 4) do
+              0 ->
+                # Read query
+                QueryBuilder.build_optimized_query(%DataLayer{
+                  table: "users",
+                  filters: [],
+                  sorts: [{:name, :asc}],
+                  limit: 10,
+                  offset: nil,
+                  select: [:id, :name],
+                  resource: nil,
+                  repo: nil,
+                  tenant: nil
+                })
 
-            1 ->
-              # Filter validation
-              FilterValidator.validate_filters(WorkloadResource, [
-                %{operator: :eq, left: %{name: :status}, right: %{value: "active"}}
-              ])
+              1 ->
+                # Filter validation
+                FilterValidator.validate_filters(WorkloadResource, [
+                  %{operator: :eq, left: %{name: :status}, right: %{value: "active"}}
+                ])
 
-            2 ->
-              # Batch insert
-              statements = [{"INSERT INTO t (id) VALUES (?)", [i]}]
-              Batch.batch_insert_async(WorkloadMockRepo, statements,
-                resource: WorkloadResource, max_concurrency: 8
-              )
+              2 ->
+                # Batch insert
+                statements = [{"INSERT INTO t (id) VALUES (?)", [i]}]
 
-            3 ->
-              # Pagination
-              Pagination.build_paginated_query("users", [status: "active"], 25)
-          end
+                Batch.batch_insert_async(WorkloadMockRepo, statements,
+                  resource: WorkloadResource,
+                  max_concurrency: 8
+                )
+
+              3 ->
+                # Pagination
+                Pagination.build_paginated_query("users", [status: "active"], 25)
+            end
+          end)
         end)
-      end)
 
       results = Task.await_many(tasks, 30_000)
       assert length(results) == 200
@@ -675,23 +744,29 @@ defmodule AshScylla.WorkloadTest do
 
   describe "error handling under concurrent failures" do
     test "concurrent filter validation errors are independent" do
-      tasks = Enum.map(1..20, fn i ->
-        Task.async(fn ->
-          try do
-            FilterValidator.validate_filters(WorkloadResource, [
-              %{operator: :eq, left: %{name: :"bad_col_#{i}"}, right: %{value: "x"}}
-            ])
-            :no_error
-          rescue
-            e in AshScylla.Error ->
-              {:error, String.contains?(e.message, "bad_col_#{i}")}
-          end
+      tasks =
+        Enum.map(1..20, fn i ->
+          Task.async(fn ->
+            try do
+              FilterValidator.validate_filters(WorkloadResource, [
+                %{operator: :eq, left: %{name: :"bad_col_#{i}"}, right: %{value: "x"}}
+              ])
+
+              :no_error
+            rescue
+              e in AshScylla.Error ->
+                {:error, String.contains?(e.message, "bad_col_#{i}")}
+            end
+          end)
         end)
-      end)
 
       results = Task.await_many(tasks, 15_000)
       assert length(results) == 20
-      assert Enum.all?(results, fn {:error, true} -> true; _ -> false end)
+
+      assert Enum.all?(results, fn
+               {:error, true} -> true
+               _ -> false
+             end)
     end
 
     test "batch errors don't crash other concurrent batches" do
@@ -701,17 +776,20 @@ defmodule AshScylla.WorkloadTest do
       tasks = [
         Task.async(fn ->
           Batch.batch_insert_async(WorkloadMockRepo, ok_statements,
-            resource: WorkloadResource, max_concurrency: 2
+            resource: WorkloadResource,
+            max_concurrency: 2
           )
         end),
         Task.async(fn ->
           Batch.batch_insert_async(FailingMockRepo, fail_statements,
-            resource: WorkloadResource, max_concurrency: 2
+            resource: WorkloadResource,
+            max_concurrency: 2
           )
         end),
         Task.async(fn ->
           Batch.batch_insert_async(WorkloadMockRepo, ok_statements,
-            resource: WorkloadResource, max_concurrency: 2
+            resource: WorkloadResource,
+            max_concurrency: 2
           )
         end)
       ]
@@ -724,19 +802,20 @@ defmodule AshScylla.WorkloadTest do
     end
 
     test "DSL getters work correctly under concurrent access" do
-      tasks = Enum.map(1..50, fn _i ->
-        Task.async(fn ->
-          %{
-            table: Dsl.table(WorkloadResource),
-            keyspace: Dsl.keyspace(WorkloadResource),
-            consistency: Dsl.consistency(WorkloadResource),
-            ttl: Dsl.ttl(WorkloadResource),
-            pagination: Dsl.pagination(WorkloadResource),
-            per_action_consistency: Dsl.per_action_consistency(WorkloadResource),
-            secondary_indexes: Dsl.secondary_indexes(WorkloadResource)
-          }
+      tasks =
+        Enum.map(1..50, fn _i ->
+          Task.async(fn ->
+            %{
+              table: Dsl.table(WorkloadResource),
+              keyspace: Dsl.keyspace(WorkloadResource),
+              consistency: Dsl.consistency(WorkloadResource),
+              ttl: Dsl.ttl(WorkloadResource),
+              pagination: Dsl.pagination(WorkloadResource),
+              per_action_consistency: Dsl.per_action_consistency(WorkloadResource),
+              secondary_indexes: Dsl.secondary_indexes(WorkloadResource)
+            }
+          end)
         end)
-      end)
 
       results = Task.await_many(tasks, 15_000)
       assert length(results) == 50
@@ -772,22 +851,23 @@ defmodule AshScylla.WorkloadTest do
         tenant: nil
       }
 
-      tasks = Enum.map(1..50, fn i ->
-        Task.async(fn ->
-          base_query
-          |> DataLayer.filter(
-            %{operator: :eq, left: %{name: :status}, right: %{value: "active"}},
-            WorkloadResource
-          )
-          |> elem(1)
-          |> DataLayer.sort([{:name, :asc}], WorkloadResource)
-          |> elem(1)
-          |> DataLayer.limit(10 + i, WorkloadResource)
-          |> elem(1)
-          |> DataLayer.select([:id, :name], WorkloadResource)
-          |> elem(1)
+      tasks =
+        Enum.map(1..50, fn i ->
+          Task.async(fn ->
+            base_query
+            |> DataLayer.filter(
+              %{operator: :eq, left: %{name: :status}, right: %{value: "active"}},
+              WorkloadResource
+            )
+            |> elem(1)
+            |> DataLayer.sort([{:name, :asc}], WorkloadResource)
+            |> elem(1)
+            |> DataLayer.limit(10 + i, WorkloadResource)
+            |> elem(1)
+            |> DataLayer.select([:id, :name], WorkloadResource)
+            |> elem(1)
+          end)
         end)
-      end)
 
       results = Task.await_many(tasks, 15_000)
       assert length(results) == 50
@@ -818,37 +898,41 @@ defmodule AshScylla.WorkloadTest do
         nil
       )
 
-      tasks = Enum.map(1..30, fn i ->
-        Task.async(fn ->
-          # Step 1: Validate filters
-          :ok = FilterValidator.validate_filters(WorkloadResource, [
-            %{operator: :eq, left: %{name: :email}, right: %{value: "user#{i}@example.com"}}
-          ])
+      tasks =
+        Enum.map(1..30, fn i ->
+          Task.async(fn ->
+            # Step 1: Validate filters
+            :ok =
+              FilterValidator.validate_filters(WorkloadResource, [
+                %{operator: :eq, left: %{name: :email}, right: %{value: "user#{i}@example.com"}}
+              ])
 
-          # Step 2: Build query
-          {cql, params} = QueryBuilder.build_optimized_query(%DataLayer{
-            table: "users",
-            filters: [
-              %{operator: :eq, left: %{name: :email}, right: %{value: "user#{i}@example.com"}}
-            ],
-            sorts: [{:name, :asc}],
-            limit: 10,
-            offset: nil,
-            select: [:id, :name, :email],
-            resource: WorkloadResource,
-            repo: nil,
-            tenant: nil
-          })
+            # Step 2: Build query
+            {cql, params} =
+              QueryBuilder.build_optimized_query(%DataLayer{
+                table: "users",
+                filters: [
+                  %{operator: :eq, left: %{name: :email}, right: %{value: "user#{i}@example.com"}}
+                ],
+                sorts: [{:name, :asc}],
+                limit: 10,
+                offset: nil,
+                select: [:id, :name, :email],
+                resource: WorkloadResource,
+                repo: nil,
+                tenant: nil
+              })
 
-          # Step 3: Execute within telemetry span
-          result = Telemetry.span(WorkloadResource, :read, cql, fn ->
-            Process.sleep(1)
-            {:ok, []}
+            # Step 3: Execute within telemetry span
+            result =
+              Telemetry.span(WorkloadResource, :read, cql, fn ->
+                Process.sleep(1)
+                {:ok, []}
+              end)
+
+            {cql, params, result}
           end)
-
-          {cql, params, result}
         end)
-      end)
 
       results = Task.await_many(tasks, 30_000)
       assert length(results) == 30
@@ -858,7 +942,8 @@ defmodule AshScylla.WorkloadTest do
         assert String.contains?(cql, "WHERE email = ?")
         assert String.contains?(cql, "ORDER BY name asc")
         assert String.contains?(cql, "LIMIT ?")
-        assert length(params) == 2  # email value + limit
+        # email value + limit
+        assert length(params) == 2
         assert result == {:ok, []}
       end)
 

@@ -68,7 +68,11 @@ defmodule AshScylla.Telemetry do
     metadata = %{resource: resource, operation: operation, query: query}
     start_time = System.monotonic_time()
 
-    :telemetry.execute([:ash_scylla, :query, :start], %{system_time: System.system_time()}, metadata)
+    :telemetry.execute(
+      [:ash_scylla, :query, :start],
+      %{system_time: System.system_time()},
+      metadata
+    )
 
     try do
       result = fun.()
@@ -79,7 +83,13 @@ defmodule AshScylla.Telemetry do
       exception ->
         duration = System.monotonic_time() - start_time
         exception_metadata = Map.put(metadata, :kind, :error)
-        :telemetry.execute([:ash_scylla, :query, :exception], %{duration: duration}, exception_metadata)
+
+        :telemetry.execute(
+          [:ash_scylla, :query, :exception],
+          %{duration: duration},
+          exception_metadata
+        )
+
         reraise exception, __STACKTRACE__
     end
   end
@@ -95,7 +105,11 @@ defmodule AshScylla.Telemetry do
     metadata = %{resource: resource, operation: operation, batch_size: batch_size}
     start_time = System.monotonic_time()
 
-    :telemetry.execute([:ash_scylla, :batch, :start], %{system_time: System.system_time()}, metadata)
+    :telemetry.execute(
+      [:ash_scylla, :batch, :start],
+      %{system_time: System.system_time()},
+      metadata
+    )
 
     result = fun.()
     duration = System.monotonic_time() - start_time

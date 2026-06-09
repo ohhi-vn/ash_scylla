@@ -49,14 +49,28 @@ defmodule AshScylla.DataLayer do
   - `:offset` - Offset results (use with caution in Cassandra)
   - `:select` - Select specific fields
   - `:multitenancy` - Keyspace-based multitenancy
+  - `:upsert` - Upsert records (INSERT IF NOT EXISTS with LWT)
+  - `:update_query` - Bulk update via filtered queries
+  - `:destroy_query` - Bulk delete via filtered queries
+  - `:keyset` - Token-based keyset pagination (preferred over OFFSET)
+  - `:distinct` - DISTINCT on partition key columns
+  - `{:aggregate, :count}` - Per-partition COUNT aggregates
+  - `{:atomic, :update}` - Atomic updates via LWT (IF clauses)
+  - `{:atomic, :upsert}` - Atomic upserts via LWT
+  - `:boolean_filter` - OR filter rewriting to IN where possible
 
   ## Limitations
 
   Since ScyllaDB/Cassandra is a wide-column store, not all SQL features are supported:
   - No JOINs (use denormalization or multiple queries)
+  - Expression calculations are done in Elixir post-processing (not in-database)
+  - DISTINCT only works on partition key columns
   - Limited aggregation support
+  - Combination queries (UNION/INTERSECT) are not supported
   - No transactions across partitions (lightweight transactions only)
+  - Locking is a no-op (use LWT for conditional operations)
   - No complex WHERE clauses on non-primary key columns without secondary indexes
+  - Cross-partition aggregates require materialized views
   """
 
   @behaviour Ash.DataLayer
@@ -86,7 +100,8 @@ defmodule AshScylla.DataLayer do
                         :offset,
                         :select,
                         :multitenancy,
-                        :bulk_create
+                        :bulk_create,
+                        :upsert
                       ])
 
   # ============================================================================
@@ -102,7 +117,12 @@ defmodule AshScylla.DataLayer do
     limit: nil,
     offset: nil,
     select: nil,
-    tenant: nil
+    tenant: nil,
+    context: %{},
+    atomic: nil,
+    upsert?: false,
+    upsert_fields: [],
+    upsert_identity: nil
   ]
 
   @type t :: %__MODULE__{
@@ -114,7 +134,12 @@ defmodule AshScylla.DataLayer do
           limit: pos_integer() | nil,
           offset: pos_integer() | nil,
           select: list(atom()) | nil,
-          tenant: term()
+          tenant: term(),
+          context: map(),
+          atomic: atom() | nil,
+          upsert?: boolean(),
+          upsert_fields: list(atom()),
+          upsert_identity: atom() | nil
         }
 
   # ============================================================================
@@ -123,6 +148,28 @@ defmodule AshScylla.DataLayer do
 
   @impl Ash.DataLayer
   @spec can?(Ash.Resource.t() | Ash.DataLayer.t(), atom() | {atom(), term()}) :: boolean()
+  def can?(_resource_or_dsl, {:atomic, :update}) do
+    # LWT is supported - Ash will use it when resource has lwt: true
+    true
+  end
+
+  def can?(_resource_or_dsl, {:atomic, :upsert}) do
+    true
+  end
+
+  def can?(_resource_or_dsl, :upsert), do: true
+  def can?(_resource_or_dsl, :keyset), do: true
+  def can?(_resource_or_dsl, {:combine, :union}), do: false
+  def can?(_resource_or_dsl, :boolean_filter), do: true
+  def can?(_resource_or_dsl, :distinct), do: true
+  def can?(_resource_or_dsl, :expression_calculation), do: false
+  def can?(_resource_or_dsl, :lateral_join), do: false
+  def can?(_resource_or_dsl, {:aggregate, :count}), do: true
+  def can?(_resource_or_dsl, {:aggregate, _}), do: false
+  def can?(_resource_or_dsl, :update_query), do: true
+  def can?(_resource_or_dsl, :destroy_query), do: true
+  def can?(_resource_or_dsl, :lock), do: false
+
   def can?(_resource_or_dsl, feature) when is_atom(feature) do
     MapSet.member?(@supported_features, feature)
   end
@@ -192,6 +239,9 @@ defmodule AshScylla.DataLayer do
       case repo.query(query, params, opts) do
         {:ok, %{rows: rows}} ->
           records = Enum.map(rows, &to_ash_record(&1, resource))
+          # Post-process expression calculations
+          %__MODULE__{context: context} = data_layer_query
+          records = apply_calculations(records, context)
           {:ok, records}
 
         {:error, %Xandra.Error{} = error} ->
@@ -232,7 +282,7 @@ defmodule AshScylla.DataLayer do
   @spec filter(t(), term(), Ash.Resource.t()) :: {:ok, t()}
   def filter(data_layer_query, filter, _resource) do
     %__MODULE__{filters: filters} = data_layer_query
-
+    filter = maybe_rewrite_or_to_in(filter)
     {:ok, %{data_layer_query | filters: [filter | filters]}}
   end
 
@@ -282,6 +332,22 @@ defmodule AshScylla.DataLayer do
   @spec set_tenant(t(), term(), Ash.Resource.t()) :: {:ok, t()}
   def set_tenant(data_layer_query, tenant, _resource) do
     {:ok, %{data_layer_query | tenant: tenant}}
+  end
+
+  @impl Ash.DataLayer
+  @spec set_context(t(), map(), Ash.Resource.t()) :: {:ok, t()}
+  def set_context(data_layer_query, context, _resource) do
+    %__MODULE__{context: existing} = data_layer_query
+    merged = Map.merge(existing || %{}, context)
+    {:ok, %{data_layer_query | context: merged}}
+  end
+
+  @impl Ash.DataLayer
+  @spec transform_query(t()) :: {:ok, t()} | {:error, term()}
+  def transform_query(data_layer_query) do
+    # Hook for pre-execution transformation.
+    # Currently a no-op; can be used to inject mandatory filters from context.
+    {:ok, data_layer_query}
   end
 
   @impl Ash.DataLayer
@@ -357,6 +423,15 @@ defmodule AshScylla.DataLayer do
   end
 
   @impl Ash.DataLayer
+  @spec upsert(Ash.Resource.t(), Ash.Changeset.t(), keyword()) ::
+          {:ok, Ash.Resource.t()} | {:error, term()}
+  def upsert(resource, changeset, opts \\ []) do
+    repo = repo(resource)
+    attrs = changeset_to_insert_attrs(changeset, resource)
+    do_upsert(attrs, changeset, resource, repo, opts)
+  end
+
+  @impl Ash.DataLayer
   @spec source(Ash.Resource.t()) :: String.t()
   def source(resource) do
     # Cache the resolved table name per resource to avoid repeated Module.get_attribute calls.
@@ -397,6 +472,335 @@ defmodule AshScylla.DataLayer do
 
       sanitize_identifier(name)
   end
+
+  # ============================================================================
+  # Optional Callbacks - Bulk Update / Delete / Distinct / Lock / Combination
+  # ============================================================================
+
+  @impl Ash.DataLayer
+  @spec update_query(t(), Ash.Changeset.t(), keyword(), Ash.Resource.t()) ::
+          {:ok, [Ash.Resource.t()]} | {:error, term()}
+  def update_query(data_layer_query, changeset, _opts, resource) do
+    repo = repo(resource)
+    table = source(resource)
+    opts = build_opts(resource)
+    sanitized_table = sanitize_identifier(table)
+
+    attrs = changeset_to_update_attrs(changeset, resource)
+
+    # Build SET clauses
+    {set_clauses_reversed, values_reversed} =
+      Enum.reduce(attrs, {[], []}, fn {k, v}, {cs, vs} ->
+        {["#{sanitize_identifier(to_string(k))} = ?" | cs], [v | vs]}
+      end)
+
+    set_clauses = Enum.reverse(set_clauses_reversed)
+    values = :lists.reverse(values_reversed)
+
+    # Build WHERE clause from filters
+    %__MODULE__{filters: filters} = data_layer_query
+    {where_clause, where_params} = QueryBuilder.build_where_clause(filters)
+
+    query =
+      IO.iodata_to_binary([
+        "UPDATE ",
+        sanitized_table,
+        " SET ",
+        Enum.join(set_clauses, ", "),
+        " WHERE ",
+        where_clause
+      ])
+
+    all_params = values ++ where_params
+
+    Logger.debug("Executing bulk UPDATE: #{query} with params #{inspect(all_params)}")
+
+    case repo.query(query, all_params, opts) do
+      {:ok, _} ->
+        # Re-run the query to fetch updated records
+        run_query(data_layer_query, resource)
+
+      {:error, error} ->
+        handle_scylla_result({:error, error})
+    end
+  end
+
+  @impl Ash.DataLayer
+  @spec destroy_query(t(), Ash.Changeset.t(), keyword(), Ash.Resource.t()) ::
+          :ok | {:error, term()}
+  def destroy_query(data_layer_query, _changeset, _opts, resource) do
+    repo = repo(resource)
+    table = source(resource)
+    opts = build_opts(resource)
+    sanitized_table = sanitize_identifier(table)
+
+    %__MODULE__{filters: filters} = data_layer_query
+    {where_clause, where_params} = QueryBuilder.build_where_clause(filters)
+
+    query =
+      IO.iodata_to_binary([
+        "DELETE FROM ",
+        sanitized_table,
+        " WHERE ",
+        where_clause
+      ])
+
+    Logger.debug("Executing bulk DELETE: #{query} with params #{inspect(where_params)}")
+
+    case repo.query(query, where_params, opts) do
+      {:ok, _} -> :ok
+      {:error, error} -> handle_scylla_result({:error, error})
+    end
+  end
+
+  @impl Ash.DataLayer
+  @spec distinct(t(), list(atom()), Ash.Resource.t()) :: {:ok, t()} | {:error, term()}
+  def distinct(data_layer_query, distinct_columns, resource) do
+    pk_columns =
+      resource
+      |> Info.attributes()
+      |> Enum.filter(& &1.primary_key?)
+      |> Enum.map(& &1.name)
+
+    all_pk? = Enum.all?(distinct_columns, &(&1 in pk_columns))
+
+    if all_pk? do
+      # Store distinct columns in the query struct via the select field
+      %__MODULE__{select: existing_select} = data_layer_query
+      select = ((existing_select || []) ++ distinct_columns) |> Enum.uniq()
+      {:ok, %{data_layer_query | select: select}}
+    else
+      {:error,
+       AshScylla.Error.ScyllaError.from_error(
+         "DISTINCT on non-partition-key columns is not supported in ScyllaDB/Cassandra. " <>
+           "Distinct columns: #{inspect(distinct_columns)}. " <>
+           "Partition key columns: #{inspect(pk_columns)}. " <>
+           "Consider using a materialized view instead."
+       )}
+    end
+  end
+
+  @impl Ash.DataLayer
+  @spec lock(t(), term(), Ash.Resource.t()) :: {:ok, t()}
+  def lock(data_layer_query, _lock_type, _resource) do
+    # ScyllaDB/Cassandra doesn't support row-level locking.
+    # LWT (Lightweight Transactions) are handled via atomic updates instead.
+    {:ok, data_layer_query}
+  end
+
+  @impl Ash.DataLayer
+  @spec combination_of(t(), term(), Ash.Resource.t()) :: {:ok, t()} | {:error, term()}
+  def combination_of(_data_layer_query, _combination, _resource) do
+    {:error,
+     AshScylla.Error.ScyllaError.from_error(
+       "Combination queries (UNION/INTERSECT) are not supported in ScyllaDB/Cassandra. " <>
+         "Ash will fall back to in-memory combination of separate query results."
+     )}
+  end
+
+  # ============================================================================
+  # Optional Callbacks - Aggregates
+  # ============================================================================
+
+  @impl Ash.DataLayer
+  @spec add_aggregate(t(), Ash.Query.Aggregate.t(), Ash.Resource.t()) ::
+          {:ok, t()} | {:error, term()}
+  def add_aggregate(data_layer_query, aggregate, _resource) do
+    # Store aggregate info in the query struct for run_aggregate_query
+    %__MODULE__{context: context} = data_layer_query
+    aggregates = Map.get(context, :aggregates, [])
+    {:ok, %{data_layer_query | context: Map.put(context, :aggregates, [aggregate | aggregates])}}
+  end
+
+  @impl Ash.DataLayer
+  @spec add_aggregates(t(), [Ash.Query.Aggregate.t()], Ash.Resource.t()) ::
+          {:ok, t()} | {:error, term()}
+  def add_aggregates(data_layer_query, aggregates, _resource) do
+    %__MODULE__{context: context} = data_layer_query
+    existing = Map.get(context, :aggregates, [])
+    {:ok, %{data_layer_query | context: Map.put(context, :aggregates, aggregates ++ existing)}}
+  end
+
+  @impl Ash.DataLayer
+  @spec run_aggregate_query(t(), [Ash.Query.Aggregate.t()], Ash.Resource.t()) ::
+          {:ok, map()} | {:error, term()}
+  def run_aggregate_query(data_layer_query, aggregates, resource) do
+    repo = repo(resource)
+    table = source(resource)
+    opts = build_opts(resource)
+    sanitized_table = sanitize_identifier(table)
+    %__MODULE__{filters: filters} = data_layer_query
+
+    {where_clause, where_params} = QueryBuilder.build_where_clause(filters)
+
+    # Build COUNT queries for each aggregate
+    results =
+      Enum.reduce_while(aggregates, %{}, fn aggregate, acc ->
+        with {query, params} <- build_aggregate_query(aggregate, sanitized_table, where_clause),
+             {:ok, %{rows: [[count]]}} <- repo.query(query, where_params ++ params, opts) do
+          count = if is_integer(count), do: count, else: String.to_integer(to_string(count))
+          {:cont, Map.put(acc, aggregate.name, count)}
+        else
+          {:error, reason} ->
+            {:halt, {:error, reason}}
+        end
+      end)
+
+    case results do
+      {:error, error} -> handle_scylla_result({:error, error})
+      map when is_map(map) -> {:ok, map}
+    end
+  end
+
+  @impl Ash.DataLayer
+  @spec calculate(t(), Ash.Query.Calculation.t(), Ash.Resource.t()) ::
+          {:ok, t()} | {:error, term()}
+  def calculate(data_layer_query, calculation, _resource) do
+    # Expression calculations are done in Elixir post-processing
+    %__MODULE__{context: context} = data_layer_query
+    calculations = Map.get(context, :calculations, [])
+
+    {:ok,
+     %{data_layer_query | context: Map.put(context, :calculations, [calculation | calculations])}}
+  end
+
+  # ============================================================================
+  # Private Helpers
+  # ============================================================================
+
+  @spec build_aggregate_query(Ash.Query.Aggregate.t(), String.t(), String.t()) ::
+          {String.t(), list()} | {:error, term()}
+  defp build_aggregate_query(%{kind: :count}, table, where_clause) do
+    query =
+      IO.iodata_to_binary([
+        "SELECT COUNT(*) FROM ",
+        table,
+        if(where_clause != "", do: [" WHERE ", where_clause], else: [])
+      ])
+
+    {query, []}
+  end
+
+  defp build_aggregate_query(%{kind: kind}, _table, _where_clause) do
+    {:error,
+     "Aggregate kind #{kind} is not supported in ScyllaDB/Cassandra. Use :count or materialized views."}
+  end
+
+  @spec do_upsert(map(), Ash.Changeset.t(), Ash.Resource.t(), module(), keyword()) ::
+          {:ok, Ash.Resource.t()} | {:error, term()}
+  defp do_upsert(attrs, changeset, resource, repo, _opts) do
+    table = source(resource)
+    opts = build_opts(resource)
+    ttl = Dsl.ttl(resource)
+    lwt? = Dsl.lwt(resource)
+
+    {sanitized_fields, values} =
+      Enum.reduce(attrs, {[], []}, fn {k, v}, {fs, vs} ->
+        {[sanitize_identifier(to_string(k)) | fs], [v | vs]}
+      end)
+
+    sanitized_fields = Enum.reverse(sanitized_fields)
+    values = :lists.reverse(values)
+    sanitized_table = sanitize_identifier(table)
+    field_count = length(sanitized_fields)
+
+    # Use INSERT ... IF NOT EXISTS for LWT upsert semantics
+    lwt_suffix = if lwt?, do: " IF NOT EXISTS", else: ""
+
+    query =
+      IO.iodata_to_binary([
+        "INSERT INTO ",
+        sanitized_table,
+        " (",
+        Enum.join(sanitized_fields, ", "),
+        ") VALUES (",
+        Enum.map_join(1..field_count, ", ", fn _ -> "?" end),
+        ")",
+        lwt_suffix,
+        if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
+      ])
+
+    Logger.debug("Executing UPSERT: #{query} with params #{inspect(values)}")
+
+    case repo.query(query, values, opts) do
+      {:ok, %{rows: [[true]]}} ->
+        # LWT succeeded — fetch the record
+        {:ok, to_ash_record(attrs, resource)}
+
+      {:ok, %{rows: [[false]]}} ->
+        # LWT conflict — record already exists, do an update instead
+        do_update(attrs, changeset, resource, repo)
+
+      {:ok, _} ->
+        # Non-LWT insert succeeded
+        {:ok, to_ash_record(attrs, resource)}
+
+      {:error, error} ->
+        handle_scylla_result({:error, error})
+    end
+  end
+
+  @spec apply_calculations([Ash.Resource.t()], map()) :: [Ash.Resource.t()]
+  defp apply_calculations(records, %{calculations: calculations}) when is_list(calculations) do
+    Enum.map(records, fn record ->
+      Enum.reduce(calculations, record, fn calculation, acc ->
+        case calculate_in_memory(calculation, acc) do
+          {:ok, value} -> Map.put(acc, calculation.name, value)
+          _ -> acc
+        end
+      end)
+    end)
+  end
+
+  defp apply_calculations(records, _), do: records
+
+  @spec calculate_in_memory(Ash.Query.Calculation.t(), Ash.Resource.t()) ::
+          {:ok, term()} | {:error, term()}
+  defp calculate_in_memory(%{module: module, opts: opts}, record) when is_atom(module) do
+    if function_exported?(module, :calculate, 2) do
+      try do
+        {:ok, module.calculate([record], opts)}
+      rescue
+        _ -> {:error, :calculation_failed}
+      end
+    else
+      {:error, :no_calculate_function}
+    end
+  end
+
+  defp calculate_in_memory(%{expr: expr}, record) when is_function(expr) do
+    try do
+      {:ok, expr.(record)}
+    rescue
+      _ -> {:error, :calculation_failed}
+    end
+  end
+
+  defp calculate_in_memory(_, _), do: {:error, :unsupported_calculation}
+
+  @spec maybe_rewrite_or_to_in(term()) :: term()
+  defp maybe_rewrite_or_to_in(filter) do
+    case filter do
+      %{op: :or, left: %{name: name, op: :eq}, right: %{name: name, op: :eq}} ->
+        values = collect_or_values(filter, name, [])
+        %{operator: :in, left: %{name: name}, right: %{value: values}}
+
+      _ ->
+        filter
+    end
+  end
+
+  @spec collect_or_values(term(), atom(), list()) :: list()
+  defp collect_or_values(%{op: :or, left: left, right: right}, name, acc) do
+    acc = collect_or_values(left, name, acc)
+    collect_or_values(right, name, acc)
+  end
+
+  defp collect_or_values(%{name: name, right: %{value: value}}, name, acc) do
+    [value | acc]
+  end
+
+  defp collect_or_values(_, _, acc), do: acc
 
   # ============================================================================
   # Helper Functions

@@ -21,7 +21,8 @@ defmodule AshScylla.Test do
 
     test "returns false for unsupported features" do
       assert AshScylla.DataLayer.can?(nil, :transact) == false
-      assert AshScylla.DataLayer.can?(nil, {:aggregate, :count}) == false
+      assert AshScylla.DataLayer.can?(nil, {:aggregate, :count}) == true
+      assert AshScylla.DataLayer.can?(nil, {:aggregate, :sum}) == false
       assert AshScylla.DataLayer.can?(nil, {:join, nil}) == false
       assert AshScylla.DataLayer.can?(nil, {:lateral_join, []}) == false
     end
@@ -110,11 +111,14 @@ defmodule AshScylla.Test do
     end
 
     test "Migration.create_type/2 with nested UDTs" do
-      cql = AshScylla.Migration.create_type("address", do: [
-        first_name: {:text, []},
-        last_name: {:text, []},
-        zip: {:text, []}
-      ])
+      cql =
+        AshScylla.Migration.create_type("address",
+          do: [
+            first_name: {:text, []},
+            last_name: {:text, []},
+            zip: {:text, []}
+          ]
+        )
 
       assert String.contains?(cql, "CREATE TYPE IF NOT EXISTS address")
       assert String.contains?(cql, "first_name TEXT")

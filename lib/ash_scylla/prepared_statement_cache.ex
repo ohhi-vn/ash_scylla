@@ -20,6 +20,9 @@ defmodule AshScylla.PreparedStatementCache do
   query parsing overhead on ScyllaDB. This is especially impactful for
   high-throughput workloads where the same queries are executed repeatedly.
 
+  All ETS operations are routed through the GenServer to avoid race
+  conditions when multiple processes access the cache concurrently.
+
   ## Usage
 
       AshScylla.PreparedStatementCache.prepare(repo, "SELECT * FROM users WHERE id = ?")
@@ -42,27 +45,38 @@ defmodule AshScylla.PreparedStatementCache do
 
   require Logger
 
-  @table __MODULE__
   @cleanup_interval :timer.minutes(5)
 
   @doc """
   Starts the prepared statement cache.
+
+  When no `:name` option is given, the GenServer is registered globally
+  as `{:global, __MODULE__}` so that all processes share a single cache.
+  Pass `name: :undefined` or a custom name to register locally instead.
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
-    name = case opts[:name] do
-      nil -> nil
-      :undefined -> nil
-      other -> other
-    end
+    name =
+      case Keyword.get(opts, :name) do
+        nil -> {:global, __MODULE__}
+        :undefined -> {:global, __MODULE__}
+        other -> other
+      end
+
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
   @doc """
-  Returns the ETS table name for inspection/testing.
+  Returns the ETS table tid for inspection/testing.
   """
-  @spec table() :: atom()
-  def table, do: @table
+  @spec table() :: :ets.tid() | nil
+  def table do
+    try do
+      GenServer.call(server_name(), :get_table, 5_000)
+    catch
+      :exit, _ -> nil
+    end
+  end
 
   @doc """
   Prepares a CQL statement, using the cache if available.
@@ -71,22 +85,7 @@ defmodule AshScylla.PreparedStatementCache do
   """
   @spec prepare(module(), String.t(), keyword()) :: {:ok, term()} | {:error, term()}
   def prepare(repo, cql, opts \\ []) do
-    key = :erlang.phash2(cql)
-
-    case :ets.lookup(@table, key) do
-      [{^key, stmt}] ->
-        {:ok, stmt}
-
-      [] ->
-        case do_prepare(repo, cql, opts) do
-          {:ok, stmt} ->
-            :ets.insert(@table, {key, stmt})
-            {:ok, stmt}
-
-          {:error, _} = error ->
-            error
-        end
-    end
+    GenServer.call(server_name(), {:prepare, repo, cql, opts}, 30_000)
   end
 
   @doc """
@@ -94,9 +93,7 @@ defmodule AshScylla.PreparedStatementCache do
   """
   @spec invalidate(String.t()) :: :ok
   def invalidate(cql) do
-    key = :erlang.phash2(cql)
-    :ets.delete(@table, key)
-    :ok
+    GenServer.call(server_name(), {:invalidate, cql}, 5_000)
   end
 
   @doc """
@@ -104,13 +101,7 @@ defmodule AshScylla.PreparedStatementCache do
   """
   @spec clear() :: :ok
   def clear do
-    try do
-      :ets.delete_all_objects(@table)
-    rescue
-      ArgumentError -> :ok
-    end
-
-    :ok
+    GenServer.call(server_name(), :clear, 5_000)
   end
 
   @doc """
@@ -118,25 +109,73 @@ defmodule AshScylla.PreparedStatementCache do
   """
   @spec size() :: non_neg_integer()
   def size do
-    :ets.info(@table, :size)
+    GenServer.call(server_name(), :size, 5_000)
+  end
+
+  # Returns the name to use for GenServer calls.
+  # Uses the globally registered name if available, otherwise falls back
+  # to the default local name.
+  defp server_name do
+    case :global.whereis_name(__MODULE__) do
+      :undefined -> __MODULE__
+      _pid -> {:global, __MODULE__}
+    end
   end
 
   @impl GenServer
   def init(_opts) do
-    try do
-      :ets.new(@table, [
+    tid =
+      :ets.new(:ash_scylla_prepared_statement_cache, [
         :set,
         :public,
-        :named_table,
         read_concurrency: true,
         write_concurrency: true
       ])
-    rescue
-      ArgumentError -> :ok
-    end
 
     schedule_cleanup()
-    {:ok, %{}}
+    {:ok, %{table: tid}}
+  end
+
+  @impl GenServer
+  def handle_call(:get_table, _from, %{table: tid} = state) do
+    {:reply, {:ok, tid}, state}
+  end
+
+  def handle_call({:prepare, repo, cql, opts}, _from, %{table: tid} = state) do
+    key = :erlang.phash2(cql)
+
+    result =
+      case :ets.lookup(tid, key) do
+        [{^key, stmt}] ->
+          {:ok, stmt}
+
+        [] ->
+          case do_prepare(repo, cql, opts) do
+            {:ok, stmt} ->
+              :ets.insert(tid, {key, stmt})
+              {:ok, stmt}
+
+            {:error, _} = error ->
+              error
+          end
+      end
+
+    {:reply, result, state}
+  end
+
+  def handle_call({:invalidate, cql}, _from, %{table: tid} = state) do
+    key = :erlang.phash2(cql)
+    :ets.delete(tid, key)
+    {:reply, :ok, state}
+  end
+
+  def handle_call(:clear, _from, %{table: tid} = state) do
+    :ets.delete_all_objects(tid)
+    {:reply, :ok, state}
+  end
+
+  def handle_call(:size, _from, %{table: tid} = state) do
+    {:reply, :ets.info(tid, :size), state}
   end
 
   @impl GenServer

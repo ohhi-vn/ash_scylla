@@ -117,7 +117,10 @@ defmodule AshScylla.DataLayer.FilterValidator do
 
   defp extract_columns_from_filter(%{left: %{name: name}}) when is_atom(name), do: [name]
   defp extract_columns_from_filter(%{expression: expr}), do: extract_all_filter_columns([expr])
-  defp extract_columns_from_filter(%{left: left, right: right}), do: extract_all_filter_columns([left, right])
+
+  defp extract_columns_from_filter(%{left: left, right: right}),
+    do: extract_all_filter_columns([left, right])
+
   defp extract_columns_from_filter(%{name: name}) when is_atom(name), do: [name]
   defp extract_columns_from_filter(_), do: []
 end

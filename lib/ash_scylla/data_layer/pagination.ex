@@ -134,7 +134,8 @@ defmodule AshScylla.DataLayer.Pagination do
   When `page_token` is non-nil, adds a `token() > ?` condition to the WHERE clause.
   Returns `{query, params}` suitable for `repo.query/3`.
   """
-  @spec build_paginated_query(String.t(), list(), page_token(), pos_integer()) :: {String.t(), list()}
+  @spec build_paginated_query(String.t(), list(), page_token(), pos_integer()) ::
+          {String.t(), list()}
   def build_paginated_query(table, filters, page_token, page_size) do
     page_size = min(page_size, @max_page_size)
     {where_clause, params} = build_where_clause(filters)
@@ -200,9 +201,14 @@ defmodule AshScylla.DataLayer.Pagination do
   defp build_where_clause(filters) do
     filter_structs =
       Enum.map(filters, fn
-        %{operator: _, left: _, right: _} = f -> f
-        {key, value} when is_atom(key) -> %{operator: :eq, left: %{name: key}, right: %{value: value}}
-        %{name: key, value: value} -> %{operator: :eq, left: %{name: key}, right: %{value: value}}
+        %{operator: _, left: _, right: _} = f ->
+          f
+
+        {key, value} when is_atom(key) ->
+          %{operator: :eq, left: %{name: key}, right: %{value: value}}
+
+        %{name: key, value: value} ->
+          %{operator: :eq, left: %{name: key}, right: %{value: value}}
       end)
 
     QueryBuilder.build_where_clause(filter_structs)

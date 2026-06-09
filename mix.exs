@@ -9,6 +9,10 @@ defmodule AshScylla.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       aliases: aliases(),
+      dialyzer: [
+        plt_add_apps: [:ex_unit, :mix],
+        flags: [:unmatched_returns, :error_handling, :underspecs]
+      ],
       name: "AshScylla",
       source_url: "https://github.com/ohhi-vn/ash_scylla",
       homepage_url: "https://ohhi.vn",
@@ -48,7 +52,13 @@ defmodule AshScylla.MixProject do
     [
       main: "AshScylla",
       logo: "assets/logo.svg",
-      extras: ["README.md", "USAGE_GUIDE.md", "IMPLEMENTATION_SUMMARY.md", "ERROR_HANDLING.md"],
+      extras: [
+        "README.md",
+        "USAGE_GUIDE.md",
+        "IMPLEMENTATION_SUMMARY.md",
+        "ERROR_HANDLING.md",
+        "CHANGELOG.md"
+      ],
       groups_for_modules: [
         Core: [
           AshScylla,
@@ -64,10 +74,10 @@ defmodule AshScylla.MixProject do
           AshScylla.DataLayer.MaterializedView,
           AshScylla.DataLayer.Pagination
         ],
-        "Performance": [
+        Performance: [
           AshScylla.PreparedStatementCache
         ],
-        "Observability": [
+        Observability: [
           AshScylla.Telemetry
         ],
         "Error Handling": [
@@ -93,6 +103,7 @@ defmodule AshScylla.MixProject do
       {:benchee_html, "~> 1.0", only: [:dev, :test]},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
+      {:dialyxir, "~> 1.4", only: [:dev], runtime: false}
     ]
   end
 

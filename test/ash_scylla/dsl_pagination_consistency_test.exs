@@ -21,17 +21,17 @@ defmodule AshScylla.DslPaginationConsistencyTest do
     import AshScylla.DataLayer.Dsl
 
     ash_scylla do
-      table "users"
-      pagination :token
+      table("users")
+      pagination(:token)
     end
 
     attributes do
-      uuid_primary_key :id
-      attribute :name, :string
+      uuid_primary_key(:id)
+      attribute(:name, :string)
     end
 
     actions do
-      defaults [:create, :read]
+      defaults([:create, :read])
     end
   end
 
@@ -45,18 +45,18 @@ defmodule AshScylla.DslPaginationConsistencyTest do
     import AshScylla.DataLayer.Dsl
 
     ash_scylla do
-      table "users"
-      consistency :quorum
-      per_action_consistency read: :one, create: :quorum, update: :local_quorum
+      table("users")
+      consistency(:quorum)
+      per_action_consistency(read: :one, create: :quorum, update: :local_quorum)
     end
 
     attributes do
-      uuid_primary_key :id
-      attribute :name, :string
+      uuid_primary_key(:id)
+      attribute(:name, :string)
     end
 
     actions do
-      defaults [:create, :read, :update]
+      defaults([:create, :read, :update])
     end
   end
 
@@ -70,18 +70,18 @@ defmodule AshScylla.DslPaginationConsistencyTest do
     import AshScylla.DataLayer.Dsl
 
     ash_scylla do
-      table "users"
-      pagination :token
-      per_action_consistency read: :one, create: :all
+      table("users")
+      pagination(:token)
+      per_action_consistency(read: :one, create: :all)
     end
 
     attributes do
-      uuid_primary_key :id
-      attribute :name, :string
+      uuid_primary_key(:id)
+      attribute(:name, :string)
     end
 
     actions do
-      defaults [:create, :read]
+      defaults([:create, :read])
     end
   end
 
@@ -95,16 +95,16 @@ defmodule AshScylla.DslPaginationConsistencyTest do
     import AshScylla.DataLayer.Dsl
 
     ash_scylla do
-      table "users"
+      table("users")
     end
 
     attributes do
-      uuid_primary_key :id
-      attribute :name, :string
+      uuid_primary_key(:id)
+      attribute(:name, :string)
     end
 
     actions do
-      defaults [:create, :read]
+      defaults([:create, :read])
     end
   end
 

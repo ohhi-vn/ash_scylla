@@ -76,7 +76,9 @@ defmodule AshScylla.TelemetryTest do
         end)
       end
 
-      assert_receive {:exception_event, [:ash_scylla, :query, :exception], %{duration: duration}, metadata}
+      assert_receive {:exception_event, [:ash_scylla, :query, :exception], %{duration: duration},
+                      metadata}
+
       assert is_integer(duration)
       assert duration >= 0
       assert metadata.resource == MyModule

@@ -32,6 +32,7 @@ defmodule AshScylla.DataLayer.Dsl do
           secondary_index :email
           secondary_index [:name, :age]
           secondary_index :status, name: "idx_user_status"
+          lwt true  # Enable lightweight transactions for atomic updates
         end
 
         attributes do
@@ -49,10 +50,23 @@ defmodule AshScylla.DataLayer.Dsl do
   - `:keyspace` - The keyspace to use (overrides repo default)
   - `:consistency` - The consistency level for reads/writes
   - `:ttl` - Default TTL for inserted records (in seconds)
+  - `:lwt` - Enable Lightweight Transactions (LWT) for atomic upserts using `INSERT ... IF NOT EXISTS` (default: `false`)
   - `:secondary_index` - Define secondary indexes for non-primary key columns
   - `:materialized_view` - Define materialized views with different primary key structure
   - `:pagination` - Pagination mode: `:offset` (default) or `:token` for token-based pagination
   - `:per_action_consistency` - Per-action consistency overrides as a keyword list, e.g. `[read: :one, create: :quorum]`
+
+  ## Features
+
+  The data layer supports:
+  - **Upsert** (`:upsert`) - Insert-or-update semantics with optional LWT
+  - **Atomic updates** (`{:atomic, :update}`) - LWT-based conditional updates
+  - **Atomic upserts** (`{:atomic, :upsert}`) - LWT-based insert-or-update
+  - **Bulk update/destroy** - `update_query` and `destroy_query` for filtered operations
+  - **Distinct** - On partition-key columns only
+  - **Aggregates** - COUNT via `:count` aggregate
+  - **Expression calculations** - In-memory post-processing
+  - **Boolean filter** - With OR-to-IN rewriting
   """
 
   require Logger
@@ -147,12 +161,20 @@ defmodule AshScylla.DataLayer.Dsl do
           raise "materialized_view requires a name, e.g. materialized_view :view_name, primary_key: [...]"
 
         {:pagination, meta, [value]} ->
-          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_pagination__]},
-           meta, [{:__MODULE__, [], nil}, value]}
+          {{:., meta,
+            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_pagination__]}, meta,
+           [{:__MODULE__, [], nil}, value]}
 
         {:per_action_consistency, meta, [value]} ->
-          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_per_action_consistency__]},
-           meta, [{:__MODULE__, [], nil}, value]}
+          {{:., meta,
+            [
+              {:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]},
+              :__set_per_action_consistency__
+            ]}, meta, [{:__MODULE__, [], nil}, value]}
+
+        {:lwt, meta, [value]} ->
+          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_lwt__]}, meta,
+           [{:__MODULE__, [], nil}, value]}
 
         other ->
           other
@@ -167,6 +189,7 @@ defmodule AshScylla.DataLayer.Dsl do
       @ash_scylla_materialized_views []
       @ash_scylla_pagination :offset
       @ash_scylla_per_action_consistency %{}
+      @ash_scylla_lwt false
 
       unquote(transformed)
 
@@ -198,6 +221,9 @@ defmodule AshScylla.DataLayer.Dsl do
 
       @doc false
       def __ash_scylla__(:per_action_consistency), do: @ash_scylla_per_action_consistency
+
+      @doc false
+      def __ash_scylla__(:lwt), do: @ash_scylla_lwt
 
       @doc false
       def __ash_scylla__(_opt), do: nil
@@ -388,14 +414,31 @@ defmodule AshScylla.DataLayer.Dsl do
     Module.put_attribute(module, :ash_scylla_pagination, value)
   end
 
+  @spec __set_pagination__(module(), :offset | :token) :: :ok
   def __set_pagination__(_module, value) do
     raise ArgumentError, "Invalid pagination mode: #{inspect(value)}. Must be :offset or :token"
   end
 
   @doc false
   @spec __set_per_action_consistency__(module(), keyword()) :: :ok
-  def __set_per_action_consistency__(module, action_consistency) when is_list(action_consistency) do
+  def __set_per_action_consistency__(module, action_consistency)
+      when is_list(action_consistency) do
     map = Map.new(action_consistency)
     Module.put_attribute(module, :ash_scylla_per_action_consistency, map)
+  end
+
+  @doc false
+  @spec __set_lwt__(module(), boolean()) :: :ok
+  def __set_lwt__(module, value) when is_boolean(value) do
+    Module.put_attribute(module, :ash_scylla_lwt, value)
+  end
+
+  @spec lwt(module()) :: boolean()
+  def lwt(resource) do
+    if function_exported?(resource, :__ash_scylla__, 1) do
+      resource.__ash_scylla__(:lwt)
+    else
+      false
+    end
   end
 end

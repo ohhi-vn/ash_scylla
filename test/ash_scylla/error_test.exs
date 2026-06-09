@@ -124,7 +124,10 @@ defmodule AshScylla.ErrorTest do
     end
 
     test "categorizes consistency errors" do
-      error = %Xandra.Error{reason: "UnavailableException: Cannot achieve consistency level QUORUM"}
+      error = %Xandra.Error{
+        reason: "UnavailableException: Cannot achieve consistency level QUORUM"
+      }
+
       result = ScyllaError.from_xandra_error(error)
 
       assert result.type == :consistency_error
