@@ -4,10 +4,11 @@ defmodule AshScylla.MixProject do
   def project do
     [
       app: :ash_scylla,
-      version: "0.2.0",
-      elixir: "~> 1.17",
+      version: "0.3.0",
+      elixir: "~> 1.16",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
+      aliases: aliases(),
       name: "AshScylla",
       source_url: "https://github.com/ohhi-vn/ash_scylla",
       homepage_url: "https://ohhi.vn",
@@ -18,8 +19,15 @@ defmodule AshScylla.MixProject do
 
   # Run "mix help compile.app" to learn about applications.
   def application do
+    extra =
+      if Mix.env() == :test do
+        [:testcontainer_ex]
+      else
+        []
+      end
+
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger] ++ extra
     ]
   end
 
@@ -52,8 +60,15 @@ defmodule AshScylla.MixProject do
           AshScylla.DataLayer.Dsl,
           AshScylla.DataLayer.QueryBuilder,
           AshScylla.DataLayer.Batch,
+          AshScylla.DataLayer.FilterValidator,
           AshScylla.DataLayer.MaterializedView,
           AshScylla.DataLayer.Pagination
+        ],
+        "Performance": [
+          AshScylla.PreparedStatementCache
+        ],
+        "Observability": [
+          AshScylla.Telemetry
         ],
         "Error Handling": [
           AshScylla.Error,
@@ -70,12 +85,23 @@ defmodule AshScylla.MixProject do
       {:exandra, "~> 1.0"},
       {:ecto, "~> 3.13"},
       {:ecto_sql, "~> 3.13"},
-      {:testcontainers, "~> 2.3", only: [:test, :dev]},
+      {:decimal, "~> 3.1", override: true, only: [:dev, :test]},
+      {:hackney, "~> 4.2", override: true, only: [:dev, :test]},
+      {:testcontainer_ex, "~> 0.3.1", only: [:test, :dev]},
+      # {:testcontainer_ex, path: "../testcontainer_ex", only: [:test, :dev]},
       {:benchee, "~> 1.5", only: [:dev, :test]},
       {:benchee_html, "~> 1.0", only: [:dev, :test]},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
-      {:reactor, "~> 1.0"}
+    ]
+  end
+
+  defp aliases do
+    [
+      "test.ci": ["credo --strict", "test"],
+      test: ["test"],
+      "test.unit": ["test --exclude integration"],
+      "test.integration": ["test --only integration"]
     ]
   end
 end

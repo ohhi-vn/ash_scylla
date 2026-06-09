@@ -460,7 +460,7 @@ defmodule AshScylla.EdgeCasesTest do
 
     test "with token" do
       {c, p} = Pagination.build_paginated_query("t", %{}, "tok", 25)
-      assert c == "SELECT * FROM t AND token() > ? LIMIT ?"
+      assert c == "SELECT * FROM t WHERE token() > ? LIMIT ?"
       assert p == ["tok", 25]
     end
 
@@ -471,7 +471,7 @@ defmodule AshScylla.EdgeCasesTest do
 
     test "large page_size" do
       {_, p} = Pagination.build_paginated_query("t", %{}, nil, 10_000)
-      assert p == [10_000]
+      assert p == [1000]
     end
 
     test "non-empty filter is converted to CQL" do

@@ -24,3 +24,4 @@ ash_scylla-*.tar
 .dexter.db*
 .expert
 .DS_Store
+.env

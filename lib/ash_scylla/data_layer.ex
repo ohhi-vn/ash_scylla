@@ -69,7 +69,9 @@ defmodule AshScylla.DataLayer do
   alias Ash.Type.UUID
   alias AshScylla.DataLayer.Batch
   alias AshScylla.DataLayer.Dsl
+  alias AshScylla.DataLayer.FilterValidator
   alias AshScylla.DataLayer.QueryBuilder
+  alias AshScylla.Telemetry
 
   @dialyzer :no_match
 
@@ -172,37 +174,42 @@ defmodule AshScylla.DataLayer do
   @impl Ash.DataLayer
   @spec run_query(t(), Ash.Resource.t()) :: {:ok, [Ash.Resource.t()]} | {:error, term()}
   def run_query(data_layer_query, resource) do
-    %__MODULE__{repo: repo, table: _table, tenant: tenant} = data_layer_query
+    %__MODULE__{repo: repo, table: _table, tenant: tenant, filters: filters} = data_layer_query
+
+    # Validate filters to prevent ALLOW FILTERING anti-pattern
+    FilterValidator.validate_filters(resource, filters)
 
     # Build the optimized query with filters, sorts, limit, offset
     {query, params} = QueryBuilder.build_optimized_query(data_layer_query)
 
-    opts = if tenant, do: [prefix: tenant], else: []
+    opts = build_query_opts(resource, tenant)
 
     Logger.debug(
       "Executing run_query: #{query} with params #{inspect(params)} opts #{inspect(opts)}"
     )
 
-    case repo.query(query, params, opts) do
-      {:ok, %{rows: rows}} ->
-        records = Enum.map(rows, &to_ash_record(&1, resource))
-        {:ok, records}
+    Telemetry.span(resource, :read, query, fn ->
+      case repo.query(query, params, opts) do
+        {:ok, %{rows: rows}} ->
+          records = Enum.map(rows, &to_ash_record(&1, resource))
+          {:ok, records}
 
-      {:error, %Xandra.Error{} = error} ->
-        Logger.warning("Xandra error in run_query repo.query: #{Exception.message(error)}")
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
+        {:error, %Xandra.Error{} = error} ->
+          Logger.warning("Xandra error in run_query repo.query: #{Exception.message(error)}")
+          {:error, AshScylla.Error.wrap_xandra_error(error)}
 
-      {:error, %Xandra.ConnectionError{} = error} ->
-        Logger.warning(
-          "Xandra connection error in run_query repo.query: #{Exception.message(error)}"
-        )
+        {:error, %Xandra.ConnectionError{} = error} ->
+          Logger.warning(
+            "Xandra connection error in run_query repo.query: #{Exception.message(error)}"
+          )
 
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
+          {:error, AshScylla.Error.wrap_xandra_error(error)}
 
-      {:error, error} ->
-        Logger.error("Unexpected error in run_query repo.query: #{inspect(error)}")
-        {:error, AshScylla.Error.wrap_xandra_error(error)}
-    end
+        {:error, error} ->
+          Logger.error("Unexpected error in run_query repo.query: #{inspect(error)}")
+          {:error, AshScylla.Error.wrap_xandra_error(error)}
+      end
+    end)
   rescue
     e in Xandra.Error ->
       Logger.warning("Xandra error in run_query: #{Exception.message(e)}")
@@ -639,6 +646,19 @@ defmodule AshScylla.DataLayer do
     []
     |> maybe_put(:prefix, sanitize_keyspace(keyspace))
     |> maybe_put(:ttl, ttl)
+    |> maybe_put(:consistency, consistency)
+  end
+
+  # Build query options for read operations, including per-action consistency.
+  defp build_query_opts(resource, tenant) do
+    keyspace = Dsl.keyspace(resource)
+    consistency = Dsl.consistency(resource)
+
+    # Use tenant as prefix if set (for multitenancy), otherwise use keyspace
+    prefix = if tenant, do: tenant, else: keyspace
+
+    []
+    |> maybe_put(:prefix, sanitize_keyspace(prefix))
     |> maybe_put(:consistency, consistency)
   end
 

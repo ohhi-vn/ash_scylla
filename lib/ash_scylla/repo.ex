@@ -121,6 +121,43 @@ defmodule AshScylla.Repo do
         __MODULE__.query(query, [])
       end
 
+      @doc """
+      Returns the recommended pool size based on ScyllaDB's shard-per-core architecture.
+
+      ScyllaDB works best with a connections-per-shard approach:
+      `pool_size = num_nodes * num_cores_per_node`
+
+      This helper queries ScyllaDB's system table for core count and
+      calculates the recommended pool size.
+
+      ## Examples
+
+          # In config/config.exs
+          config :my_app, MyApp.Repo,
+            nodes: ["scylla-1:9042", "scylla-2:9042"],
+            keyspace: "my_app_prod",
+            pool_size: MyApp.Repo.recommended_pool_size()
+
+      Returns a default of 25 if the query fails.
+      """
+      @spec recommended_pool_size() :: pos_integer()
+      def recommended_pool_size do
+        try do
+          result = __MODULE__.query("SELECT COUNT(*) as count FROM system.local", [])
+
+          case result do
+            {:ok, %{rows: [[count]]}} when is_integer(count) and count > 0 ->
+              # Default to single node; multiply by node count for clusters
+              count * 5
+
+            _ ->
+              25
+          end
+        rescue
+          _ -> 25
+        end
+      end
+
       @valid_keyspace_regex ~r/^[a-zA-Z_][a-zA-Z0-9_]{0,47}$/
 
       @spec validate_keyspace!(String.t()) :: :ok

@@ -33,7 +33,7 @@ AshScylla enables you to use **ScyllaDB** or **Apache Cassandra** as a persisten
 
 ### Prerequisites
 
-- Elixir 1.17+
+- Elixir 1.16+
 - Running ScyllaDB or Cassandra instance
 - Basic knowledge of Ash Framework
 
@@ -108,7 +108,10 @@ end
 **5. Create Keyspace and Tables:**
 
 ```elixir
-# Create keyspace
+# Create keyspace (using the mix task)
+mix ash_scylla.setup
+
+# Or programmatically
 MyApp.Repo.create_keyspace()
 
 # Run migrations (if using Ecto migrations)
@@ -209,6 +212,28 @@ Reduce network round-trips with BATCH statements:
 # Bulk create (uses BATCH internally)
 {:ok, users} = user_data_list
   |> Ash.bulk_create(MyApp.User, :create)
+
+# Async partition-aware batching for large datasets
+AshScylla.DataLayer.Batch.batch_insert_async(repo, statements, resource: MyApp.User, max_concurrency: 8)
+```
+
+#### **Token-Based Pagination**
+Efficient pagination without OFFSET:
+
+```elixir
+ash_scylla do
+  pagination :token  # Use token-based pagination instead of OFFSET
+end
+```
+
+#### **Per-Action Consistency**
+Configure consistency levels per action:
+
+```elixir
+ash_scylla do
+  consistency :quorum              # Default consistency
+  per_action_consistency read: :one, create: :quorum  # Per-action overrides
+end
 ```
 
 ---
@@ -321,6 +346,16 @@ config :my_app, MyApp.Repo,
 - Development: 5-10
 - Production: 25-100 (based on concurrent queries)
 
+ScyllaDB works best with a connections-per-shard approach:
+`pool_size = num_nodes * num_cores_per_node`
+
+Use the built-in helper to calculate the recommended pool size:
+
+```elixir
+config :my_app, MyApp.Repo,
+  pool_size: MyApp.Repo.recommended_pool_size()
+```
+
 ---
 
 ## Limitations
@@ -336,6 +371,49 @@ Since ScyllaDB/Cassandra is a NoSQL wide-column store, some features are not sup
 | **No OR conditions** | CQL limitation | Multiple queries or UNION-like patterns |
 | **No foreign keys** | No relational integrity | Application-level validation |
 | **OFFSET inefficiency** | Token-based pagination preferred | Use token-based pagination |
+
+---
+
+## Observability
+
+### Telemetry
+
+AshScylla emits standard `:telemetry` events for all query and batch operations,
+enabling integration with LiveDashboard, Datadog, OpenTelemetry, and other
+observability tools.
+
+**Query events:**
+- `[:ash_scylla, :query, :start]` - Query begins execution
+- `[:ash_scylla, :query, :stop]` - Query finishes successfully
+- `[:ash_scylla, :query, :exception]` - Query raises an error
+
+**Batch events:**
+- `[:ash_scylla, :batch, :start]` - Batch operation begins
+- `[:ash_scylla, :batch, :stop]` - Batch operation finishes
+
+**Attaching a handler:**
+
+```elixir
+:telemetry.attach(
+  "ash_scylla-logger",
+  [:ash_scylla, :query, :stop],
+  &MyApp.Telemetry.handle_event/4,
+  nil
+)
+```
+
+### Prepared Statement Caching
+
+For high-throughput workloads, enable the prepared statement cache to eliminate
+repeated query parsing overhead on ScyllaDB:
+
+```elixir
+# In your supervision tree
+children = [
+  AshScylla.PreparedStatementCache,
+  # ... other children
+]
+```
 
 ---
 
@@ -372,6 +450,9 @@ mix test
 
 # Integration tests only
 mix test test/scylla_integration_test.exs
+
+# CI pipeline (unit tests + credo)
+mix test.ci
 ```
 
 ### Test Structure
@@ -411,12 +492,20 @@ Contributions are welcome! Here's how to get started:
 # Install dependencies
 mix deps.get
 
-# Start ScyllaDB via Docker (for integration tests)
+# Start ScyllaDB via Docker Compose (includes health checks)
+docker compose up -d
+
+# Or start ScyllaDB manually
 docker run -p 9042:9042 scylladb/scylla:latest
 
 # Run tests
 mix test
 ```
+
+### Dev Container
+
+A `.devcontainer/devcontainer.json` is provided for VS Code Dev Containers.
+It brings up both Elixir and ScyllaDB together via Docker Compose.
 
 ---
 

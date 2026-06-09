@@ -14,7 +14,7 @@ config :my_app, MyApp.Repo,
   connect_timeout: 5_000,
   request_timeout: 120_000
 
-# For integration tests with testcontainers (see test/scylla_integration_test.exs):
+# For integration tests with testcontainer_ex (see test/scylla_integration_test.exs):
 # The configuration is done dynamically in the test setup with:
 #
 #   repo_config = [

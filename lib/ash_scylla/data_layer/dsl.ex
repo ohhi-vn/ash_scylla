@@ -51,6 +51,8 @@ defmodule AshScylla.DataLayer.Dsl do
   - `:ttl` - Default TTL for inserted records (in seconds)
   - `:secondary_index` - Define secondary indexes for non-primary key columns
   - `:materialized_view` - Define materialized views with different primary key structure
+  - `:pagination` - Pagination mode: `:offset` (default) or `:token` for token-based pagination
+  - `:per_action_consistency` - Per-action consistency overrides as a keyword list, e.g. `[read: :one, create: :quorum]`
   """
 
   require Logger
@@ -74,6 +76,9 @@ defmodule AshScylla.DataLayer.Dsl do
         materialized_view :users_by_email,
           primary_key: [:email, :id],
           include_columns: [:name, :age]
+
+        pagination :token
+        per_action_consistency read: :one, create: :quorum
       end
   """
   @spec ash_scylla(keyword()) :: Macro.t()
@@ -141,6 +146,14 @@ defmodule AshScylla.DataLayer.Dsl do
         {:materialized_view, _meta, [view_config]} when is_list(view_config) ->
           raise "materialized_view requires a name, e.g. materialized_view :view_name, primary_key: [...]"
 
+        {:pagination, meta, [value]} ->
+          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_pagination__]},
+           meta, [{:__MODULE__, [], nil}, value]}
+
+        {:per_action_consistency, meta, [value]} ->
+          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_per_action_consistency__]},
+           meta, [{:__MODULE__, [], nil}, value]}
+
         other ->
           other
       end)
@@ -152,6 +165,8 @@ defmodule AshScylla.DataLayer.Dsl do
       @ash_scylla_ttl nil
       @ash_scylla_secondary_indexes []
       @ash_scylla_materialized_views []
+      @ash_scylla_pagination :offset
+      @ash_scylla_per_action_consistency %{}
 
       unquote(transformed)
 
@@ -177,6 +192,12 @@ defmodule AshScylla.DataLayer.Dsl do
       def __ash_scylla__(:materialized_views) do
         @ash_scylla_materialized_views
       end
+
+      @doc false
+      def __ash_scylla__(:pagination), do: @ash_scylla_pagination
+
+      @doc false
+      def __ash_scylla__(:per_action_consistency), do: @ash_scylla_per_action_consistency
 
       @doc false
       def __ash_scylla__(_opt), do: nil
@@ -283,6 +304,34 @@ defmodule AshScylla.DataLayer.Dsl do
   end
 
   @doc """
+  Gets the pagination mode for a resource.
+
+  Returns `:offset` or `:token`.
+  """
+  @spec pagination(module()) :: :offset | :token
+  def pagination(resource) do
+    if function_exported?(resource, :__ash_scylla__, 1) do
+      resource.__ash_scylla__(:pagination)
+    else
+      :offset
+    end
+  end
+
+  @doc """
+  Gets the per-action consistency configuration for a resource.
+
+  Returns a map of action_name => consistency_level.
+  """
+  @spec per_action_consistency(module()) :: map()
+  def per_action_consistency(resource) do
+    if function_exported?(resource, :__ash_scylla__, 1) do
+      resource.__ash_scylla__(:per_action_consistency)
+    else
+      %{}
+    end
+  end
+
+  @doc """
   Checks if a column has a secondary index defined.
   """
   @spec has_secondary_index?(module(), atom()) :: boolean()
@@ -331,5 +380,22 @@ defmodule AshScylla.DataLayer.Dsl do
   def __add_materialized_view__(module, view_config) do
     current = Module.get_attribute(module, :ash_scylla_materialized_views)
     Module.put_attribute(module, :ash_scylla_materialized_views, [view_config | current])
+  end
+
+  @doc false
+  @spec __set_pagination__(module(), :offset | :token) :: :ok
+  def __set_pagination__(module, value) when value in [:offset, :token] do
+    Module.put_attribute(module, :ash_scylla_pagination, value)
+  end
+
+  def __set_pagination__(_module, value) do
+    raise ArgumentError, "Invalid pagination mode: #{inspect(value)}. Must be :offset or :token"
+  end
+
+  @doc false
+  @spec __set_per_action_consistency__(module(), keyword()) :: :ok
+  def __set_per_action_consistency__(module, action_consistency) when is_list(action_consistency) do
+    map = Map.new(action_consistency)
+    Module.put_attribute(module, :ash_scylla_per_action_consistency, map)
   end
 end
