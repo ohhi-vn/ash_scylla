@@ -74,7 +74,9 @@ defmodule AshScylla.ScyllaIntegrationTest do
         "2G",
         "--developer-mode",
         "1"
-      ], stderr_to_stdout: true)
+      ],
+      stderr_to_stdout: true
+    )
   end
 
   defp docker_stop do

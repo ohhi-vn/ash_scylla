@@ -16,13 +16,14 @@ defmodule AshScylla.Migration do
   alias AshScylla.DataLayer.Dsl
 
   @moduledoc """
-  Helpers for working with ScyllaDB migrations using Exandra.
+  CQL schema generation helpers for ScyllaDB.
 
-  This module provides utilities to help generate CQL statements for ScyllaDB tables
-  based on Ash resource definitions.
+  This module generates raw CQL DDL statements (CREATE TABLE, CREATE INDEX,
+  CREATE TYPE, etc.) from Ash resource definitions. It is NOT an Ecto SQL
+  migration runner — CQL has no transactional DDL concept.
 
-  Note: For actual migrations, use Exandra with Ecto.Migration directly.
-  See the Exandra documentation for more details on writing migrations.
+  These helpers return CQL strings that you execute via `Ecto.Migration.execute/1`
+  in your migration modules, or directly through your repo at runtime.
 
   ## Example Migration
 
@@ -30,34 +31,23 @@ defmodule AshScylla.Migration do
         use Ecto.Migration
 
         def change do
-          execute "CREATE TABLE users (id UUID PRIMARY KEY, name TEXT, email TEXT)"
+          AshScylla.Migration.create_table_cql(MyApp.User)
+          |> then(&execute/1)
         end
       end
 
   ## Important Note on `create_table_cql/1`
 
-  This function reads compile-time module attributes (`:table`, `:attributes`)
-  set by the Ash resource DSL. It is intended to be called at compile time
-  within a migration module (e.g., inside a `defmacro` or at the module top level).
-  It will not work correctly at runtime when called with a resource module that
-  has already been compiled, because `Module.get_attribute/2` only works during
-  compilation of that module.
-
-  For runtime use, prefer passing explicit parameters or use the AshScylla DSL
-  getter functions (`AshScylla.DataLayer.Dsl.table/1`) combined with
-  `Ash.Resource.Info.attributes/1`.
+  This function reads compile-time module attributes set by the Ash resource DSL.
+  For runtime use, prefer `Ash.Resource.Info.attributes/1` combined with
+  `AshScylla.DataLayer.Dsl.table/1`.
   """
 
   @doc """
   Generates a CQL CREATE TABLE statement for an Ash resource.
 
-  **Important:** This function reads compile-time module attributes (`:table`, `:attributes`)
-  and must be called during the resource module's compilation. For runtime use,
-  build the CQL explicitly or use `Ash.Resource.Info.attributes/1` combined with
-  `AshScylla.DataLayer.Dsl.table/1`.
-
-  Note: This is a helper that returns a CQL string.
-  You need to execute this in an Ecto migration using `execute/1`.
+  Returns a raw CQL string. Execute it in a migration via `Ecto.Migration.execute/1`
+  or directly through your repo at runtime.
   """
   @spec create_table_cql(module()) :: String.t()
   def create_table_cql(resource) do

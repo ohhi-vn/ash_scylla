@@ -26,3 +26,4 @@ ash_scylla-*.tar
 .DS_Store
 .env
 .DS_Store
+mise.toml

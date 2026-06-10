@@ -44,15 +44,13 @@ defmodule AshScylla.DataLayer do
   - `:update` - Update records
   - `:destroy` - Delete records
   - `:filter` - Filter queries
-  - `:sort` - Sort results
   - `:limit` - Limit results
-  - `:offset` - Offset results (use with caution in Cassandra)
   - `:select` - Select specific fields
   - `:multitenancy` - Keyspace-based multitenancy
   - `:upsert` - Upsert records (INSERT IF NOT EXISTS with LWT)
   - `:update_query` - Bulk update via filtered queries
   - `:destroy_query` - Bulk delete via filtered queries
-  - `:keyset` - Token-based keyset pagination (preferred over OFFSET)
+  - `:keyset` - Token-based keyset pagination (the default pagination mode)
   - `:distinct` - DISTINCT on partition key columns
   - `{:aggregate, :count}` - Per-partition COUNT aggregates
   - `{:atomic, :update}` - Atomic updates via LWT (IF clauses)
@@ -71,13 +69,13 @@ defmodule AshScylla.DataLayer do
   - Locking is a no-op (use LWT for conditional operations)
   - No complex WHERE clauses on non-primary key columns without secondary indexes
   - Cross-partition aggregates require materialized views
+  - CQL ORDER BY only works on clustering columns within a partition
+  - OFFSET is not natively supported in ScyllaDB
   """
 
   @behaviour Ash.DataLayer
 
-  require Ecto.Query
   require Logger
-  require Xandra
 
   alias Ash.Resource.Info
   alias Ash.Type.UUID
@@ -95,9 +93,7 @@ defmodule AshScylla.DataLayer do
                         :update,
                         :destroy,
                         :filter,
-                        :sort,
                         :limit,
-                        :offset,
                         :select,
                         :multitenancy,
                         :bulk_create,
@@ -122,7 +118,8 @@ defmodule AshScylla.DataLayer do
     atomic: nil,
     upsert?: false,
     upsert_fields: [],
-    upsert_identity: nil
+    upsert_identity: nil,
+    keyset: nil
   ]
 
   @type t :: %__MODULE__{
@@ -139,7 +136,8 @@ defmodule AshScylla.DataLayer do
           atomic: atom() | nil,
           upsert?: boolean(),
           upsert_fields: list(atom()),
-          upsert_identity: atom() | nil
+          upsert_identity: atom() | nil,
+          keyset: term()
         }
 
   # ============================================================================
@@ -176,6 +174,12 @@ defmodule AshScylla.DataLayer do
 
   def can?(_resource_or_dsl, _other) do
     false
+  end
+
+  @impl Ash.DataLayer
+  @spec data_layer_keyset_by_default?() :: boolean()
+  def data_layer_keyset_by_default? do
+    true
   end
 
   @impl Ash.DataLayer
@@ -293,6 +297,7 @@ defmodule AshScylla.DataLayer do
   @impl Ash.DataLayer
   @spec sort(t(), term(), Ash.Resource.t()) :: {:ok, t()}
   def sort(data_layer_query, sort, _resource) do
+    Logger.warning("sort/3: CQL ORDER BY only works on clustering columns within a partition")
     %__MODULE__{sorts: sorts} = data_layer_query
 
     {:ok, %{data_layer_query | sorts: sort ++ sorts}}
@@ -311,6 +316,10 @@ defmodule AshScylla.DataLayer do
   @impl Ash.DataLayer
   @spec offset(t(), pos_integer(), Ash.Resource.t()) :: {:ok, t()}
   def offset(data_layer_query, offset, _resource) do
+    Logger.warning(
+      "offset/3: OFFSET is not natively supported in ScyllaDB and results will be silently dropped"
+    )
+
     {:ok, %{data_layer_query | offset: offset}}
   end
 
@@ -796,10 +805,12 @@ defmodule AshScylla.DataLayer do
     collect_or_values(right, name, acc)
   end
 
+  @spec collect_or_values(%{name: atom(), right: %{value: term()}}, atom(), list()) :: list()
   defp collect_or_values(%{name: name, right: %{value: value}}, name, acc) do
     [value | acc]
   end
 
+  @spec collect_or_values(term(), atom(), list()) :: list()
   defp collect_or_values(_, _, acc), do: acc
 
   # ============================================================================
@@ -809,7 +820,7 @@ defmodule AshScylla.DataLayer do
   @valid_identifier ~r/^[a-zA-Z_][a-zA-Z0-9_]*$/
 
   @doc false
-  @spec sanitize_identifier(String.t()) :: String.t()
+  @spec sanitize_identifier(String.t()) :: String.t() | no_return()
   defp sanitize_identifier(name) when is_binary(name) do
     if Regex.match?(@valid_identifier, name) do
       name
@@ -819,6 +830,7 @@ defmodule AshScylla.DataLayer do
     end
   end
 
+  @spec repo(module()) :: module()
   defp repo(resource) do
     # Cache the repo module per resource to avoid repeated lookups.
     case Process.get({__MODULE__, :repo, resource}) do
@@ -844,6 +856,7 @@ defmodule AshScylla.DataLayer do
     end
   end
 
+  @spec changeset_to_insert_attrs(term(), module()) :: map()
   defp changeset_to_insert_attrs(changeset, resource) do
     attrs = changeset.attributes
 
@@ -860,10 +873,12 @@ defmodule AshScylla.DataLayer do
     attrs
   end
 
+  @spec changeset_to_update_attrs(term(), module()) :: map()
   defp changeset_to_update_attrs(changeset, _resource) do
     changeset.attributes
   end
 
+  @spec autogenerate_value(map()) :: term()
   defp autogenerate_value(attr) do
     case attr.type do
       UUID -> Ecto.UUID.generate()
@@ -872,6 +887,7 @@ defmodule AshScylla.DataLayer do
     end
   end
 
+  @spec do_insert(map(), module(), module()) :: {:ok, term()} | {:error, term()}
   defp do_insert(attrs, resource, repo) do
     table = source(resource)
     opts = build_opts(resource)
@@ -910,6 +926,7 @@ defmodule AshScylla.DataLayer do
     |> handle_scylla_result()
   end
 
+  @spec do_update(map(), term(), module(), module()) :: {:ok, term()} | {:error, term()}
   defp do_update(attrs, changeset, resource, repo) do
     table = source(resource)
     opts = build_opts(resource)
@@ -954,6 +971,7 @@ defmodule AshScylla.DataLayer do
     |> handle_scylla_result()
   end
 
+  @spec do_delete(term(), module(), module()) :: :ok | {:error, term()}
   defp do_delete(changeset, resource, repo) do
     table = source(resource)
     opts = build_opts(resource)
@@ -987,6 +1005,7 @@ defmodule AshScylla.DataLayer do
     end
   end
 
+  @spec fetch_by_primary_key(map(), module(), module()) :: {:ok, term()} | {:error, term()}
   defp fetch_by_primary_key(pk, resource, repo) do
     table = source(resource)
     sanitized_table = sanitize_identifier(table)
@@ -1019,6 +1038,7 @@ defmodule AshScylla.DataLayer do
     end
   end
 
+  @spec get_primary_key(term(), module()) :: map()
   defp get_primary_key(changeset, resource) do
     Enum.reduce(Info.attributes(resource), %{}, fn attr, acc ->
       if attr.primary_key? do
@@ -1029,6 +1049,7 @@ defmodule AshScylla.DataLayer do
     end)
   end
 
+  @spec to_ash_record(map(), module()) :: struct()
   defp to_ash_record(record, resource) do
     attrs =
       resource
@@ -1042,6 +1063,7 @@ defmodule AshScylla.DataLayer do
   end
 
   # Build repo query options from resource configuration (keyspace, TTL, consistency).
+  @spec build_opts(module()) :: keyword()
   defp build_opts(resource) do
     keyspace = Dsl.keyspace(resource)
     ttl = Dsl.ttl(resource)
@@ -1054,6 +1076,7 @@ defmodule AshScylla.DataLayer do
   end
 
   # Build query options for read operations, including per-action consistency.
+  @spec build_query_opts(module(), String.t() | nil) :: keyword()
   defp build_query_opts(resource, tenant) do
     keyspace = Dsl.keyspace(resource)
     consistency = Dsl.consistency(resource)
@@ -1066,26 +1089,33 @@ defmodule AshScylla.DataLayer do
     |> maybe_put(:consistency, consistency)
   end
 
+  @spec sanitize_keyspace(String.t() | nil) :: String.t() | nil
   defp sanitize_keyspace(nil), do: nil
   defp sanitize_keyspace(keyspace), do: sanitize_identifier(keyspace)
 
+  @spec maybe_put(keyword(), atom(), term()) :: keyword()
   defp maybe_put(opts, _key, nil), do: opts
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
 
   # Normalize ScyllaDB/Xandra errors into AshScylla errors.
+  @spec handle_scylla_result({:ok, term()} | :ok | {:error, term()}) ::
+          {:ok, term()} | :ok | {:error, term()}
   defp handle_scylla_result({:ok, _} = ok), do: ok
   defp handle_scylla_result(:ok), do: :ok
 
+  @spec handle_scylla_result({:error, Xandra.Error.t()}) :: {:error, term()}
   defp handle_scylla_result({:error, %Xandra.Error{} = error}) do
     Logger.warning("Xandra error: #{Exception.message(error)}")
     {:error, AshScylla.Error.wrap_xandra_error(error)}
   end
 
+  @spec handle_scylla_result({:error, Xandra.ConnectionError.t()}) :: {:error, term()}
   defp handle_scylla_result({:error, %Xandra.ConnectionError{} = error}) do
     Logger.warning("Xandra connection error: #{Exception.message(error)}")
     {:error, AshScylla.Error.wrap_xandra_error(error)}
   end
 
+  @spec handle_scylla_result({:error, term()}) :: {:error, term()}
   defp handle_scylla_result({:error, error}) do
     Logger.error("Unexpected error: #{inspect(error)}")
     {:error, AshScylla.Error.wrap_xandra_error(error)}

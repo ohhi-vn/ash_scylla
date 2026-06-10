@@ -12,19 +12,28 @@ defmodule AshScylla.Test do
       assert AshScylla.DataLayer.can?(nil, :update) == true
       assert AshScylla.DataLayer.can?(nil, :destroy) == true
       assert AshScylla.DataLayer.can?(nil, :filter) == true
-      assert AshScylla.DataLayer.can?(nil, :sort) == true
       assert AshScylla.DataLayer.can?(nil, :limit) == true
-      assert AshScylla.DataLayer.can?(nil, :offset) == true
       assert AshScylla.DataLayer.can?(nil, :select) == true
       assert AshScylla.DataLayer.can?(nil, :multitenancy) == true
+      assert AshScylla.DataLayer.can?(nil, :keyset) == true
+      assert AshScylla.DataLayer.can?(nil, :upsert) == true
+      assert AshScylla.DataLayer.can?(nil, :boolean_filter) == true
+      assert AshScylla.DataLayer.can?(nil, :distinct) == true
+      assert AshScylla.DataLayer.can?(nil, {:atomic, :update}) == true
+      assert AshScylla.DataLayer.can?(nil, {:atomic, :upsert}) == true
+      assert AshScylla.DataLayer.can?(nil, {:aggregate, :count}) == true
     end
 
     test "returns false for unsupported features" do
       assert AshScylla.DataLayer.can?(nil, :transact) == false
-      assert AshScylla.DataLayer.can?(nil, {:aggregate, :count}) == true
+      assert AshScylla.DataLayer.can?(nil, :sort) == false
+      assert AshScylla.DataLayer.can?(nil, :offset) == false
       assert AshScylla.DataLayer.can?(nil, {:aggregate, :sum}) == false
       assert AshScylla.DataLayer.can?(nil, {:join, nil}) == false
       assert AshScylla.DataLayer.can?(nil, {:lateral_join, []}) == false
+      assert AshScylla.DataLayer.can?(nil, :expression_calculation) == false
+      assert AshScylla.DataLayer.can?(nil, :lateral_join) == false
+      assert AshScylla.DataLayer.can?(nil, :lock) == false
     end
   end
 

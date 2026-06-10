@@ -161,8 +161,10 @@ users = MyApp.Domain.read_users!()
 | Update | ✅ | Update existing records |
 | Destroy | ✅ | Delete records |
 | Filter | ✅ | Powerful filter syntax with CQL WHERE conversion |
-| Sort | ✅ | ORDER BY support |
+| Sort | ⚠️ | ORDER BY on clustering columns only (within a partition) |
 | Keyset pagination | ✅ | Token-based pagination via paging_state (preferred over OFFSET) |
+| Limit | ✅ | LIMIT is natively supported |
+| Offset | ⚠️ | Not natively supported in ScyllaDB; results silently truncated. Use keyset pagination instead. |
 | Select | ✅ | Select specific fields |
 | Multitenancy | ✅ | Keyspace-based multitenancy |
 | Bulk Create | ✅ | Batch INSERT operations |
@@ -375,10 +377,10 @@ Since ScyllaDB/Cassandra is a NoSQL wide-column store, some features are not sup
 | **No JOINs** | No relational joins | Denormalize or application-side joins |
 | **No complex aggregations** | No GROUP BY, COUNT across partitions | Materialized views or custom aggregation |
 | **No ACID transactions** | Only lightweight transactions (LWT) | Use LWT for single-partition operations |
-| **No complex WHERE clauses** | Without indexes, only PK queries | Create secondary indexes or materialized views |
+| **Limited WHERE clauses** | Without indexes, only PK queries are efficient; filtering on non-indexed columns raises errors | Create secondary indexes or materialized views for non-PK query patterns |
 | **No OR conditions** | CQL limitation | Multiple queries or UNION-like patterns |
 | **No foreign keys** | No relational integrity | Application-level validation |
-| **OFFSET not supported** | Token-based pagination preferred | Use keyset pagination with `pagination :token` |
+| **OFFSET not supported** | ScyllaDB has no native OFFSET; it would require full table scan | Use keyset pagination with `pagination :token`. The data layer silently drops OFFSET to prevent performance disasters. |
 
 ---
 
@@ -450,14 +452,14 @@ For detailed documentation, see:
 Run the test suite:
 
 ```bash
-# Unit tests (no ScyllaDB required)
-mix test --exclude integration
-
-# All tests including integration (requires Docker for testcontainers)
+# All tests (unit + integration; requires Docker for testcontainers)
 mix test
 
-# Integration tests only
-mix test test/scylla_integration_test.exs
+# Unit tests only (no ScyllaDB required)
+mix test --exclude integration
+
+# Integration tests only (requires Docker)
+mix test test/scylla_integration_test.exs --only integration
 
 # CI pipeline (unit tests + credo)
 mix test.ci

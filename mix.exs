@@ -62,7 +62,9 @@ defmodule AshScylla.MixProject do
       groups_for_modules: [
         Core: [
           AshScylla,
-          AshScylla.DataLayer,
+          AshScylla.DataLayer
+        ],
+        "Schema Helpers": [
           AshScylla.Migration
         ],
         "Data Layer Modules": [
@@ -72,6 +74,9 @@ defmodule AshScylla.MixProject do
           AshScylla.DataLayer.FilterValidator,
           AshScylla.DataLayer.MaterializedView,
           AshScylla.DataLayer.Pagination
+        ],
+        "Repo Helpers": [
+          AshScylla.Repo
         ],
         Performance: [
           AshScylla.PreparedStatementCache
@@ -90,10 +95,10 @@ defmodule AshScylla.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ash, "~> 3.24"},
+      {:ash, "~> 3.0"},
       {:exandra, "~> 1.0"},
       {:ecto, "~> 3.13"},
-      # ecto_sql is required by exandra at runtime (Ecto adapter dependency).
+      # ecto_sql is a runtime dependency of exandra (the Ecto adapter for ScyllaDB).
       # AshScylla itself does not use SQL features — this is pulled in transitively.
       {:ecto_sql, "~> 3.13"},
       {:decimal, "~> 3.1", override: true, only: [:dev, :test]},
@@ -104,13 +109,13 @@ defmodule AshScylla.MixProject do
       {:benchee_html, "~> 1.0", only: :dev},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
-      {:dialyxir, "~> 1.4", only: [:dev], runtime: false}
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
     ]
   end
 
   defp aliases do
     [
-      "test.ci": ["credo --strict", "test"],
+      "test.ci": ["credo --strict", "test --exclude integration"],
       test: ["test"],
       "test.unit": ["test --exclude integration"],
       "test.integration": ["test --only integration"]

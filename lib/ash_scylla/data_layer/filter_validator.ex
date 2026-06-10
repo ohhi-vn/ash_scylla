@@ -25,8 +25,6 @@ defmodule AshScylla.DataLayer.FilterValidator do
   such issues at query-build time and provides actionable error messages.
   """
 
-  require Logger
-
   alias Ash.Resource.Info
   alias AshScylla.DataLayer.Dsl
 
@@ -90,6 +88,7 @@ defmodule AshScylla.DataLayer.FilterValidator do
     get_primary_key_columns(resource) ++ get_indexed_columns(resource)
   end
 
+  @spec get_primary_key_columns(module()) :: [atom()]
   defp get_primary_key_columns(resource) do
     if Info.resource?(resource) do
       resource
@@ -101,6 +100,7 @@ defmodule AshScylla.DataLayer.FilterValidator do
     end
   end
 
+  @spec get_indexed_columns(module()) :: [atom()]
   defp get_indexed_columns(resource) do
     resource
     |> Dsl.secondary_indexes()
@@ -108,6 +108,7 @@ defmodule AshScylla.DataLayer.FilterValidator do
     |> Enum.uniq()
   end
 
+  @spec extract_all_filter_columns(list()) :: [atom()]
   defp extract_all_filter_columns(filters) do
     filters
     |> List.flatten()
@@ -115,12 +116,16 @@ defmodule AshScylla.DataLayer.FilterValidator do
     |> Enum.uniq()
   end
 
+  @spec extract_columns_from_filter(term()) :: [atom()]
   defp extract_columns_from_filter(%{left: %{name: name}}) when is_atom(name), do: [name]
   defp extract_columns_from_filter(%{expression: expr}), do: extract_all_filter_columns([expr])
 
+  @spec extract_columns_from_filter(term()) :: [atom()]
   defp extract_columns_from_filter(%{left: left, right: right}),
     do: extract_all_filter_columns([left, right])
 
+  @spec extract_columns_from_filter(%{name: atom()}) :: [atom()]
   defp extract_columns_from_filter(%{name: name}) when is_atom(name), do: [name]
+  @spec extract_columns_from_filter(term()) :: [atom()]
   defp extract_columns_from_filter(_), do: []
 end

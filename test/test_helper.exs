@@ -29,8 +29,6 @@ case System.get_env("DOCKER_HOST") do
     :ok
 end
 
-# Disable Ryuk auto-cleanup (we manage containers manually)
-System.put_env("TESTCONTAINERS_RYUK_DISABLED", "true")
 System.put_env("TESTCONTAINERS_PULL_POLICY", "always")
 
 # Load test support files

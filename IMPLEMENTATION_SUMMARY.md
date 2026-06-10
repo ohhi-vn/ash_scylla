@@ -253,13 +253,16 @@ Retry delays are tailored to error types:
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| `ash` | ~> 3.24 | Ash Framework |
+| `ash` | ~> 3.0 | Ash Framework |
 | `exandra` | ~> 1.0 | Ecto adapter for ScyllaDB/Cassandra |
 | `ecto` | ~> 3.13 | Ecto for database interaction |
-| `ecto_sql` | ~> 3.13 | SQL support for Ecto |
-| `reactor` | ~> 1.0 | Reactor for Ash workflows |
-| `testcontainers` | ~> 2.3 | Testcontainers for integration tests (test only) |
-| `benchee` | ~> 1.5 | Benchmarking (dev/test only) |
+| `ecto_sql` | ~> 3.13 | CQL migration helpers (dev/test only) |
+| `testcontainer_ex` | ~> 0.3.1 | Integration test containers (dev/test only) |
+| `benchee` | ~> 1.5 | Benchmarking (dev only) |
+| `benchee_html` | ~> 1.0 | Benchmark HTML reports (dev only) |
+| `credo` | ~> 1.7 | Static analysis (dev/test) |
+| `dialyxir` | ~> 1.4 | Type checking (dev/test) |
+| `ex_doc` | ~> 0.40 | Documentation generation (dev only) |
 
 ---
 

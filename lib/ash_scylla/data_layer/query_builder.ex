@@ -319,10 +319,12 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     {IO.iodata_to_binary(cql), params}
   end
 
+  @spec maybe_iodata_to_binary({String.t(), list()}) :: {String.t(), list()}
   defp maybe_iodata_to_binary({cql, params}) when is_binary(cql) do
     {cql, params}
   end
 
+  @spec maybe_iodata_to_binary({:error, term()}) :: {:error, term()}
   defp maybe_iodata_to_binary({:error, _} = error), do: error
 
   @spec get_filter_columns(list()) :: [atom()]

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-10
+
+### Changed
+- **BREAKING**: Removed `:sort` and `:offset` from `@supported_features` — these are not natively supported by ScyllaDB and were causing silent failures. `can?(:sort)` and `can?(:offset)` now return `false`.
+- Added `data_layer_keyset_by_default?/0` returning `true` — keyset pagination is now the default pagination mode.
+- Added runtime `Logger.warning` in `sort/3` and `offset/3` callbacks to alert callers about ScyllaDB limitations.
+- Relaxed Ash dependency from `~> 3.24` to `~> 3.0` for broader compatibility.
+- Moved `AshScylla.Repo` and `AshScylla.Migration` out of the Core ExDoc group into "Repo Helpers" and "Schema Helpers" respectively.
+- Clarified `AshScylla.Migration` docs — it generates raw CQL DDL strings, not Ecto SQL migrations.
+- Updated `IMPLEMENTATION_SUMMARY.md` dependency table to remove incorrect `reactor` and `testcontainers` entries, add missing dev deps.
+
+### Added
+- `@spec` annotations across all public and private API modules (DataLayer, QueryBuilder, Pagination, FilterValidator, Batch, MaterializedView, Migration, Error, ScyllaError, Repo, Telemetry, DSL).
+- `dialyxir` added to `[:dev, :test]` for CI type checking.
+- CI dialyzer step now fails on type errors (previously used `--ignore-exit-status || true`).
+
+### Fixed
+- Integration tests can now be run with `mix test test/scylla_integration_test.exs --only integration` (previously excluded by global `ExUnit.configure`).
+- Removed unused `require Logger` from `FilterValidator`, `Dsl`, `Telemetry` and `require Xandra` from `DataLayer`.
+- Updated README feature/limitation tables for ScyllaDB accuracy (sort, offset, filter constraints).
+- Updated test assertions to match new `can?/2` behavior and current version `0.4.0`.
+
 ## [0.3.0] - 2026-06-09
 
 ### Added
@@ -47,7 +69,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multitenancy via keyspace-based tenant isolation
 - Basic CQL query generation from Ash queries
 
-[Unreleased]: https://github.com/ohhi-vn/ash_scylla/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/ohhi-vn/ash_scylla/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ohhi-vn/ash_scylla/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ohhi-vn/ash_scylla/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ohhi-vn/ash_scylla/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ohhi-vn/ash_scylla/releases/tag/v0.1.0

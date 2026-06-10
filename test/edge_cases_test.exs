@@ -683,19 +683,36 @@ defmodule AshScylla.EdgeCasesTest do
         :update,
         :destroy,
         :filter,
-        :sort,
         :limit,
-        :offset,
         :select,
         :multitenancy,
-        :bulk_create
+        :bulk_create,
+        :keyset,
+        :upsert,
+        :boolean_filter,
+        :distinct,
+        {:atomic, :update},
+        {:atomic, :upsert},
+        {:aggregate, :count}
       ]
 
       for f <- supported, do: assert(DataLayer.can?(nil, f) == true)
     end
 
     test "can? false for all unsupported" do
-      unsupported = [:transact, :aggregate, :join, :lateral_join, :lock, :calculate, :combine]
+      unsupported = [
+        :transact,
+        :aggregate,
+        :join,
+        :lateral_join,
+        :lock,
+        :calculate,
+        :combine,
+        :sort,
+        :offset,
+        :expression_calculation
+      ]
+
       for f <- unsupported, do: assert(DataLayer.can?(nil, f) == false)
     end
   end

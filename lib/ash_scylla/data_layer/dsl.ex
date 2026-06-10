@@ -69,8 +69,6 @@ defmodule AshScylla.DataLayer.Dsl do
   - **Boolean filter** - With OR-to-IN rewriting
   """
 
-  require Logger
-
   @doc """
   Macro for configuring ScyllaDB options in Ash resources.
 

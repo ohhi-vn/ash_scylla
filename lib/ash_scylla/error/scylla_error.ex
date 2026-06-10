@@ -228,6 +228,8 @@ defmodule AshScylla.Error.ScyllaError do
 
   # --- Connection error classification ---
 
+  @spec classify_connection_error(atom() | {:unreachable, term()} | term()) ::
+          {:ok, atom(), String.t(), String.t()} | {:fallback, term()}
   defp classify_connection_error(reason) when is_atom(reason) do
     case Map.fetch(@connection_error_types, reason) do
       {:ok, type} ->
@@ -239,20 +241,25 @@ defmodule AshScylla.Error.ScyllaError do
     end
   end
 
+  @spec classify_connection_error({:unreachable, term()}) :: {:ok, atom(), String.t(), String.t()}
   defp classify_connection_error({:unreachable, _host}) do
     {:ok, :host_unreachable, "ScyllaDB host is unreachable",
      "Check network connectivity and that the ScyllaDB node is online."}
   end
 
+  @spec classify_connection_error(term()) ::
+          {:ok, atom(), String.t(), String.t()} | {:fallback, term()}
   defp classify_connection_error(reason) do
     classify_connection_error_fallback(reason)
   end
 
+  @spec classify_connection_error_fallback(term()) :: {:fallback, term()}
   defp classify_connection_error_fallback(reason) do
     Logger.warning("Unknown Xandra connection error reason: #{inspect(reason)}")
     {:fallback, reason}
   end
 
+  @spec connection_error_message(atom()) :: {String.t(), String.t()}
   defp connection_error_message(:connection_closed) do
     {"Connection to ScyllaDB was closed",
      "Check if ScyllaDB is running and network connectivity is available."}
@@ -275,6 +282,7 @@ defmodule AshScylla.Error.ScyllaError do
 
   # --- Xandra error categorization ---
 
+  @spec categorize_xandra_error(atom() | binary() | term()) :: {atom(), atom(), map()}
   defp categorize_xandra_error(reason) when is_atom(reason) do
     case List.keyfind(@error_atom_patterns, reason, 0) do
       {^reason, type, details} ->
@@ -286,6 +294,7 @@ defmodule AshScylla.Error.ScyllaError do
     end
   end
 
+  @spec categorize_xandra_error(binary()) :: {atom(), atom(), map()}
   defp categorize_xandra_error(reason) when is_binary(reason) do
     Enum.find_value(@error_patterns, {:unknown, :unknown, %{reason: reason}}, fn
       {pattern, type, sub_patterns} ->
@@ -305,6 +314,7 @@ defmodule AshScylla.Error.ScyllaError do
     end)
   end
 
+  @spec categorize_xandra_error(term()) :: {atom(), atom(), map()}
   defp categorize_xandra_error(reason) do
     Logger.warning("Unknown Xandra error reason type: #{inspect(reason)}")
     {:unknown, :unknown, %{reason: reason}}
@@ -312,6 +322,7 @@ defmodule AshScylla.Error.ScyllaError do
 
   # --- Error builder ---
 
+  @spec build_error(atom(), term(), atom(), map(), term()) :: t()
   defp build_error(:query_error, reason, _category, details, error) do
     %ScyllaError{
       type: :query_error,
@@ -322,6 +333,7 @@ defmodule AshScylla.Error.ScyllaError do
     }
   end
 
+  @spec build_error(:syntax_error, term(), atom(), map(), term()) :: t()
   defp build_error(:syntax_error, reason, _category, _details, error) do
     %ScyllaError{
       type: :syntax_error,
@@ -332,6 +344,7 @@ defmodule AshScylla.Error.ScyllaError do
     }
   end
 
+  @spec build_error(:schema_error, term(), atom(), map(), term()) :: t()
   defp build_error(:schema_error, reason, _category, details, error) do
     %ScyllaError{
       type: :schema_error,
@@ -342,6 +355,7 @@ defmodule AshScylla.Error.ScyllaError do
     }
   end
 
+  @spec build_error(:unauthorized, term(), atom(), map(), term()) :: t()
   defp build_error(:unauthorized, reason, _category, _details, error) do
     %ScyllaError{
       type: :unauthorized,
@@ -352,6 +366,7 @@ defmodule AshScylla.Error.ScyllaError do
     }
   end
 
+  @spec build_error(:overloaded, term(), atom(), map(), term()) :: t()
   defp build_error(:overloaded, reason, _category, _details, error) do
     %ScyllaError{
       type: :overloaded,
@@ -362,6 +377,7 @@ defmodule AshScylla.Error.ScyllaError do
     }
   end
 
+  @spec build_error(:timeout, term(), atom(), map(), term()) :: t()
   defp build_error(:timeout, reason, _category, _details, error) do
     %ScyllaError{
       type: :timeout,
@@ -372,6 +388,7 @@ defmodule AshScylla.Error.ScyllaError do
     }
   end
 
+  @spec build_error(:already_exists, term(), atom(), map(), term()) :: t()
   defp build_error(:already_exists, reason, _category, _details, error) do
     %ScyllaError{
       type: :already_exists,
@@ -382,6 +399,7 @@ defmodule AshScylla.Error.ScyllaError do
     }
   end
 
+  @spec build_error(:not_found, term(), atom(), map(), term()) :: t()
   defp build_error(:not_found, reason, _category, _details, error) do
     %ScyllaError{
       type: :not_found,
@@ -392,6 +410,7 @@ defmodule AshScylla.Error.ScyllaError do
     }
   end
 
+  @spec build_error(:consistency_error, term(), atom(), map(), term()) :: t()
   defp build_error(:consistency_error, reason, _category, _details, error) do
     %ScyllaError{
       type: :consistency_error,
@@ -402,6 +421,7 @@ defmodule AshScylla.Error.ScyllaError do
     }
   end
 
+  @spec build_error(:unknown, term(), atom(), map(), term()) :: t()
   defp build_error(:unknown, reason, _category, _details, error) do
     %ScyllaError{
       type: :unknown,
@@ -412,6 +432,7 @@ defmodule AshScylla.Error.ScyllaError do
     }
   end
 
+  @spec build_error(atom(), term(), atom(), map(), term()) :: t()
   defp build_error(type, reason, _category, _details, error) do
     %ScyllaError{
       type: type,
@@ -424,18 +445,21 @@ defmodule AshScylla.Error.ScyllaError do
 
   # --- Formatting ---
 
+  @spec format_reason(binary() | term()) :: String.t()
   defp format_reason(reason) when is_binary(reason) do
     reason
     |> String.replace(~r/^\w+:/, "")
     |> String.trim()
   end
 
+  @spec format_reason(term()) :: String.t()
   defp format_reason(reason) do
     inspect(reason)
   end
 
   # --- Suggestion helpers ---
 
+  @spec query_error_suggestion(map()) :: String.t()
   defp query_error_suggestion(%{reason: reason}) when is_binary(reason) do
     cond do
       String.contains?(reason, "PRIMARY KEY") ->
@@ -452,10 +476,12 @@ defmodule AshScylla.Error.ScyllaError do
     end
   end
 
+  @spec query_error_suggestion(map()) :: String.t()
   defp query_error_suggestion(_details) do
     "Review the CQL query syntax and ensure all referenced columns exist."
   end
 
+  @spec syntax_error_suggestion() :: String.t()
   defp syntax_error_suggestion do
     "Check the CQL syntax. Common issues:\n" <>
       "- Missing or extra commas\n" <>
@@ -463,6 +489,7 @@ defmodule AshScylla.Error.ScyllaError do
       "- Unmatched parentheses"
   end
 
+  @spec schema_error_suggestion(map()) :: String.t()
   defp schema_error_suggestion(%{type: :table_not_found}) do
     "The table doesn't exist. You may need to:\n" <>
       "1. Run migrations to create the table\n" <>
@@ -470,10 +497,12 @@ defmodule AshScylla.Error.ScyllaError do
       "3. Verify you're using the correct keyspace"
   end
 
+  @spec schema_error_suggestion(map()) :: String.t()
   defp schema_error_suggestion(_details) do
     "Check that all referenced tables, columns, and keyspaces exist and are properly configured."
   end
 
+  @spec unauthorized_suggestion() :: String.t()
   defp unauthorized_suggestion do
     "Check that:\n" <>
       "1. The user has the necessary permissions\n" <>
@@ -481,6 +510,7 @@ defmodule AshScylla.Error.ScyllaError do
       "3. Role-based access control is properly configured"
   end
 
+  @spec overloaded_suggestion() :: String.t()
   defp overloaded_suggestion do
     "The ScyllaDB node is overloaded. Consider:\n" <>
       "1. Increasing the request timeout\n" <>
@@ -489,6 +519,7 @@ defmodule AshScylla.Error.ScyllaError do
       "4. Checking for inefficient queries"
   end
 
+  @spec timeout_suggestion() :: String.t()
   defp timeout_suggestion do
     "Query timed out. Consider:\n" <>
       "1. Increasing the request_timeout in repo configuration\n" <>
@@ -497,6 +528,7 @@ defmodule AshScylla.Error.ScyllaError do
       "4. Checking ScyllaDB node performance"
   end
 
+  @spec already_exists_suggestion() :: String.t()
   defp already_exists_suggestion do
     "The resource already exists. Consider:\n" <>
       "1. Using IF NOT EXISTS in your CQL\n" <>
@@ -504,6 +536,7 @@ defmodule AshScylla.Error.ScyllaError do
       "3. Using UPDATE instead of INSERT if appropriate"
   end
 
+  @spec not_found_suggestion() :: String.t()
   defp not_found_suggestion do
     "The resource was not found. Check that:\n" <>
       "1. The table/keyspace exists\n" <>
@@ -511,6 +544,7 @@ defmodule AshScylla.Error.ScyllaError do
       "3. The resource hasn't been dropped"
   end
 
+  @spec consistency_error_suggestion() :: String.t()
   defp consistency_error_suggestion do
     "The required consistency level was not met. Consider:\n" <>
       "1. Lowering the consistency level (e.g., from QUORUM to ONE)\n" <>

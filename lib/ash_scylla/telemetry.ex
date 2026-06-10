@@ -52,8 +52,6 @@ defmodule AshScylla.Telemetry do
       )
   """
 
-  require Logger
-
   @doc """
   Executes a function within a telemetry span.
 

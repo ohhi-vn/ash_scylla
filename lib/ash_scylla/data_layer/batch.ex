@@ -214,6 +214,7 @@ defmodule AshScylla.DataLayer.Batch do
     end
   end
 
+  @spec partition_key_hash(list()) :: non_neg_integer()
   defp partition_key_hash(params) do
     # Simple hash-based grouping for partition-aware batching
     # Uses the first parameter (typically the partition key value)
@@ -223,5 +224,6 @@ defmodule AshScylla.DataLayer.Batch do
     end
   end
 
+  @spec count(non_neg_integer()) :: non_neg_integer()
   defp count(n), do: n
 end
