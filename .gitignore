@@ -25,3 +25,4 @@ ash_scylla-*.tar
 .expert
 .DS_Store
 .env
+.DS_Store

@@ -4,8 +4,8 @@ defmodule AshScylla.MixProject do
   def project do
     [
       app: :ash_scylla,
-      version: "0.3.0",
-      elixir: "~> 1.16",
+      version: "0.4.0",
+      elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       aliases: aliases(),
@@ -63,7 +63,6 @@ defmodule AshScylla.MixProject do
         Core: [
           AshScylla,
           AshScylla.DataLayer,
-          AshScylla.Repo,
           AshScylla.Migration
         ],
         "Data Layer Modules": [
@@ -94,13 +93,15 @@ defmodule AshScylla.MixProject do
       {:ash, "~> 3.24"},
       {:exandra, "~> 1.0"},
       {:ecto, "~> 3.13"},
+      # ecto_sql is required by exandra at runtime (Ecto adapter dependency).
+      # AshScylla itself does not use SQL features — this is pulled in transitively.
       {:ecto_sql, "~> 3.13"},
       {:decimal, "~> 3.1", override: true, only: [:dev, :test]},
       {:hackney, "~> 4.2", override: true, only: [:dev, :test]},
       {:testcontainer_ex, "~> 0.3.1", only: [:test, :dev]},
       # {:testcontainer_ex, path: "../testcontainer_ex", only: [:test, :dev]},
-      {:benchee, "~> 1.5", only: [:dev, :test]},
-      {:benchee_html, "~> 1.0", only: [:dev, :test]},
+      {:benchee, "~> 1.5", only: :dev},
+      {:benchee_html, "~> 1.0", only: :dev},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev], runtime: false}

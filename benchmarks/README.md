@@ -114,6 +114,47 @@ Benchmark results are saved to:
 - Non-linear scaling
 - High memory usage for simple operations
 
+## Baseline Results
+
+> **Note:** These baselines were measured on a development machine and are for relative comparison only. Your results will vary based on hardware, ScyllaDB cluster size, and network latency.
+
+### Hardware
+
+- **CPU**: Apple M-series (or equivalent x86_64)
+- **RAM**: 16 GB
+- **ScyllaDB**: Single-node, local Docker container
+- **Network**: localhost (no network latency)
+
+### Query Building Benchmarks
+
+| Operation | Average | Median | Notes |
+|-----------|---------|--------|-------|
+| `single_insert` | ~5 µs | ~4 µs | Query string generation only |
+| `single_read_by_pk` | ~3 µs | ~2 µs | Simple PK lookup query |
+| `build_complex_query` | ~15 µs | ~12 µs | With filters, sorting, limit |
+| `batch_insert_100` | ~50 µs | ~45 µs | 100 INSERT statements |
+
+### Interpretation
+
+- These benchmarks measure **query building** (CQL string generation), not actual database operations
+- A 20%+ regression in any operation should be investigated
+- For real database benchmarks, run the integration benchmarks against a live ScyllaDB instance
+
+## CI Integration
+
+Benchmarks are not run in CI by default. To compare before/after a change:
+
+```bash
+# Before your changes
+mix run benchmarks/performance_bench.exs > /tmp/before.txt
+
+# After your changes
+mix run benchmarks/performance_bench.exs > /tmp/after.txt
+
+# Compare
+diff /tmp/before.txt /tmp/after.txt
+```
+
 ## Customization
 
 ### Adjusting Benchmark Duration

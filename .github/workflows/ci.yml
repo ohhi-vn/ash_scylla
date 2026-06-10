@@ -46,9 +46,9 @@ jobs:
     strategy:
       matrix:
         include:
-          - elixir: "1.16"
-            otp: "26"
           - elixir: "1.17"
+            otp: "27"
+          - elixir: "1.18"
             otp: "27"
     steps:
       - uses: actions/checkout@v4
@@ -67,6 +67,8 @@ jobs:
             ${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-mix-
       - name: Install dependencies
         run: mix deps.get
+      - name: Check formatting
+        run: mix format --check-formatted
       - name: Run unit tests
         run: mix test --exclude integration
 

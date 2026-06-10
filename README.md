@@ -33,7 +33,7 @@ AshScylla enables you to use **ScyllaDB** or **Apache Cassandra** as a persisten
 
 ### Prerequisites
 
-- Elixir 1.16+
+- Elixir 1.17+
 - Running ScyllaDB or Cassandra instance
 - Basic knowledge of Ash Framework
 
@@ -122,14 +122,12 @@ mix ecto.migrate
 
 ```elixir
 # Create
-{:ok, user} = MyApp.User
-  |> Ash.Changeset.for_create(:create, %{name: "John", email: "john@example.com"})
-  |> Ash.create()
+{:ok, user} = Ash.create(MyApp.User, %{name: "John", email: "john@example.com"})
 
 # Read
 users = MyApp.User
   |> Ash.Query.filter(email == "john@example.com")
-  |> Ash.read()
+  |> Ash.read!()
 
 # Update
 {:ok, updated} = user
@@ -137,7 +135,17 @@ users = MyApp.User
   |> Ash.update()
 
 # Delete
-:ok = user |> Ash.destroy()
+:ok = Ash.destroy(user)
+```
+
+Or using the domain directly:
+
+```elixir
+# Create via domain
+{:ok, user} = MyApp.Domain.create_user(%{name: "John", email: "john@example.com"})
+
+# Read via domain
+users = MyApp.Domain.read_users!()
 ```
 
 ---
@@ -154,7 +162,7 @@ users = MyApp.User
 | Destroy | ✅ | Delete records |
 | Filter | ✅ | Powerful filter syntax with CQL WHERE conversion |
 | Sort | ✅ | ORDER BY support |
-| Limit/Offset | ✅ | Pagination (see [limitations](#limitations)) |
+| Keyset pagination | ✅ | Token-based pagination via paging_state (preferred over OFFSET) |
 | Select | ✅ | Select specific fields |
 | Multitenancy | ✅ | Keyspace-based multitenancy |
 | Bulk Create | ✅ | Batch INSERT operations |
@@ -370,7 +378,7 @@ Since ScyllaDB/Cassandra is a NoSQL wide-column store, some features are not sup
 | **No complex WHERE clauses** | Without indexes, only PK queries | Create secondary indexes or materialized views |
 | **No OR conditions** | CQL limitation | Multiple queries or UNION-like patterns |
 | **No foreign keys** | No relational integrity | Application-level validation |
-| **OFFSET inefficiency** | Token-based pagination preferred | Use token-based pagination |
+| **OFFSET not supported** | Token-based pagination preferred | Use keyset pagination with `pagination :token` |
 
 ---
 
