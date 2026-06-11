@@ -231,6 +231,37 @@ defmodule AshScylla.DslRepoMigrationContinuedTest do
     end
   end
 
+  describe "Migration.create_secondary_indexes_cql/1" do
+    test "returns CQL for creating secondary indexes for TestResourceWithIndexes" do
+      result = Migration.create_secondary_indexes_cql(TestResourceWithIndexes)
+      assert is_list(result)
+      assert length(result) == 3
+    end
+
+    test "each CQL statement is a CREATE INDEX statement" do
+      result = Migration.create_secondary_indexes_cql(TestResourceWithIndexes)
+
+      Enum.each(result, fn cql ->
+        assert cql =~ "CREATE INDEX IF NOT EXISTS"
+        assert cql =~ "ON test_users"
+      end)
+    end
+
+    test "returns [] for a resource with no indexes" do
+      assert Migration.create_secondary_indexes_cql(AshScylla.TestResource) == []
+    end
+
+    test "generates auto-index names for indexes without custom name" do
+      result = Migration.create_secondary_indexes_cql(TestResourceWithIndexes)
+      assert Enum.any?(result, &String.contains?(&1, "idx_test_users"))
+    end
+
+    test "uses custom index name when provided" do
+      result = Migration.create_secondary_indexes_cql(TestResourceWithIndexes)
+      assert Enum.any?(result, &String.contains?(&1, "idx_user_status"))
+    end
+  end
+
   describe "Migration.create_type/2" do
     test "creates a UDT with uuid field" do
       result = Migration.create_type("my_type", do: [id: {:uuid, []}])
@@ -316,27 +347,20 @@ defmodule AshScylla.DslRepoMigrationContinuedTest do
       result = Migration.create_type("my_type", do: [name: {:string, []}])
       assert result =~ "name TEXT"
     end
-  end
 
-  describe "Migration.create_secondary_indexes_cql/1" do
-    test "returns CQL for creating secondary indexes for TestResourceWithIndexes" do
-      result = Migration.create_secondary_indexes_cql(TestResourceWithIndexes)
-      assert is_list(result)
-      assert length(result) == 3
+    test "creates a UDT with decimal field (defaults to TEXT for unknown types)" do
+      result = Migration.create_type("my_type", do: [price: {:decimal, []}])
+      assert result =~ "price TEXT"
     end
 
-    test "each CQL statement is a CREATE INDEX statement" do
-      result = Migration.create_secondary_indexes_cql(TestResourceWithIndexes)
-
-      Enum.each(result, fn cql ->
-        assert cql =~ "CREATE INDEX IF NOT EXISTS"
-        assert cql =~ "ON test_users"
-      end)
+    test "creates a UDT with frozen map" do
+      result = Migration.create_type("my_type", do: [data: {:map, frozen: true}])
+      assert result =~ "data frozen<MAP<TEXT, TEXT>>"
     end
 
-    test "returns [] for a resource with no indexes" do
-      # TestResource has no ash_scylla DSL, so no indexes
-      assert Migration.create_secondary_indexes_cql(AshScylla.TestResource) == []
+    test "creates a UDT with frozen list" do
+      result = Migration.create_type("my_type", do: [items: {:array, frozen: true}])
+      assert result =~ "items frozen<LIST<TEXT>>"
     end
   end
 

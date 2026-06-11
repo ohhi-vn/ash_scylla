@@ -431,19 +431,21 @@ children = [
 
 For detailed documentation, see:
 
-- **[Usage Guide](USAGE_GUIDE.md)** - Comprehensive guide with examples
-- **[Implementation Summary](IMPLEMENTATION_SUMMARY.md)** - Technical details
-- **[Error Handling](ERROR_HANDLING.md)** - Error types and handling strategies
+- **[Usage Guide](guides/USAGE_GUIDE.md)** - Comprehensive guide with examples
+- **[Development Guide](guides/DEV_GUIDE.md)** - Dev container setup and development workflow
+- **[Production Guide](guides/PRODUCTION_GUIDE.md)** - Multi-node cluster deployment and operations
+- **[Implementation Summary](guides/IMPLEMENTATION_SUMMARY.md)** - Technical details
+- **[Error Handling](guides/ERROR_HANDLING.md)** - Error types and handling strategies
 - **[API Documentation](https://hexdocs.pm/ash_scylla)** - Module documentation (when published)
 
 ### Quick Links
 
-- [Secondary Indexes](USAGE_GUIDE.md#secondary-indexes)
-- [Materialized Views](USAGE_GUIDE.md#materialized-views)
-- [Batch Operations](USAGE_GUIDE.md#batch-operations)
-- [Consistency Levels](USAGE_GUIDE.md#consistency-levels)
-- [TTL Support](USAGE_GUIDE.md#ttl-time-to-live)
-- [Performance Optimization](USAGE_GUIDE.md#performance-optimization)
+- [Secondary Indexes](guides/USAGE_GUIDE.md#secondary-indexes)
+- [Materialized Views](guides/USAGE_GUIDE.md#materialized-views)
+- [Batch Operations](guides/USAGE_GUIDE.md#batch-operations)
+- [Consistency Levels](guides/USAGE_GUIDE.md#consistency-levels)
+- [TTL Support](guides/USAGE_GUIDE.md#ttl-time-to-live)
+- [Performance Optimization](guides/USAGE_GUIDE.md#performance-optimization)
 
 ---
 

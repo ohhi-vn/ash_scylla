@@ -10,6 +10,7 @@ defmodule AshScylla.TestResourceWithIndexes do
   import AshScylla.DataLayer.Dsl
 
   ash_scylla do
+    repo(AshScylla.TestRepo)
     table("test_users")
     keyspace("ash_scylla_test")
     consistency(:quorum)

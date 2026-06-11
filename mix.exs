@@ -4,7 +4,7 @@ defmodule AshScylla.MixProject do
   def project do
     [
       app: :ash_scylla,
-      version: "0.4.0",
+      version: "0.5.0",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -17,7 +17,12 @@ defmodule AshScylla.MixProject do
       source_url: "https://github.com/ohhi-vn/ash_scylla",
       homepage_url: "https://ohhi.vn",
       docs: docs(),
-      package: package()
+      package: package(),
+      test_coverage: [
+        tool: Mix.Tasks.Test.Coverage,
+        output: "cover",
+        summary: [threshold: 85]
+      ]
     ]
   end
 
@@ -44,7 +49,8 @@ defmodule AshScylla.MixProject do
         "Documentation" => "https://hexdocs.pm/ash_scylla",
         "ScyllaDB" => "https://www.scylladb.com/",
         "Ash Framework" => "https://ash-hq.org/"
-      }
+      },
+      files: ~w(lib .formatter.exs mix.exs README* LICENSE*)
     ]
   end
 
@@ -54,10 +60,12 @@ defmodule AshScylla.MixProject do
       logo: "assets/logo.svg",
       extras: [
         "README.md",
-        "USAGE_GUIDE.md",
-        "IMPLEMENTATION_SUMMARY.md",
-        "ERROR_HANDLING.md",
-        "CHANGELOG.md"
+        "guides/USAGE_GUIDE.md",
+        "guides/DEV_GUIDE.md",
+        "guides/PRODUCTION_GUIDE.md",
+        "guides/IMPLEMENTATION_SUMMARY.md",
+        "guides/ERROR_HANDLING.md",
+        "guides/CHANGELOG.md"
       ],
       groups_for_modules: [
         Core: [
@@ -95,7 +103,7 @@ defmodule AshScylla.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ash, "~> 3.0"},
+      {:ash, "~> 3.28"},
       {:exandra, "~> 1.0"},
       {:ecto, "~> 3.13"},
       # ecto_sql is a runtime dependency of exandra (the Ecto adapter for ScyllaDB).

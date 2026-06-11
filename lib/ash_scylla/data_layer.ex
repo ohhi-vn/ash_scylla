@@ -352,11 +352,11 @@ defmodule AshScylla.DataLayer do
   end
 
   @impl Ash.DataLayer
-  @spec transform_query(t()) :: {:ok, t()} | {:error, term()}
-  def transform_query(data_layer_query) do
+  @spec transform_query(Ash.Query.t()) :: Ash.Query.t()
+  def transform_query(query) do
     # Hook for pre-execution transformation.
     # Currently a no-op; can be used to inject mandatory filters from context.
-    {:ok, data_layer_query}
+    query
   end
 
   @impl Ash.DataLayer
@@ -447,13 +447,20 @@ defmodule AshScylla.DataLayer do
     # This function is called multiple times per request (create, update, delete, fetch).
     case Process.get({__MODULE__, :source, resource}) do
       nil ->
-        name =
-          resource
-          |> Module.get_attribute(:table)
-          |> to_string()
+        # Check DSL-configured table first, then fall back to @table attribute
+        resolved =
+          case Dsl.table(resource) do
+            nil ->
+              resource
+              |> Module.get_attribute(:table)
+              |> to_string()
+
+            dsl_table ->
+              dsl_table
+          end
 
         resolved =
-          case name do
+          case resolved do
             "" ->
               resource
               |> Module.split()
@@ -461,7 +468,7 @@ defmodule AshScylla.DataLayer do
               |> Macro.underscore()
 
             _ ->
-              name
+              resolved
           end
 
         resolved = sanitize_identifier(resolved)
@@ -645,13 +652,19 @@ defmodule AshScylla.DataLayer do
     # Build COUNT queries for each aggregate
     results =
       Enum.reduce_while(aggregates, %{}, fn aggregate, acc ->
-        with {query, params} <- build_aggregate_query(aggregate, sanitized_table, where_clause),
-             {:ok, %{rows: [[count]]}} <- repo.query(query, where_params ++ params, opts) do
-          count = if is_integer(count), do: count, else: String.to_integer(to_string(count))
-          {:cont, Map.put(acc, aggregate.name, count)}
-        else
+        case build_aggregate_query(aggregate, sanitized_table, where_clause) do
           {:error, reason} ->
             {:halt, {:error, reason}}
+
+          {query, params} ->
+            case repo.query(query, where_params ++ params, opts) do
+              {:ok, %{rows: [[count]]}} ->
+                count = if is_integer(count), do: count, else: String.to_integer(to_string(count))
+                {:cont, Map.put(acc, aggregate.name, count)}
+
+              {:error, reason} ->
+                {:halt, {:error, reason}}
+            end
         end
       end)
 
@@ -842,9 +855,33 @@ defmodule AshScylla.DataLayer do
             ArgumentError -> nil
           end
 
+        # Fall back to DSL-configured repo if @repo attribute is not set
+        repo =
+          case repo do
+            nil -> Dsl.repo(resource)
+            _ -> repo
+          end
+
         case repo do
           nil ->
-            raise "No repo configured for #{inspect(resource)}"
+            raise """
+            No repo configured for #{inspect(resource)}.
+
+            To fix this, add a repo to your resource's ash_scylla DSL block:
+
+                import AshScylla.DataLayer.Dsl
+
+                ash_scylla do
+                  repo MyApp.Repo
+                  table "my_table"
+                end
+
+            Or set it as a module attribute:
+
+                @repo MyApp.Repo
+
+            The repo must be an Ecto.Repo using the Exandra adapter.
+            """
 
           repo ->
             Process.put({__MODULE__, :repo, resource}, repo)
@@ -863,7 +900,7 @@ defmodule AshScylla.DataLayer do
     # Add primary key if not present and autogenerate is configured
     attrs =
       Enum.reduce(Info.attributes(resource), attrs, fn attr, acc ->
-        if attr.primary_key? && attr.autogenerate? && !Map.has_key?(acc, attr.name) do
+        if attr.primary_key? && !Map.has_key?(acc, attr.name) && autogenerate_attribute?(attr) do
           Map.put(acc, attr.name, autogenerate_value(attr))
         else
           acc
@@ -884,6 +921,14 @@ defmodule AshScylla.DataLayer do
       UUID -> Ecto.UUID.generate()
       Ash.Type.Integer -> nil
       _ -> nil
+    end
+  end
+
+  @spec autogenerate_attribute?(map()) :: boolean()
+  defp autogenerate_attribute?(attr) do
+    case Map.fetch(attr, :autogenerate?) do
+      {:ok, value} -> value
+      :error -> is_function(Map.get(attr, :default))
     end
   end
 
@@ -920,7 +965,8 @@ defmodule AshScylla.DataLayer do
     Logger.debug("Executing INSERT: #{query} with params #{inspect(values)}")
 
     with {:ok, _} <- repo.query(query, values, opts),
-         {:ok, record} <- fetch_by_primary_key(attrs, resource, repo) do
+         pk <- get_primary_key(%{attributes: attrs}, resource),
+         {:ok, record} <- fetch_by_primary_key(pk, resource, repo) do
       {:ok, to_ash_record(record, resource)}
     end
     |> handle_scylla_result()
@@ -1114,6 +1160,8 @@ defmodule AshScylla.DataLayer do
     Logger.warning("Xandra connection error: #{Exception.message(error)}")
     {:error, AshScylla.Error.wrap_xandra_error(error)}
   end
+
+  defp handle_scylla_result({:error, %AshScylla.Error.ScyllaError{}} = error), do: error
 
   @spec handle_scylla_result({:error, term()}) :: {:error, term()}
   defp handle_scylla_result({:error, error}) do

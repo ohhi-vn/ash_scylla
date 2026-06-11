@@ -86,20 +86,41 @@ defmodule AshScylla.Test do
 
   describe "DSL module" do
     test "table/1 returns nil when not configured" do
-      # TestResource doesn't use ash_scylla DSL block
-      assert AshScylla.DataLayer.Dsl.table(AshScylla.TestResource) == nil
+      # String is not an Ash resource with ash_scylla DSL
+      assert AshScylla.DataLayer.Dsl.table(String) == nil
     end
 
     test "keyspace/1 returns nil when not configured" do
-      assert AshScylla.DataLayer.Dsl.keyspace(AshScylla.TestResource) == nil
+      assert AshScylla.DataLayer.Dsl.keyspace(String) == nil
     end
 
     test "consistency/1 returns nil when not configured" do
-      assert AshScylla.DataLayer.Dsl.consistency(AshScylla.TestResource) == nil
+      assert AshScylla.DataLayer.Dsl.consistency(String) == nil
     end
 
     test "ttl/1 returns nil when not configured" do
-      assert AshScylla.DataLayer.Dsl.ttl(AshScylla.TestResource) == nil
+      assert AshScylla.DataLayer.Dsl.ttl(String) == nil
+    end
+
+    test "table/1 returns configured table for resource with DSL" do
+      assert AshScylla.DataLayer.Dsl.table(AshScylla.TestResource) == "test_resource"
+    end
+
+    test "table/1 returns configured table for resource with explicit DSL table" do
+      assert AshScylla.DataLayer.Dsl.table(AshScylla.TestResourceWithIndexes) == "test_users"
+    end
+
+    test "keyspace/1 returns configured keyspace for resource with DSL" do
+      assert AshScylla.DataLayer.Dsl.keyspace(AshScylla.TestResourceWithIndexes) ==
+               "ash_scylla_test"
+    end
+
+    test "consistency/1 returns configured consistency for resource with DSL" do
+      assert AshScylla.DataLayer.Dsl.consistency(AshScylla.TestResourceWithIndexes) == :quorum
+    end
+
+    test "ttl/1 returns configured ttl for resource with DSL" do
+      assert AshScylla.DataLayer.Dsl.ttl(AshScylla.TestResourceWithIndexes) == 3600
     end
   end
 

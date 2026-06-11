@@ -7,6 +7,13 @@ defmodule AshScylla.TestResource do
     domain: nil,
     data_layer: AshScylla.DataLayer
 
+  import AshScylla.DataLayer.Dsl
+
+  ash_scylla do
+    repo(AshScylla.TestRepo)
+    table("test_resource")
+  end
+
   attributes do
     uuid_primary_key(:id)
     attribute(:name, :string)

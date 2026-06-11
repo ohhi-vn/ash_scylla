@@ -174,6 +174,10 @@ defmodule AshScylla.DataLayer.Dsl do
           {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_lwt__]}, meta,
            [{:__MODULE__, [], nil}, value]}
 
+        {:repo, meta, [value]} ->
+          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_repo__]},
+           meta, [{:__MODULE__, [], nil}, value]}
+
         other ->
           other
       end)
@@ -188,6 +192,7 @@ defmodule AshScylla.DataLayer.Dsl do
       @ash_scylla_pagination :offset
       @ash_scylla_per_action_consistency %{}
       @ash_scylla_lwt false
+      @ash_scylla_repo nil
 
       unquote(transformed)
 
@@ -222,6 +227,9 @@ defmodule AshScylla.DataLayer.Dsl do
 
       @doc false
       def __ash_scylla__(:lwt), do: @ash_scylla_lwt
+
+      @doc false
+      def __ash_scylla__(:repo), do: @ash_scylla_repo
 
       @doc false
       def __ash_scylla__(_opt), do: nil
@@ -438,5 +446,23 @@ defmodule AshScylla.DataLayer.Dsl do
     else
       false
     end
+  end
+
+  @doc """
+  Gets the configured repo for a resource.
+  """
+  @spec repo(module()) :: module() | nil
+  def repo(resource) do
+    if function_exported?(resource, :__ash_scylla__, 1) do
+      resource.__ash_scylla__(:repo)
+    else
+      nil
+    end
+  end
+
+  @doc false
+  @spec __set_repo__(module(), module()) :: :ok
+  def __set_repo__(module, value) do
+    Module.put_attribute(module, :ash_scylla_repo, value)
   end
 end
