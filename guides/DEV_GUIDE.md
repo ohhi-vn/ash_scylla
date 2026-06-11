@@ -120,7 +120,11 @@ ash_scylla/
 │       ├── migration.ex           # CQL schema generation helpers
 │       ├── prepared_statement_cache.ex
 │       ├── repo.ex                # Repo helpers (keyspace management)
+│       ├── resource_generator.ex   # Resource template generator
 │       └── telemetry.ex
+├── lib/mix/tasks/
+│   ├── ash_scylla.gen.ex          # mix ash_scylla.gen task
+│   └── ash_scylla.setup.ex        # mix ash_scylla.setup task
 ├── test/
 │   ├── support/                   # Test resources and repos
 │   ├── data_layer_crud_test.exs   # New: CRUD unit tests with fake repo
@@ -214,7 +218,15 @@ config :my_app, MyApp.Repo,
   pool_size: 5
 ```
 
-### 3. Define a Resource
+### 3. Generate a Resource
+
+Use the built-in generator to scaffold a resource template:
+
+```bash
+mix ash_scylla.gen User name:string, email:string, age:int
+```
+
+This creates `lib/my_app/resources/user.ex` with a starter template. Then customize it with ScyllaDB-specific options:
 
 ```elixir
 # lib/my_app/resources/user.ex

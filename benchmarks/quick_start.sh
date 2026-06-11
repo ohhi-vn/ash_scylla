@@ -7,17 +7,6 @@ set -e
 echo "=== AshScylla Benchmark Quick Start ==="
 echo ""
 
-# Check if ScyllaDB is running (for integration benchmarks)
-check_scylladb() {
-  if nc -z 127.0.0.1 9042 2>/dev/null; then
-    echo "✓ ScyllaDB is running on 127.0.0.1:9042"
-    return 0
-  else
-    echo "✗ ScyllaDB is not running on 127.0.0.1:9042"
-    return 1
-  fi
-}
-
 # Install dependencies
 echo "Step 1: Installing dependencies..."
 mix deps.get
@@ -27,10 +16,12 @@ echo "Step 2: Choose benchmark type:"
 echo "  1) Performance benchmarks (no ScyllaDB required)"
 echo "  2) Workload benchmarks (no ScyllaDB required)"
 echo "  3) All benchmarks (no ScyllaDB required)"
-echo "  4) Integration benchmarks (requires ScyllaDB)"
-echo "  5) Exit"
+echo "  4) Integration benchmarks (requires existing ScyllaDB at 127.0.0.1:9042)"
+echo "  5) Integration benchmarks with test container (Docker/Podman)"
+echo "  6) All benchmarks with test container"
+echo "  7) Exit"
 echo ""
-read -p "Enter your choice [1-5]: " choice
+read -p "Enter your choice [1-7]: " choice
 
 case $choice in
   1)
@@ -50,23 +41,20 @@ case $choice in
     ;;
   4)
     echo ""
-    if check_scylladb; then
-      echo "Running integration benchmarks..."
-      echo "Note: Make sure you have created the keyspace 'ash_scylla_bench'"
-      read -p "Continue? [y/N]: " confirm
-      if [[ "$confirm" =~ ^[Yy]$ ]]; then
-        mix run benchmarks/integration_bench.exs
-      fi
-    else
-      echo ""
-      echo "Please start ScyllaDB first:"
-      echo "  docker run -d --name scylla -p 9042:9042 scylladb/scylla"
-      echo ""
-      echo "Then create the keyspace:"
-      echo "  docker exec -it scylla cqlsh -e \"CREATE KEYSPACE IF NOT EXISTS ash_scylla_bench WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};\""
-    fi
+    echo "Running integration benchmarks against existing ScyllaDB..."
+    mix run benchmarks/integration_bench.exs
     ;;
   5)
+    echo ""
+    echo "Running integration benchmarks with test container..."
+    mix run benchmarks/integration_bench.exs --container
+    ;;
+  6)
+    echo ""
+    echo "Running all benchmarks with test container..."
+    mix run benchmarks/run_benchmarks.exs --integration --container
+    ;;
+  7)
     echo "Exiting."
     exit 0
     ;;
@@ -80,4 +68,4 @@ echo ""
 echo "=== Benchmarks Complete ==="
 echo ""
 echo "Results saved to: benchmarks/results/"
-echo "Open benchmarks/results/performance.html or workload.html in your browser to view detailed results."
+echo "Open benchmarks/results/*.html in your browser to view detailed results."

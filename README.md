@@ -71,7 +71,13 @@ config :my_app, MyApp.Repo,
   pool_size: 10
 ```
 
-**3. Define a Resource:**
+**3. Generate a Resource:**
+
+```bash
+mix ash_scylla.gen User name:string, email:string
+```
+
+This creates `lib/my_app/resources/user.ex` with a starter template. Or define it manually:
 
 ```elixir
 # lib/my_app/resources/user.ex

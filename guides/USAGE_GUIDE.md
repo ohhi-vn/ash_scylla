@@ -8,14 +8,15 @@
 
 1. [Quick Start](#quick-start)
 2. [Resource Configuration](#resource-configuration)
-3. [CRUD Operations](#crud-operations)
-4. [Querying](#querying)
-5. [Data Modeling Best Practices](#data-modeling-best-practices)
-6. [ScyllaDB Features](#scylladb-features)
-7. [Migrations](#migrations)
-8. [Performance Tips](#performance-tips)
-9. [Common Patterns](#common-patterns)
-10. [Troubleshooting](#troubleshooting)
+3. [Generating Resources](#generating-resources)
+4. [CRUD Operations](#crud-operations)
+5. [Querying](#querying)
+6. [Data Modeling Best Practices](#data-modeling-best-practices)
+7. [ScyllaDB Features](#scylladb-features)
+8. [Migrations](#migrations)
+9. [Performance Tips](#performance-tips)
+10. [Common Patterns](#common-patterns)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -56,7 +57,15 @@ defmodule MyApp.Domain do
 end
 ```
 
-**4. Define Resources (`lib/my_app/resources/user.ex`):**
+4. Generate a Resource Template:
+
+```bash
+mix ash_scylla.gen User user_id:uuid, name:string, age:int
+```
+
+This creates `lib/my_app/resources/user.ex` with a starter template. Then customize it:
+
+Or define resources manually (`lib/my_app/resources/user.ex`):
 
 ```elixir
 defmodule MyApp.User do
@@ -143,6 +152,101 @@ defmodule MyApp.OrderItem do
     attribute :product_id, :uuid, primary_key?: true
     attribute :quantity, :integer
     attribute :price, :decimal
+  end
+end
+```
+
+---
+
+## Generating Resources
+
+AshScylla includes a Mix task to quickly scaffold a new resource:
+
+```bash
+mix ash_scylla.gen MyResource user_id:uuid, name:string, age:int
+```
+
+This generates a file at `lib/<app>/resources/my_resource.ex` containing:
+
+```elixir
+defmodule MyResource do
+  use Ash.Resource,
+    data_layer: AshScylla.DataLayer,
+    repo: MyApp.Repo
+
+  attributes do
+    uuid_primary_key :id
+    attribute :user_id, :uuid
+    attribute :name, :string
+    attribute :age, :integer
+  end
+
+  actions do
+    defaults [:create, :read, :update, :destroy]
+  end
+end
+```
+
+### Command Format
+
+```bash
+mix ash_scylla.gen <ResourceName> <attr1>:<type1>, <attr2>:<type2>, ...
+```
+
+- **ResourceName** — an Elixir module alias (e.g. `User`, `Blog.Post`)
+- **Attributes** — comma-separated `name:type` pairs
+
+### Supported Types
+
+Any valid Ash type is accepted. Common choices:
+
+| Type | CQL mapping |
+|------|-------------|
+| `:uuid` | UUID |
+| `:string` | TEXT |
+| `:integer` (or `:int`) | BIGINT |
+| `:boolean` | BOOLEAN |
+| `:utc_datetime` | TIMESTAMP |
+| `:date` | DATE |
+| `:float` | DOUBLE |
+| `:decimal` | DECIMAL |
+
+### Examples
+
+```bash
+# Simple resource
+mix ash_scylla.gen User email:string, name:string, age:int
+
+# With module nesting
+mix ash_scylla.gen Blog.Post title:string, body:string, published:boolean
+
+# Many attributes
+mix ash_scylla.gen Sensor sensor_id:uuid, temperature:float, location:string, recorded_at:utc_datetime
+```
+
+After generating, add the resource to your domain and customize with primary keys, actions, and ScyllaDB-specific options:
+
+```elixir
+defmodule MyApp.User do
+  use Ash.Resource,
+    data_layer: AshScylla.DataLayer,
+    domain: MyApp.Domain
+
+  ash_scylla do
+    table "users"
+    consistency :quorum
+    secondary_index :email
+  end
+
+  attributes do
+    uuid_primary_key :id
+    attribute :email, :string
+    attribute :name, :string
+    attribute :age, :integer
+  end
+
+  actions do
+    defaults [:create, :read, :update, :destroy]
   end
 end
 ```

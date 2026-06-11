@@ -371,7 +371,7 @@ defmodule AshScylla.DslRepoMigrationContinuedTest do
   describe "AshScylla.version/0" do
     test "returns the current version string" do
       version = AshScylla.version()
-      assert version == "0.4.0"
+      assert version == AshScylla.MixProject.project()[:version]
     end
 
     test "returns a string" do

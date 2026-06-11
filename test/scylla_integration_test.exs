@@ -1,17 +1,20 @@
 defmodule AshScylla.ScyllaIntegrationTest do
   @moduledoc """
   Integration tests for AshScylla with a real ScyllaDB instance.
-  Uses TestRepo with custom init/2 to strip incompatible Xandra options.
-  Gracefully skips all tests when Docker is not available.
+  Uses testcontainer_ex 0.4 ScyllaContainer for container lifecycle management.
+  Gracefully skips all tests when Docker/Podman is not available.
   """
 
   use ExUnit.Case, async: false
 
   alias AshScylla.TestRepo
+  alias TestcontainerEx.ScyllaContainer
 
   @moduletag :integration
-  @image "scylladb/scylla:latest"
-  @cql_port 9042
+
+  @scylla_container_config ScyllaContainer.new()
+                           |> ScyllaContainer.with_image("scylladb/scylla:latest")
+                           |> ScyllaContainer.with_wait_timeout(180_000)
 
   # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -33,119 +36,6 @@ defmodule AshScylla.ScyllaIntegrationTest do
           {key, val} -> {inspect(key), val}
         end)
     end)
-  end
-
-  defp docker?, do: match?({_, 0}, System.cmd("docker", ["version"], stderr_to_stdout: true))
-
-  defp scylla_ready?(port, retries \\ 90) do
-    case Xandra.start_link(nodes: ["localhost:#{port}"], connect_timeout: 5_000) do
-      {:ok, conn} ->
-        case Xandra.execute(conn, "SELECT now() FROM system.local") do
-          {:ok, _} ->
-            Xandra.stop(conn)
-            true
-
-          {:error, _} ->
-            Xandra.stop(conn)
-            Process.sleep(2_000)
-            if retries > 0, do: scylla_ready?(port, retries - 1), else: false
-        end
-
-      {:error, _} ->
-        Process.sleep(2_000)
-        if retries > 0, do: scylla_ready?(port, retries - 1), else: false
-    end
-  end
-
-  defp docker_run do
-    System.cmd(
-      "docker",
-      [
-        "run",
-        "-d",
-        "--name",
-        "ash-scylla-test",
-        "-p",
-        "#{@cql_port}:#{@cql_port}",
-        @image,
-        "--smp",
-        "1",
-        "--memory",
-        "2G",
-        "--developer-mode",
-        "1"
-      ],
-      stderr_to_stdout: true
-    )
-  end
-
-  defp docker_stop do
-    System.cmd("docker", ["stop", "ash-scylla-test"], stderr_to_stdout: true)
-    System.cmd("docker", ["rm", "ash-scylla-test"], stderr_to_stdout: true)
-    :ok
-  end
-
-  defp find_container do
-    case System.cmd("docker", ["ps", "-q", "-f", "name=ash-scylla-test"], stderr_to_stdout: true) do
-      {out, 0} ->
-        id = String.trim(out)
-        if id != "", do: {:ok, id}, else: :not_found
-
-      _ ->
-        :not_found
-    end
-  end
-
-  defp container_running?(id) do
-    match?(
-      {"true\n", 0},
-      System.cmd("docker", ["inspect", "-f", "{{.State.Running}}", id], stderr_to_stdout: true)
-    )
-  end
-
-  defp ensure_container do
-    cid =
-      case find_container() do
-        {:ok, id} -> if container_running?(id), do: {:ok, id}, else: {:restart, id}
-        :not_found -> :new
-      end
-
-    case cid do
-      {:ok, id} ->
-        {:ok, id, @cql_port}
-
-      {:restart, _} ->
-        docker_stop()
-        start_and_wait()
-
-      :new ->
-        start_and_wait()
-    end
-  end
-
-  defp start_and_wait do
-    case docker_run() do
-      {_, 0} ->
-        case scylla_ready?(@cql_port) do
-          true ->
-            {:ok, @cql_port}
-
-          false ->
-            docker_stop()
-
-            case docker_run() do
-              {_, 0} ->
-                scylla_ready?(@cql_port)
-                {:ok, @cql_port}
-
-              {err, _} ->
-                {:error, String.trim(err)}
-            end
-        end
-
-      {err, _} ->
-        {:error, String.trim(err)}
-    end
   end
 
   defp xq(conn, query, params \\ []) do
@@ -205,25 +95,25 @@ defmodule AshScylla.ScyllaIntegrationTest do
   # ── Setup ──────────────────────────────────────────────────────────────────
 
   setup_all do
-    if not docker?() do
-      :skip
-    else
-      case ensure_container() do
-        {:ok, _cid, port} ->
-          {:ok, conn} = Xandra.start_link(nodes: ["localhost:#{port}"])
-          schema(conn)
-          %{conn: conn}
+    case TestcontainerEx.start_container(@scylla_container_config) do
+      {:ok, scylla_container} ->
+        port = ScyllaContainer.port(scylla_container)
+        host = TestcontainerEx.get_host(scylla_container)
+        {:ok, conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
+        schema(conn)
+        %{scylla: scylla_container}
 
-        {:ok, port} ->
-          {:ok, conn} = Xandra.start_link(nodes: ["localhost:#{port}"])
-          schema(conn)
-          %{conn: conn}
-
-        {:error, reason} ->
-          IO.puts("WARNING: #{reason}")
-          :skip
-      end
+      {:error, reason} ->
+        IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
+        raise ExUnit.Skip, "Docker/Podman not available"
     end
+  end
+
+  setup %{scylla: scylla_container} do
+    port = ScyllaContainer.port(scylla_container)
+    host = TestcontainerEx.get_host(scylla_container)
+    {:ok, conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
+    %{conn: conn, scylla: scylla_container}
   end
 
   # ══════════════════════════════════════════════════════════════════════════
@@ -335,7 +225,259 @@ defmodule AshScylla.ScyllaIntegrationTest do
   end
 
   # ══════════════════════════════════════════════════════════════════════════
-  # 3. Complex queries
+  # 3. Round-trip CRUD
+  # ══════════════════════════════════════════════════════════════════════════
+
+  describe "round-trip CRUD" do
+    test "full lifecycle: insert -> select -> update -> select -> delete", %{conn: c} do
+      id = uid()
+
+      # Insert
+      xq(
+        c,
+        "INSERT INTO ash_scylla_test.users (id, name, email, age, status) VALUES (?, ?, ?, ?, ?)",
+        [id, "Alice", "alice@example.com", 30, "active"]
+      )
+
+      # Select and verify insert
+      [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+      assert row["name"] == "Alice"
+      assert row["email"] == "alice@example.com"
+      assert row["age"] == 30
+      assert row["status"] == "active"
+
+      # Update
+      xq(c, "UPDATE ash_scylla_test.users SET name = ?, age = ?, status = ? WHERE id = ?", [
+        "Alice Updated",
+        31,
+        "inactive",
+        id
+      ])
+
+      # Select and verify update
+      [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+      assert row["name"] == "Alice Updated"
+      assert row["age"] == 31
+      assert row["status"] == "inactive"
+      # Email should remain unchanged
+      assert row["email"] == "alice@example.com"
+
+      # Delete
+      xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
+
+      # Select and verify deletion
+      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
+    end
+
+    test "round-trip with secondary index: insert -> query by index -> update -> re-query -> delete",
+         %{
+           conn: c
+         } do
+      id = uid()
+      email = "roundtrip_#{id}@example.com"
+
+      # Insert
+      xq(
+        c,
+        "INSERT INTO ash_scylla_test.users (id, name, email, age, status) VALUES (?, ?, ?, ?, ?)",
+        [id, "Bob", email, 25, "active"]
+      )
+
+      # Query by secondary index (email)
+      [row] =
+        rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE email = ?", [email]))
+
+      assert row["name"] == "Bob"
+      assert row["id"] == id
+
+      # Update indexed column
+      new_email = "updated_#{id}@example.com"
+      xq(c, "UPDATE ash_scylla_test.users SET email = ? WHERE id = ?", [new_email, id])
+
+      # Old email should no longer find the record
+      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE email = ?", [email]).num_rows == 0
+
+      # New email should find the record
+      [row] =
+        rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE email = ?", [new_email]))
+
+      assert row["name"] == "Bob"
+      assert row["id"] == id
+
+      # Delete
+      xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
+
+      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE email = ?", [new_email]).num_rows ==
+               0
+    end
+
+    test "round-trip with partial insert (null columns)", %{conn: c} do
+      id = uid()
+
+      # Insert with only required fields
+      xq(c, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?)", [id, "Sparse"])
+
+      # Select — null columns should be absent
+      [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+      assert row["name"] == "Sparse"
+      assert row["id"] == id
+
+      # Update to fill in previously null columns
+      xq(c, "UPDATE ash_scylla_test.users SET email = ?, age = ? WHERE id = ?", [
+        "sparse@example.com",
+        40,
+        id
+      ])
+
+      # Select and verify all columns
+      [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+      assert row["name"] == "Sparse"
+      assert row["email"] == "sparse@example.com"
+      assert row["age"] == 40
+
+      # Delete
+      xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
+      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
+    end
+
+    test "round-trip with timestamp: insert -> select -> update timestamp -> select -> delete", %{
+      conn: c
+    } do
+      id = uid()
+      ts1 = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
+
+      # Insert with timestamp
+      xq(
+        c,
+        "INSERT INTO ash_scylla_test.users (id, name, created_at) VALUES (?, ?, ?)",
+        [id, "TimeUser", {:timestamp, ts1}]
+      )
+
+      # Select and verify timestamp exists
+      [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+      assert row["name"] == "TimeUser"
+      assert row["created_at"] != nil
+
+      # Update name, keep timestamp
+      xq(c, "UPDATE ash_scylla_test.users SET name = ? WHERE id = ?", ["TimeUser V2", id])
+
+      # Select and verify both fields
+      [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+      assert row["name"] == "TimeUser V2"
+      assert row["created_at"] != nil
+
+      # Delete
+      xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
+      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
+    end
+
+    test "round-trip with status index: insert -> filter by status -> update status -> re-filter -> delete",
+         %{
+           conn: c
+         } do
+      id = uid()
+
+      # Insert as active
+      xq(
+        c,
+        "INSERT INTO ash_scylla_test.users (id, name, status) VALUES (?, ?, ?)",
+        [id, "StatusUser", "active"]
+      )
+
+      # Filter by status index
+      rows =
+        rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE status = ?", ["active"]))
+
+      assert Enum.any?(rows, fn r -> r["id"] == id end)
+
+      # Update status
+      xq(c, "UPDATE ash_scylla_test.users SET status = ? WHERE id = ?", ["archived", id])
+
+      # Old status should not find it
+      rows =
+        rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE status = ?", ["active"]))
+
+      refute Enum.any?(rows, fn r -> r["id"] == id end)
+
+      # New status should find it
+      rows =
+        rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE status = ?", ["archived"]))
+
+      assert Enum.any?(rows, fn r -> r["id"] == id end)
+
+      # Delete
+      xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
+      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
+    end
+
+    test "multiple round-trips in sequence on different records", %{conn: c} do
+      # Create 5 records, update them all, verify, then delete them all
+      records =
+        Enum.map(1..5, fn i ->
+          id = uid()
+          {id, "User#{i}", "user#{i}@example.com", 20 + i, "active"}
+        end)
+
+      # Insert all
+      Enum.each(records, fn {id, name, email, age, status} ->
+        xq(
+          c,
+          "INSERT INTO ash_scylla_test.users (id, name, email, age, status) VALUES (?, ?, ?, ?, ?)",
+          [id, name, email, age, status]
+        )
+      end)
+
+      # Verify all exist
+      Enum.each(records, fn {id, name, _email, age, _status} ->
+        [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+        assert row["name"] == name
+        assert row["age"] == age
+      end)
+
+      # Update all
+      Enum.each(records, fn {id, _name, _email, age, _status} ->
+        xq(c, "UPDATE ash_scylla_test.users SET age = ?, status = ? WHERE id = ?", [
+          age + 100,
+          "updated",
+          id
+        ])
+      end)
+
+      # Verify all updated
+      Enum.each(records, fn {id, _name, _email, age, _status} ->
+        [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+        assert row["age"] == age + 100
+        assert row["status"] == "updated"
+      end)
+
+      # Delete all
+      Enum.each(records, fn {id, _, _, _, _} ->
+        xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
+      end)
+
+      # Verify all deleted
+      Enum.each(records, fn {id, _, _, _, _} ->
+        assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
+      end)
+    end
+
+    test "delete non-existent record is a no-op", %{conn: c} do
+      fake_id = uid()
+      # Deleting a non-existent record should not raise
+      xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [fake_id])
+      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [fake_id]).num_rows == 0
+    end
+
+    test "update non-existent record is a no-op", %{conn: c} do
+      fake_id = uid()
+      # Updating a non-existent record should not raise
+      xq(c, "UPDATE ash_scylla_test.users SET name = ? WHERE id = ?", ["Ghost", fake_id])
+      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [fake_id]).num_rows == 0
+    end
+  end
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # 4. Complex queries
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "complex queries" do
@@ -443,7 +585,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
   end
 
   # ══════════════════════════════════════════════════════════════════════════
-  # 4. TTL support
+  # 5. TTL support
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "TTL support" do
@@ -473,7 +615,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
   end
 
   # ══════════════════════════════════════════════════════════════════════════
-  # 5. Counter operations
+  # 6. Counter operations
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "counter operations" do
@@ -494,17 +636,18 @@ defmodule AshScylla.ScyllaIntegrationTest do
   end
 
   # ══════════════════════════════════════════════════════════════════════════
-  # 6. Concurrent read/write simulation
+  # 7. Concurrent read/write simulation
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "concurrent read/write simulation" do
-    test "50 concurrent writers insert distinct records" do
-      port = @cql_port
+    test "50 concurrent writers insert distinct records", %{scylla: scylla_container} do
+      port = ScyllaContainer.port(scylla_container)
+      host = TestcontainerEx.get_host(scylla_container)
 
       tasks =
         Enum.map(1..50, fn i ->
           Task.async(fn ->
-            {:ok, conn} = Xandra.start_link(nodes: ["localhost:#{port}"])
+            {:ok, conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
             id = uid()
 
             xq(conn, "INSERT INTO ash_scylla_test.users (id, name, status) VALUES (?, ?, ?)", [
@@ -526,13 +669,14 @@ defmodule AshScylla.ScyllaIntegrationTest do
              end)
     end
 
-    test "concurrent readers and writers" do
-      port = @cql_port
+    test "concurrent readers and writers", %{scylla: scylla_container} do
+      port = ScyllaContainer.port(scylla_container)
+      host = TestcontainerEx.get_host(scylla_container)
 
       tasks =
         Enum.map(1..20, fn i ->
           Task.async(fn ->
-            {:ok, conn} = Xandra.start_link(nodes: ["localhost:#{port}"])
+            {:ok, conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
             id = uid()
 
             xq(conn, "INSERT INTO ash_scylla_test.users (id, name, status) VALUES (?, ?, ?)", [
@@ -554,9 +698,10 @@ defmodule AshScylla.ScyllaIntegrationTest do
              end)
     end
 
-    test "concurrent reads on same secondary index query" do
-      port = @cql_port
-      {:ok, setup_conn} = Xandra.start_link(nodes: ["localhost:#{port}"])
+    test "concurrent reads on same secondary index query", %{scylla: scylla_container} do
+      port = ScyllaContainer.port(scylla_container)
+      host = TestcontainerEx.get_host(scylla_container)
+      {:ok, setup_conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
       id = uid()
 
       xq(
@@ -570,7 +715,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
       tasks =
         Enum.map(1..10, fn _ ->
           Task.async(fn ->
-            {:ok, conn} = Xandra.start_link(nodes: ["localhost:#{port}"])
+            {:ok, conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
 
             {:ok, result} =
               Xandra.execute(conn, "SELECT * FROM ash_scylla_test.users WHERE email = ?", [
@@ -586,14 +731,15 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert Enum.all?(results, fn count -> count >= 1 end)
     end
 
-    test "concurrent event writes to same partition" do
-      port = @cql_port
+    test "concurrent event writes to same partition", %{scylla: scylla_container} do
+      port = ScyllaContainer.port(scylla_container)
+      host = TestcontainerEx.get_host(scylla_container)
       user_id = uid()
 
       tasks =
         Enum.map(1..20, fn i ->
           Task.async(fn ->
-            {:ok, conn} = Xandra.start_link(nodes: ["localhost:#{port}"])
+            {:ok, conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
 
             xq(
               conn,
@@ -614,9 +760,10 @@ defmodule AshScylla.ScyllaIntegrationTest do
              end)
     end
 
-    test "mixed CRUD operations under concurrent load" do
-      port = @cql_port
-      {:ok, setup_conn} = Xandra.start_link(nodes: ["localhost:#{port}"])
+    test "mixed CRUD operations under concurrent load", %{scylla: scylla_container} do
+      port = ScyllaContainer.port(scylla_container)
+      host = TestcontainerEx.get_host(scylla_container)
+      {:ok, setup_conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
       base_ids = Enum.map(1..10, fn _ -> uid() end)
 
       Enum.each(
@@ -634,7 +781,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
         Enum.flat_map(base_ids, fn id ->
           [
             Task.async(fn ->
-              {:ok, conn} = Xandra.start_link(nodes: ["localhost:#{port}"])
+              {:ok, conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
 
               result =
                 Xandra.execute(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [
@@ -645,7 +792,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
               result
             end),
             Task.async(fn ->
-              {:ok, conn} = Xandra.start_link(nodes: ["localhost:#{port}"])
+              {:ok, conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
 
               result =
                 Xandra.execute(conn, "UPDATE ash_scylla_test.users SET age = ? WHERE id = ?", [
@@ -670,7 +817,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
   end
 
   # ══════════════════════════════════════════════════════════════════════════
-  # 7. DataLayer query struct against real DB
+  # 8. DataLayer query struct against real DB
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "DataLayer query struct against real DB" do
@@ -743,7 +890,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
   end
 
   # ══════════════════════════════════════════════════════════════════════════
-  # 8. Filter validation against real schema
+  # 9. Filter validation against real schema
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "filter validation against real schema" do

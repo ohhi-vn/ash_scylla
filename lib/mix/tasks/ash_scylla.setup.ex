@@ -70,9 +70,7 @@ defmodule Mix.Tasks.AshScylla.Setup do
         repo
 
       [] ->
-        Mix.raise(
-          "No repo found. Specify one with --repo MyApp.Repo"
-        )
+        Mix.raise("No repo found. Specify one with --repo MyApp.Repo")
     end
   end
 

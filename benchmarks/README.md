@@ -4,198 +4,144 @@ This directory contains benchmark scripts for testing the performance and worklo
 
 ## Overview
 
-The benchmark suite is designed to measure:
-- **Performance**: Latency and throughput of individual operations
-- **Workload**: Real-world scenarios with concurrency and mixed operations
+The benchmark suite has three tiers:
 
-## Prerequisites
+| Tier | What it measures | Needs ScyllaDB? |
+|------|----------------|----------------|
+| **Performance** | Query building latency (CQL generation) | No |
+| **Workload** | Concurrent query building, mixed patterns | No |
+| **Integration** | Real database CRUD round-trips | Yes (or test container) |
 
-Add the following dependencies to your `mix.exs` (if not already present):
+## Quick Start
 
-```elixir
-defp deps do
-  [
-    {:benchee, "~> 1.1", only: [:dev, :test]},
-    {:benchee_html, "~> 1.0", only: [:dev, :test]}
-  ]
-end
-```
-
-Then run:
-```bash
-mix deps.get
-```
-
-## Running Benchmarks
-
-### Run All Benchmarks
+### Performance + Workload (no database needed)
 
 ```bash
-cd ash_scylla
+# Using Make
+make bench-perf        # Performance only
+make bench-workload    # Workload only
+make bench-all        # Both
+
+# Direct
+mix run benchmarks/performance_bench.exs
+mix run benchmarks/workload_bench.exs
 mix run benchmarks/run_benchmarks.exs
 ```
 
-### Run Individual Benchmarks
+### Integration (with test container — Docker/Podman)
 
-**Performance Benchmarks Only:**
 ```bash
-mix run benchmarks/performance_bench.exs
+# Spawn a ScyllaDB container, run benchmarks, tear down
+make bench-integration-container
+
+# Or directly
+mix run benchmarks/integration_bench.exs --container
+
+# Via the runner (performance + workload + integration)
+mix run benchmarks/run_benchmarks.exs --integration --container
 ```
 
-**Workload Benchmarks Only:**
+### Integration (against existing ScyllaDB)
+
 ```bash
-mix run benchmarks/workload_bench.exs
+# Requires ScyllaDB running at 127.0.0.1:9042 with keyspace 'ash_scylla_bench'
+make bench-integration
 ```
 
-## Benchmark Categories
+### Interactive
 
-### Performance Benchmarks (`performance_bench.exs`)
+```bash
+./benchmarks/quick_start.sh
+```
 
-Measures latency and throughput of individual operations:
+## Performance Benchmarks
+
+Measures the CPU cost of CQL query building — no database required.
 
 | Benchmark | Description |
 |-----------|-------------|
-| `single_insert` | Single record insertion query building |
-| `single_read_by_pk` | Read by primary key query building |
-| `single_update` | Single record update query building |
-| `single_delete` | Single record delete query building |
-| `query_with_pk` | Query optimization with primary key |
-| `query_with_secondary_index` | Query with secondary index |
-| `query_with_filter` | Filter conversion to CQL |
-| `build_simple_query` | Simple SELECT query building |
-| `build_complex_query` | Complex query with filters, sorting, limit |
-| `batch_insert_10` | Batch insert of 10 records |
-| `batch_insert_100` | Batch insert of 100 records |
-| `batch_insert_1000` | Batch insert of 1000 records |
+| `build_select_all` | Simple SELECT with no filters |
+| `build_select_with_pk_filter` | SELECT with primary key equality |
+| `build_select_with_secondary_index` | SELECT with secondary index filter |
+| `build_select_with_multiple_filters` | SELECT with multiple WHERE clauses |
+| `build_select_with_sort_and_limit` | SELECT with ORDER BY and LIMIT |
+| `build_insert` | INSERT statement generation |
+| `build_update` | UPDATE statement generation |
+| `build_delete` | DELETE statement generation |
+| `build_complex_query` | Multi-filter + sort + limit + select |
+| `filter_to_cql_eq/gt/in/and/or` | Individual filter operator conversion |
 
-### Workload Benchmarks (`workload_bench.exs`)
+## Workload Benchmarks
 
-Simulates real-world workload patterns:
+Simulates concurrent query building patterns — no database required.
 
 | Benchmark | Description |
 |-----------|-------------|
-| `concurrent_reads_*` | Concurrent read operations (10, 50, 100) |
-| `concurrent_writes_*` | Concurrent write operations (10, 50, 100) |
-| `mixed_workload_50_50` | 50% reads, 50% writes |
-| `mixed_workload_80_20` | 80% reads, 20% writes |
-| `bulk_insert_*` | Bulk insert operations (1000, 5000, 10000) |
-| `sequential_reads_*` | Sequential read operations (100, 1000) |
-| `multitenant_queries_*` | Multi-tenant query simulation (10, 50) |
+| `concurrent_reads_*` | Concurrent SELECT building (10, 50, 100) |
+| `concurrent_writes_*` | Concurrent INSERT building (10, 50, 100) |
+| `mixed_workload_*` | Mixed read/write ratios (80/20, 50/50, 20/80) |
+| `sequential_reads_*` | Sequential SELECT building (100, 1000) |
+| `sequential_writes_*` | Sequential INSERT building (100, 500) |
+| `multitenant_queries_*` | Multi-tenant filter patterns (10, 50) |
+
+## Integration Benchmarks
+
+Real database operations against ScyllaDB.
+
+| Benchmark | Description |
+|-----------|-------------|
+| `real_insert` | Insert a single record |
+| `real_read_by_pk` | Insert + read by primary key |
+| `real_read_with_filter` | Filter by secondary index + LIMIT |
+| `real_update` | Insert + update |
+| `real_delete` | Insert + delete |
+| `real_bulk_insert_*` | Bulk insert (100, 500, 1000) |
+| `real_round_trip` | Full insert → read → update → read → delete |
+
+## Test Container Mode
+
+The integration benchmarks support an optional **test container** mode that automatically:
+
+1. Spins up a ScyllaDB container via `testcontainer_ex`
+2. Creates the keyspace and schema
+3. Runs all integration benchmarks
+4. Tears down the container
+
+This is ideal for local development — no manual ScyllaDB setup required.
+
+```bash
+# Just needs Docker or Podman running
+mix run benchmarks/integration_bench.exs --container
+```
 
 ## Output
 
-Benchmark results are saved to:
-- **Console**: Summary statistics printed to terminal
-- **HTML Reports**: 
-  - `benchmarks/results/performance.html`
-  - `benchmarks/results/workload.html`
+- **Console**: Summary statistics (average, median, min, max, std_dev)
+- **HTML Reports**: `benchmarks/results/*.html`
 
-## Understanding Results
+## Configuration
 
-### Key Metrics
+Edit `benchmarks/config.exs` to adjust:
 
-- **Average (avg)**: Mean execution time
-- **Median (median)**: Middle value of execution times
-- **Minimum (min)**: Fastest execution
-- **Maximum (max)**: Slowest execution
-- **Standard Deviation (std_dev)**: Variability in execution times
-- **Memory Usage**: Memory allocated during benchmark
-- **Reductions**: Erlang VM reductions (work done)
+- Benchmark duration (`time`, `warmup_time`)
+- Concurrency levels
+- Batch sizes
+- Output directory
 
-### Interpreting Results
-
-**Good Performance Indicators:**
-- Low average and median times
-- Low standard deviation (consistent performance)
-- Linear scaling with batch size
-
-**Potential Issues:**
-- High standard deviation (inconsistent performance)
-- Non-linear scaling
-- High memory usage for simple operations
-
-## Baseline Results
-
-> **Note:** These baselines were measured on a development machine and are for relative comparison only. Your results will vary based on hardware, ScyllaDB cluster size, and network latency.
-
-### Hardware
-
-- **CPU**: Apple M-series (or equivalent x86_64)
-- **RAM**: 16 GB
-- **ScyllaDB**: Single-node, local Docker container
-- **Network**: localhost (no network latency)
-
-### Query Building Benchmarks
-
-| Operation | Average | Median | Notes |
-|-----------|---------|--------|-------|
-| `single_insert` | ~5 µs | ~4 µs | Query string generation only |
-| `single_read_by_pk` | ~3 µs | ~2 µs | Simple PK lookup query |
-| `build_complex_query` | ~15 µs | ~12 µs | With filters, sorting, limit |
-| `batch_insert_100` | ~50 µs | ~45 µs | 100 INSERT statements |
-
-### Interpretation
-
-- These benchmarks measure **query building** (CQL string generation), not actual database operations
-- A 20%+ regression in any operation should be investigated
-- For real database benchmarks, run the integration benchmarks against a live ScyllaDB instance
-
-## CI Integration
-
-Benchmarks are not run in CI by default. To compare before/after a change:
-
-```bash
-# Before your changes
-mix run benchmarks/performance_bench.exs > /tmp/before.txt
-
-# After your changes
-mix run benchmarks/performance_bench.exs > /tmp/after.txt
-
-# Compare
-diff /tmp/before.txt /tmp/after.txt
-```
-
-## Customization
-
-### Adjusting Benchmark Duration
-
-Edit the `time:` parameter in the benchmark files:
-
-```elixir
-Benchee.run(
-  %{...},
-  time: 10,           # Seconds to run each benchmark
-  memory_time: 2,     # Seconds for memory measurements
-  reduction_time: 2   # Seconds for reduction measurements
-)
-```
-
-### Adding Custom Benchmarks
-
-Add new benchmark cases to the benchmark modules:
+## Adding Custom Benchmarks
 
 ```elixir
 def run do
   Benchee.run(
     %{
-      "your_benchmark" => fn -> your_function() end
+      "my_benchmark" -> fn -> my_function() end
     },
-    ...
+    time: 10,
+    memory_time: 2,
+    formatters: [
+      Benchee.Formatters.Console,
+      {Benchee.Formatters.HTML, file: "benchmarks/results/my_bench.html"}
+    ]
   )
 end
 ```
-
-## Notes
-
-- These benchmarks measure **query building** performance, not actual database operations
-- To benchmark actual ScyllaDB operations, you need a running ScyllaDB instance and configured Repo
-- The benchmarks use mock resources and simulate the query building layer
-- For real database benchmarks, extend these scripts to use actual Repo queries
-
-## Future Enhancements
-
-- [ ] Add actual ScyllaDB connection benchmarks
-- [ ] Add comparison benchmarks with other data layers
-- [ ] Add long-running stability benchmarks
-- [ ] Add memory leak detection benchmarks
-- [ ] Add network partition simulation benchmarks

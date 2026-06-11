@@ -6,7 +6,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
   operations, verifying that the DataLayer correctly bridges Ash resources and
   ScyllaDB via Exandra.
 
-  Requires a running ScyllaDB instance (managed via Docker by test_helper.exs).
+  Uses testcontainer_ex 0.4 ScyllaContainer for container lifecycle management.
   """
 
   use ExUnit.Case, async: false
@@ -14,8 +14,15 @@ defmodule AshScylla.DataLayer.PipelineTest do
   alias AshScylla.DataLayer
   alias AshScylla.DataLayer.QueryBuilder
   alias AshScylla.TestRepo
+  alias TestcontainerEx.ScyllaContainer
 
   @moduletag :integration
+
+  # ── Container config ────────────────────────────────────────────────────────
+
+  @scylla_container_config ScyllaContainer.new()
+                           |> ScyllaContainer.with_image("scylladb/scylla:latest")
+                           |> ScyllaContainer.with_wait_timeout(180_000)
 
   # ── Shared helpers ──────────────────────────────────────────────────────────
 
@@ -71,40 +78,44 @@ defmodule AshScylla.DataLayer.PipelineTest do
   # ── Setup: ensure schema exists ─────────────────────────────────────────────
 
   setup_all do
-    {:ok, conn} = Xandra.start_link(nodes: ["localhost:9042"])
+    case TestcontainerEx.start_container(@scylla_container_config) do
+      {:ok, scylla_container} ->
+        port = ScyllaContainer.port(scylla_container)
+        host = TestcontainerEx.get_host(scylla_container)
+        {:ok, conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
 
-    # Create keyspace and tables if they don't exist
-    {:ok, _} =
-      Xandra.execute(
-        conn,
-        "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}"
-      )
+        # Create keyspace and tables if they don't exist
+        Xandra.execute!(
+          conn,
+          "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}"
+        )
 
-    {:ok, _} =
-      Xandra.execute(
-        conn,
-        "CREATE TABLE IF NOT EXISTS ash_scylla_test.users (id UUID PRIMARY KEY, name TEXT, email TEXT, age INT, status TEXT, created_at TIMESTAMP)"
-      )
+        Xandra.execute!(
+          conn,
+          "CREATE TABLE IF NOT EXISTS ash_scylla_test.users (id UUID PRIMARY KEY, name TEXT, email TEXT, age INT, status TEXT, created_at TIMESTAMP)"
+        )
 
-    {:ok, _} =
-      Xandra.execute(
-        conn,
-        "CREATE INDEX IF NOT EXISTS idx_users_email ON ash_scylla_test.users (email)"
-      )
+        Xandra.execute!(
+          conn,
+          "CREATE INDEX IF NOT EXISTS idx_users_email ON ash_scylla_test.users (email)"
+        )
 
-    {:ok, _} =
-      Xandra.execute(
-        conn,
-        "CREATE INDEX IF NOT EXISTS idx_users_status ON ash_scylla_test.users (status)"
-      )
+        Xandra.execute!(
+          conn,
+          "CREATE INDEX IF NOT EXISTS idx_users_status ON ash_scylla_test.users (status)"
+        )
 
-    {:ok, _} =
-      Xandra.execute(
-        conn,
-        "CREATE INDEX IF NOT EXISTS idx_users_age ON ash_scylla_test.users (age)"
-      )
+        Xandra.execute!(
+          conn,
+          "CREATE INDEX IF NOT EXISTS idx_users_age ON ash_scylla_test.users (age)"
+        )
 
-    %{conn: conn}
+        %{conn: conn, scylla: scylla_container}
+
+      {:error, reason} ->
+        IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
+        raise ExUnit.Skip, "Docker/Podman not available"
+    end
   end
 
   setup %{conn: conn} do

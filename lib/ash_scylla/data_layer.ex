@@ -97,7 +97,11 @@ defmodule AshScylla.DataLayer do
                         :select,
                         :multitenancy,
                         :bulk_create,
-                        :upsert
+                        :upsert,
+                        :update_query,
+                        :destroy_query,
+                        :distinct,
+                        :boolean_filter
                       ])
 
   # ============================================================================
@@ -167,6 +171,7 @@ defmodule AshScylla.DataLayer do
   def can?(_resource_or_dsl, :update_query), do: true
   def can?(_resource_or_dsl, :destroy_query), do: true
   def can?(_resource_or_dsl, :lock), do: false
+  def can?(_resource_or_dsl, :offset), do: false
 
   def can?(_resource_or_dsl, feature) when is_atom(feature) do
     MapSet.member?(@supported_features, feature)
@@ -360,84 +365,72 @@ defmodule AshScylla.DataLayer do
   end
 
   @impl Ash.DataLayer
-  @spec bulk_create(Ash.Resource.t(), [Ash.Changeset.t()], keyword()) ::
-          {:ok, [Ash.Resource.t()]} | {:error, term()}
-  def bulk_create(resource, changesets, _opts) do
+  @spec bulk_create(Ash.Resource.t(), Enumerable.t(Ash.Changeset.t()), map()) ::
+          :ok | {:ok, Enumerable.t(Ash.Resource.t())} | {:error, term()}
+  def bulk_create(resource, changesets, opts) do
+    opts = normalize_bulk_options(opts)
     repo = repo(resource)
     table = source(resource)
     keyspace = Dsl.keyspace(resource)
 
-    # Get TTL and consistency from resource DSL
     ttl = Dsl.ttl(resource)
     consistency = Dsl.consistency(resource)
-
     sanitized_table = sanitize_identifier(table)
+    batch_size = Keyword.get(opts, :batch_size, :infinity)
+    return_records? = Keyword.get(opts, :return_records?, true)
 
-    # Build batch insert statements
     statements =
-      Enum.map(changesets, fn changeset ->
+      changesets
+      |> Enum.map(fn changeset ->
         attrs = changeset_to_insert_attrs(changeset, resource)
-
-        {sanitized_fields, values} =
-          Enum.reduce(attrs, {[], []}, fn {k, v}, {fs, vs} ->
-            {[sanitize_identifier(to_string(k)) | fs], [v | vs]}
-          end)
-
-        sanitized_fields = Enum.reverse(sanitized_fields)
-        values = :lists.reverse(values)
-        field_count = length(sanitized_fields)
-
-        query =
-          IO.iodata_to_binary([
-            "INSERT INTO ",
-            sanitized_table,
-            " (",
-            Enum.join(sanitized_fields, ", "),
-            ") VALUES (",
-            Enum.map_join(1..field_count, ", ", fn _ -> "?" end),
-            ")",
-            if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
-          ])
-
-        {query, values}
+        build_insert_statement(sanitized_table, attrs, ttl)
       end)
 
-    # Execute batch insert
     opts =
       []
       |> maybe_put(:prefix, sanitize_keyspace(keyspace))
       |> maybe_put(:consistency, consistency)
 
-    Logger.info("Bulk creating #{length(changesets)} records in table #{table}")
+    Logger.info("Bulk creating records in table #{table}")
 
-    Logger.warning(
-      "bulk_create returns records constructed from changeset attributes, not from DB. DB defaults/triggers may not be reflected."
-    )
+    result =
+      statements
+      |> chunk_statements(batch_size)
+      |> Enum.reduce_while(:ok, fn chunk, _acc ->
+        case Batch.batch_insert(repo, chunk, opts) do
+          :ok -> {:cont, :ok}
+          {:ok, _} -> {:cont, :ok}
+          {:error, error} -> {:halt, {:error, error}}
+        end
+      end)
 
-    case Batch.batch_insert(repo, statements, opts) do
-      {:ok, _} ->
-        # Fetch created records
-        records =
-          changesets
-          |> Enum.map(fn changeset ->
-            attrs = changeset_to_insert_attrs(changeset, resource)
-            to_ash_record(attrs, resource)
-          end)
-
-        {:ok, records}
-
-      {:error, error} ->
-        handle_scylla_result({:error, error})
+    case result do
+      :ok when return_records? -> {:ok, stream_bulk_records(changesets, resource)}
+      :ok -> :ok
+      {:error, error} -> handle_scylla_result({:error, error})
     end
   end
 
-  @impl Ash.DataLayer
-  @spec upsert(Ash.Resource.t(), Ash.Changeset.t(), keyword()) ::
+  @spec upsert(Ash.Resource.t(), Ash.Changeset.t()) ::
           {:ok, Ash.Resource.t()} | {:error, term()}
-  def upsert(resource, changeset, opts \\ []) do
+  def upsert(resource, changeset) do
+    upsert(resource, changeset, Info.primary_key(resource))
+  end
+
+  @impl Ash.DataLayer
+  @spec upsert(Ash.Resource.t(), Ash.Changeset.t(), list(atom)) ::
+          {:ok, Ash.Resource.t()} | {:error, term()}
+  def upsert(resource, changeset, fields) do
     repo = repo(resource)
     attrs = changeset_to_insert_attrs(changeset, resource)
-    do_upsert(attrs, changeset, resource, repo, opts)
+    do_upsert(attrs, changeset, resource, repo, fields: fields)
+  end
+
+  @impl Ash.DataLayer
+  @spec upsert(Ash.Resource.t(), Ash.Changeset.t(), list(atom), Ash.Resource.Identity.t() | nil) ::
+          {:ok, Ash.Resource.t()} | {:error, term()}
+  def upsert(resource, changeset, fields, _identity) do
+    upsert(resource, changeset, fields)
   end
 
   @impl Ash.DataLayer
@@ -706,6 +699,55 @@ defmodule AshScylla.DataLayer do
   defp build_aggregate_query(%{kind: kind}, _table, _where_clause) do
     {:error,
      "Aggregate kind #{kind} is not supported in ScyllaDB/Cassandra. Use :count or materialized views."}
+  end
+
+  @spec build_insert_statement(String.t(), map(), pos_integer() | nil) :: {String.t(), list()}
+  defp build_insert_statement(table, attrs, ttl) do
+    {sanitized_fields, values} =
+      Enum.reduce(attrs, {[], []}, fn {k, v}, {fs, vs} ->
+        {[sanitize_identifier(to_string(k)) | fs], [v | vs]}
+      end)
+
+    sanitized_fields = Enum.reverse(sanitized_fields)
+    values = :lists.reverse(values)
+    field_count = length(sanitized_fields)
+
+    query =
+      IO.iodata_to_binary([
+        "INSERT INTO ",
+        table,
+        " (",
+        Enum.join(sanitized_fields, ", "),
+        ") VALUES (",
+        Enum.map_join(1..field_count, ", ", fn _ -> "?" end),
+        ")",
+        if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
+      ])
+
+    {query, values}
+  end
+
+  @spec normalize_bulk_options(keyword() | map()) :: keyword()
+  defp normalize_bulk_options(opts) when is_map(opts) do
+    Map.to_list(opts)
+  end
+
+  defp normalize_bulk_options(opts) when is_list(opts), do: opts
+
+  @spec chunk_statements([{String.t(), list()}], pos_integer() | :infinity) :: [
+          [{String.t(), list()}]
+        ]
+  defp chunk_statements(statements, :infinity), do: [statements]
+  defp chunk_statements(statements, batch_size), do: Enum.chunk_every(statements, batch_size)
+
+  @spec stream_bulk_records(Enumerable.t(Ash.Changeset.t()), module()) ::
+          Enumerable.t(Ash.Resource.t())
+  defp stream_bulk_records(changesets, resource) do
+    Stream.map(changesets, fn changeset ->
+      changeset
+      |> changeset_to_insert_attrs(resource)
+      |> to_ash_record(resource)
+    end)
   end
 
   @spec do_upsert(map(), Ash.Changeset.t(), Ash.Resource.t(), module(), keyword()) ::

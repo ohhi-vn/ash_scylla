@@ -1,7 +1,6 @@
 import Config
 
 # Test configuration for AshScylla
-# Use this in config/test.exs of your application
 
 config :my_app, MyApp.Repo,
   nodes: ["127.0.0.1:9042"],
