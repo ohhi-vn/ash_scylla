@@ -1,15 +1,21 @@
 import Config
 
+config :logger, level: :warning
+
 # Test configuration for AshScylla
+config :ash_scylla, ash_domains: [AshScylla.TestDomain]
+
+config :ash_scylla, AshScylla.TestRepo,
+  nodes: ["127.0.0.1:9042"],
+  keyspace: "ash_scylla_test",
+  pool_size: 3,
+  connect_timeout: 5_000,
+  request_timeout: 120_000
 
 config :my_app, MyApp.Repo,
   nodes: ["127.0.0.1:9042"],
   keyspace: "my_app_test",
   pool_size: 3,
-  sync_connect: 10_000,
-  pool_timeout: 10_000,
-  queue_target: 50_000,
-  queue_interval: 1_000,
   connect_timeout: 5_000,
   request_timeout: 120_000
 
@@ -19,7 +25,7 @@ config :my_app, MyApp.Repo,
 #   repo_config = [
 #     nodes: ["#{host}:#{port}"],
 #     pool_size: 5,
-#     sync_connect: 60_000
+#     connect_timeout: 60_000
 #   ]
 #
 #   {:ok, _} = TestRepo.start_link(repo_config)

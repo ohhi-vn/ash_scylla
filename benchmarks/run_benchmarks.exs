@@ -4,7 +4,7 @@
 # Usage:
 #   mix run benchmarks/run_benchmarks.exs                    # performance + workload
 #   mix run benchmarks/run_benchmarks.exs --integration      # also run integration (needs ScyllaDB)
-#   mix run benchmarks/run_benchmarks.exs --integration --container  # spawn test container for integration
+#   mix run benchmarks/run_benchmarks.exs --integration --container  # spawn test container (Podman/Docker) for integration
 
 Code.require_file("performance_bench.exs")
 Code.require_file("workload_bench.exs")
@@ -35,7 +35,7 @@ if run_integration do
   IO.puts("\nRunning integration benchmarks...")
 
   if run_container do
-    IO.puts("  (using testcontainer_ex for local ScyllaDB)")
+    IO.puts("  (using testcontainer_ex via Podman/Docker for local ScyllaDB)")
     Code.require_file("integration_bench.exs")
 
     case AshScylla.Benchmarks.Integration.run_with_container() do

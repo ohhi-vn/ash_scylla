@@ -22,17 +22,15 @@ defmodule AshScylla.Migration do
   CREATE TYPE, etc.) from Ash resource definitions. It is NOT an Ecto SQL
   migration runner — CQL has no transactional DDL concept.
 
-  These helpers return CQL strings that you execute via `Ecto.Migration.execute/1`
+  These helpers return CQL strings that you execute via `AshScylla.Migrator.run/3`
   in your migration modules, or directly through your repo at runtime.
 
   ## Example Migration
 
       defmodule MyApp.Repo.Migrations.CreateUsers do
-        use Ecto.Migration
-
         def change do
           AshScylla.Migration.create_table_cql(MyApp.User)
-          |> then(&execute/1)
+          |> then(&AshScylla.Migrator.run!/3)
         end
       end
 
@@ -46,36 +44,38 @@ defmodule AshScylla.Migration do
   @doc """
   Generates a CQL CREATE TABLE statement for an Ash resource.
 
-  Returns a raw CQL string. Execute it in a migration via `Ecto.Migration.execute/1`
+  Returns a raw CQL string. Execute it in a migration via `AshScylla.Migrator.run/3`
   or directly through your repo at runtime.
   """
   @spec create_table_cql(module()) :: String.t()
   def create_table_cql(resource) do
+    create_table_cql(resource, [])
+  end
+
+  @spec create_table_cql(module(), keyword()) :: String.t()
+  def create_table_cql(resource, _opts) do
     table_name =
-      resource
-      |> Module.get_attribute(:table)
-      |> to_string()
-      |> case do
-        "" ->
+      case Dsl.table(resource) do
+        nil ->
           resource
           |> Module.split()
           |> List.last()
           |> Macro.underscore()
 
         name ->
-          name
+          to_string(name)
       end
 
     attributes =
       resource
-      |> Module.get_attribute(:attributes)
+      |> Ash.Resource.Info.attributes()
       |> Enum.map(&attribute_to_cql/1)
 
     primary_keys =
       resource
-      |> Module.get_attribute(:attributes)
-      |> Enum.filter(fn attr -> Keyword.get(attr, :primary_key) end)
-      |> Enum.map_join(", ", fn attr -> Keyword.get(attr, :name) end)
+      |> Ash.Resource.Info.attributes()
+      |> Enum.filter(fn attr -> attr.primary_key? end)
+      |> Enum.map_join(", ", fn attr -> to_string(attr.name) end)
 
     clustering_order =
       if primary_keys != "" do
@@ -99,11 +99,9 @@ defmodule AshScylla.Migration do
   ## Example
 
       defmodule MyApp.Repo.Migrations.CreateUserIndexes do
-        use Ecto.Migration
-
         def change do
           AshScylla.Migration.create_secondary_indexes_cql(MyApp.User)
-          |> Enum.each(&execute/1)
+          |> Enum.each(&AshScylla.Migrator.run!/3)
         end
       end
   """
@@ -124,6 +122,15 @@ defmodule AshScylla.Migration do
           "CREATE INDEX IF NOT EXISTS #{index_name} ON #{table_name} (#{columns})"
         end)
     end
+  end
+
+  @doc """
+  Executes migration CQL via the Migrator.
+  """
+  @spec execute([String.t()], keyword()) :: {:ok, [term()]} | {:error, term()}
+  def execute(statements, opts \\ []) do
+    nodes = Keyword.get(opts, :nodes, ["127.0.0.1:9042"])
+    AshScylla.Migrator.run(nodes, statements, opts)
   end
 
   @doc """
@@ -167,15 +174,22 @@ defmodule AshScylla.Migration do
   @doc """
   Define a User Defined Type (UDT) in ScyllaDB.
 
-  ## Example
+  Supports two calling styles:
+
+  ## Keyword-list style (with do block)
 
       create_type "full_name" do
         field :first_name, :text
         field :last_name, :text
       end
 
-  This generates:
-      CREATE TYPE full_name (first_name TEXT, last_name TEXT)
+  ## Explicit field-list style
+
+      create_type("address", city: :text, street: :text, zip: :text)
+
+  Both generate:
+
+      CREATE TYPE IF NOT EXISTS <name> (field1 TYPE1, field2 TYPE2)
   """
   @spec create_type(String.t(), keyword()) :: String.t()
   def create_type(type_name, do: block) do
@@ -194,6 +208,35 @@ defmodule AshScylla.Migration do
     """
   end
 
+  @spec create_type(String.t() | atom(), [{atom(), atom()}]) :: String.t()
+  def create_type(type_name, fields) when is_atom(type_name) do
+    create_type(Atom.to_string(type_name), fields)
+  end
+
+  def create_type(type_name, fields) when is_binary(type_name) do
+    fields_cql =
+      fields
+      |> Enum.map_join(", ", fn {name, type} ->
+        "#{name} #{ash_type_to_cql_type(type, [])}"
+      end)
+
+    """
+    CREATE TYPE IF NOT EXISTS #{type_name} (
+      #{fields_cql}
+    )
+    """
+  end
+
+  @doc """
+  Generates CQL for creating a UDT from a type name and field specs.
+
+  Returns a raw CQL string.
+  """
+  @spec create_type_cql(String.t() | atom(), [{atom(), atom()}]) :: String.t()
+  def create_type_cql(type_name, fields) do
+    create_type(type_name, fields)
+  end
+
   @doc """
   Drop a User Defined Type (UDT) in ScyllaDB.
   """
@@ -202,8 +245,93 @@ defmodule AshScylla.Migration do
     "DROP TYPE IF EXISTS #{type_name}"
   end
 
-  @spec attribute_to_cql(keyword()) :: String.t()
-  defp attribute_to_cql(attr) do
+  @doc """
+  Generates CQL for dropping a UDT.
+
+  Returns a raw CQL string.
+  """
+  @spec drop_type_cql(String.t() | atom()) :: String.t()
+  def drop_type_cql(type_name) when is_atom(type_name) do
+    drop_type_cql(Atom.to_string(type_name))
+  end
+
+  def drop_type_cql(type_name) when is_binary(type_name) do
+    "DROP TYPE IF EXISTS #{type_name}"
+  end
+
+  @doc """
+  Generates CQL for altering a UDT (add or rename fields).
+
+  ## Examples
+
+      alter_type_cql("address", :add, [country: :text])
+      alter_type_cql("address", :rename, [new_zip: :zip_code])
+  """
+  @spec alter_type_cql(String.t() | atom(), :add | :rename, [{atom(), atom()}]) :: String.t()
+  def alter_type_cql(type_name, action, fields) when is_atom(type_name) do
+    alter_type_cql(Atom.to_string(type_name), action, fields)
+  end
+
+  def alter_type_cql(type_name, :add, fields) when is_binary(type_name) do
+    alterations =
+      fields
+      |> Enum.map_join(", ", fn {name, type} ->
+        "ADD #{name} #{ash_type_to_cql_type(type, [])}"
+      end)
+
+    "ALTER TYPE #{type_name} #{alterations}"
+  end
+
+  def alter_type_cql(type_name, :rename, renames) when is_binary(type_name) do
+    alterations =
+      renames
+      |> Enum.map_join(", ", fn {new_name, old_name} ->
+        "RENAME #{old_name} TO #{new_name}"
+      end)
+
+    "ALTER TYPE #{type_name} #{alterations}"
+  end
+
+  @doc """
+  Generates CQL to list all UDTs in the keyspace.
+
+  Returns a raw CQL string.
+  """
+  @spec list_types_cql() :: String.t()
+  def list_types_cql do
+    "SELECT type_name, field_names, field_types FROM system_schema.types"
+  end
+
+  @doc """
+  Generates CQL to check if a UDT exists.
+
+  Returns a raw CQL string.
+  """
+  @spec type_exists_cql(String.t() | atom()) :: String.t()
+  def type_exists_cql(type_name) when is_atom(type_name) do
+    type_exists_cql(Atom.to_string(type_name))
+  end
+
+  def type_exists_cql(type_name) when is_binary(type_name) do
+    "SELECT type_name FROM system_schema.types WHERE type_name = '#{type_name}'"
+  end
+
+  @spec attribute_to_cql(Ash.Resource.Attribute.t()) :: String.t()
+  defp attribute_to_cql(%Ash.Resource.Attribute{} = attr) do
+    name = attr.name
+    type = attr.type
+    opts = attr.constraints
+
+    type_str = ash_type_to_cql_type(type, opts)
+
+    primary_key = if attr.primary_key?, do: " PRIMARY KEY", else: ""
+    nullable = if attr.allow_nil?, do: "", else: " NOT NULL"
+
+    "#{name} #{type_str}#{primary_key}#{nullable}"
+  end
+
+  # Fallback for keyword-list attributes (compile-time usage)
+  defp attribute_to_cql(attr) when is_list(attr) do
     name = Keyword.get(attr, :name)
     type = Keyword.get(attr, :type, :string)
     opts = Keyword.get(attr, :type_opts, [])
@@ -226,8 +354,22 @@ defmodule AshScylla.Migration do
     :time => "TIME"
   }
 
+  @doc """
+  Converts an Ash type atom to its CQL type string representation.
+
+  ## Examples
+
+      iex> AshScylla.Migration.ash_type_to_cql_type(:uuid, [])
+      "UUID"
+
+      iex> AshScylla.Migration.ash_type_to_cql_type(:string, [])
+      "TEXT"
+
+      iex> AshScylla.Migration.ash_type_to_cql_type(:map, key_type: "TEXT", value_type: "INT")
+      "MAP<TEXT, INT>"
+  """
   @spec ash_type_to_cql_type(atom(), keyword()) :: String.t()
-  defp ash_type_to_cql_type(type, opts) when is_atom(type) do
+  def ash_type_to_cql_type(type, opts) when is_atom(type) do
     base_type =
       case type do
         :map ->
@@ -240,7 +382,12 @@ defmodule AshScylla.Migration do
           "SET<#{Keyword.get(opts, :element_type, "TEXT")}>"
 
         :udt ->
-          Keyword.get(opts, :type_name, "frozen<undefined>")
+          type_name = Keyword.get(opts, :type_name, "undefined")
+
+          type_name_str =
+            if is_atom(type_name), do: Atom.to_string(type_name), else: to_string(type_name)
+
+          "frozen<#{type_name_str}>"
 
         mapped_type ->
           Map.get(@type_mapping, mapped_type, "TEXT")

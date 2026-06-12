@@ -28,9 +28,8 @@
 
 ```elixir
 defmodule MyApp.Repo do
-  use Ecto.Repo,
-    otp_app: :my_app,
-    adapter: Exandra
+  use AshScylla.Repo,
+    otp_app: :my_app
 end
 ```
 
@@ -94,7 +93,10 @@ end
 MyApp.Repo.create_keyspace()
 
 # Run migrations
-mix ecto.migrate
+AshScylla.Migrator.run!(MyApp.Repo.nodes(), [
+  AshScylla.Migration.create_table_cql(MyApp.User),
+  "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)"
+])
 ```
 
 ---
@@ -169,10 +171,10 @@ mix ash_scylla.gen MyResource user_id:uuid, name:string, age:int
 This generates a file at `lib/<app>/resources/my_resource.ex` containing:
 
 ```elixir
-defmodule MyResource do
+defmodule MyApp.User do
   use Ash.Resource,
     data_layer: AshScylla.DataLayer,
-    repo: MyApp.Repo
+    domain: MyApp.Domain
 
   attributes do
     uuid_primary_key :id
@@ -247,6 +249,15 @@ defmodule MyApp.User do
 
   actions do
     defaults [:create, :read, :update, :destroy]
+  end
+end
+
+# Add to domain:
+defmodule MyApp.Domain do
+  use Ash.Domain
+
+  resources do
+    resource MyApp.User
   end
 end
 ```
@@ -543,63 +554,53 @@ end
 
 ### Creating Tables
 
+Use `AshScylla.Migrator` to execute raw CQL directly:
+
 ```elixir
-defmodule MyApp.Repo.Migrations.CreateUsers do
-  use Ecto.Migration
+# Create keyspace first
+MyApp.Repo.create_keyspace()
 
-  def change do
-    create table("users", primary_key: false) do
-      add :id, :uuid, primary_key: true
-      add :name, :string
-      add :email, :string
-      add :age, :integer
-      add :status, :string
-
-      # Collections
-      add :tags, {:array, :string}
-      add :metadata, :map
-    end
-
-    # Secondary indexes
-    create index("users", [:email], name: "idx_users_email")
-    create index("users", [:status], name: "idx_users_status")
-  end
-end
+# Create tables and indexes
+AshScylla.Migrator.run!(MyApp.Repo.nodes(), [
+  """
+  CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY,
+    name TEXT,
+    email TEXT,
+    age BIGINT,
+    status TEXT,
+    tags LIST<TEXT>,
+    metadata MAP<TEXT, TEXT>
+  )
+  """,
+  "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)",
+  "CREATE INDEX IF NOT EXISTS idx_users_status ON users (status)"
+])
 ```
 
 ### Using AshScylla.Migration Helpers
 
 ```elixir
-defmodule MyApp.Repo.Migrations.CreateUsers do
-  use Ecto.Migration
-
-  def change do
-    AshScylla.Migration.create_table_cql(MyApp.User)
-    |> Enum.each(&execute/1)
-
-    AshScylla.Migration.create_secondary_indexes_cql(MyApp.User)
-    |> Enum.each(&execute/1)
-  end
-end
+# Generate CQL from resource definitions
+AshScylla.Migrator.run!(MyApp.Repo.nodes(), [
+  AshScylla.Migration.create_table_cql(MyApp.User),
+  AshScylla.Migration.create_secondary_indexes_cql(MyApp.User)
+] |> List.flatten())
 ```
 
 ### Creating User Defined Types
 
 ```elixir
-defmodule MyApp.Repo.Migrations.CreateAddressType do
-  use Ecto.Migration
-
-  def change do
-    execute """
-    CREATE TYPE IF NOT EXISTS address (
-      street TEXT,
-      city TEXT,
-      state TEXT,
-      zip TEXT
-    )
-    """
-  end
-end
+AshScylla.Migrator.run!(MyApp.Repo.nodes(), [
+  """
+  CREATE TYPE IF NOT EXISTS address (
+    street TEXT,
+    city TEXT,
+    state TEXT,
+    zip TEXT
+  )
+  """
+])
 ```
 
 ---
@@ -630,7 +631,6 @@ end
 config :my_app, MyApp.Repo,
   nodes: ["scylla-1:9042", "scylla-2:9042"],
   pool_size: 50,                    # Connections per node
-  pool_timeout: 15_000,
   request_timeout: 300_000,         # 5 minutes for complex queries
   connect_timeout: 10_000
 ```
@@ -742,7 +742,7 @@ end
 ```
 - Check CQL syntax in custom queries
 - Verify table/column names exist
-- Run migrations: `mix ecto.migrate`
+- Run migrations via `AshScylla.Migrator.run!/3`
 
 **4. Read Timeout**
 ```
@@ -793,5 +793,5 @@ MyApp.Repo.query("SELECT release_version FROM system.local")
 
 - [Ash Framework Documentation](https://ash-hq.org/docs)
 - [ScyllaDB Documentation](https://docs.scylladb.com/)
-- [Exandra GitHub](https://github.com/lexhide/exandra)
+- [Xandra GitHub](https://github.com/whatyouhide/xandra)
 - [CQL Reference](https://docs.scylladb.com/cql/)

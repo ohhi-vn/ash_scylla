@@ -19,17 +19,12 @@ defmodule AshScylla.DslResourceTest do
 
   defmodule TestDomain do
     @moduledoc false
-    use Ash.Domain
-
-    resources do
-      resource(DslResourceTest.SimpleResource)
-      resource(DslResourceTest.FullConfigResource)
-    end
+    use Ash.Domain, validate_config_inclusion?: false
   end
 
   defmodule EmptyDomain do
     @moduledoc false
-    use Ash.Domain
+    use Ash.Domain, validate_config_inclusion?: false
   end
 
   # ══════════════════════════════════════════════════════════════════════════

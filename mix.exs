@@ -4,11 +4,14 @@ defmodule AshScylla.MixProject do
   def project do
     [
       app: :ash_scylla,
-      version: "0.6.0",
+      version: "0.7.0",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       aliases: aliases(),
+      test_paths: ["test"],
+      test_load_filters: [&String.ends_with?(&1, "_test.exs")],
+      test_ignore_filters: [&String.starts_with?(&1, "test/support/")],
       dialyzer: [
         plt_add_apps: [:ex_unit, :mix],
         flags: [:unmatched_returns, :error_handling, :underspecs]
@@ -42,7 +45,7 @@ defmodule AshScylla.MixProject do
 
   defp package do
     [
-      description: "An Ash Framework data layer for ScyllaDB/Apache Cassandra using Exandra",
+      description: "An Ash Framework data layer for ScyllaDB/Apache Cassandra using Xandra",
       licenses: ["Apache-2.0"],
       links: %{
         "GitHub" => "https://github.com/ohhi-vn/ash_scylla",
@@ -81,10 +84,16 @@ defmodule AshScylla.MixProject do
           AshScylla.DataLayer.Batch,
           AshScylla.DataLayer.FilterValidator,
           AshScylla.DataLayer.MaterializedView,
-          AshScylla.DataLayer.Pagination
+          AshScylla.DataLayer.Pagination,
+          AshScylla.DataLayer.Udt,
+          AshScylla.DataLayer.Collection,
+          AshScylla.DataLayer.SchemaMigration,
+          AshScylla.DataLayer.Compression,
+          AshScylla.DataLayer.QueryOptimizer
         ],
         "Repo Helpers": [
-          AshScylla.Repo
+          AshScylla.Repo,
+          AshScylla.Release
         ],
         Performance: [
           AshScylla.PreparedStatementCache
@@ -103,21 +112,20 @@ defmodule AshScylla.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ash, "~> 3.28"},
-      {:exandra, "~> 1.0"},
-      {:ecto, "~> 3.13"},
-      # ecto_sql is a runtime dependency of exandra (the Ecto adapter for ScyllaDB).
-      # AshScylla itself does not use SQL features — this is pulled in transitively.
-      {:ecto_sql, "~> 3.13"},
+      {:ash, "~> 3.0"},
+      {:xandra, "~> 0.19"},
       {:decimal, "~> 3.1", override: true, only: [:dev, :test]},
       {:hackney, "~> 4.2", override: true, only: [:dev, :test]},
-      {:testcontainer_ex, "~> 0.4", only: [:test, :dev]},
+      {:testcontainer_ex, "~> 0.5", only: [:test, :dev]},
       # {:testcontainer_ex, path: "../testcontainer_ex", only: [:test, :dev]},
       {:benchee, "~> 1.5", only: :dev},
       {:benchee_html, "~> 1.0", only: :dev},
-      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+
+      # Code quality
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+      {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:ex_dna, "~> 1.5", only: [:dev, :test], runtime: false}
     ]
   end
 
@@ -126,7 +134,11 @@ defmodule AshScylla.MixProject do
       "test.ci": ["credo --strict", "test --exclude integration"],
       test: ["test"],
       "test.unit": ["test --exclude integration"],
-      "test.integration": ["test --only integration"]
+      "test.integration": ["test --only integration"],
+      # Testing & Coverage
+      coveralls: ["test --cover", "coveralls.html"],
+      # Code Quality
+      quality: ["format --check-formatted", "credo --strict", "dialyzer"]
     ]
   end
 end

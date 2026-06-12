@@ -1,11 +1,7 @@
 defmodule AshScylla.Test do
   use ExUnit.Case, async: false
 
-  # Note: These tests require a running ScyllaDB instance
-  # To run: docker run -p 9042:9042 scylladb/scylla
-  # Then configure the repo to connect to localhost:9042
-
-  describe "DataLayer can?/1" do
+  describe "DataLayer can?/2" do
     test "returns true for supported features" do
       assert AshScylla.DataLayer.can?(nil, :create) == true
       assert AshScylla.DataLayer.can?(nil, :read) == true
@@ -22,36 +18,25 @@ defmodule AshScylla.Test do
       assert AshScylla.DataLayer.can?(nil, {:atomic, :update}) == true
       assert AshScylla.DataLayer.can?(nil, {:atomic, :upsert}) == true
       assert AshScylla.DataLayer.can?(nil, {:aggregate, :count}) == true
+      assert AshScylla.DataLayer.can?(nil, :bulk_create) == true
+      assert AshScylla.DataLayer.can?(nil, :update_query) == true
+      assert AshScylla.DataLayer.can?(nil, :destroy_query) == true
     end
 
     test "returns false for unsupported features" do
       assert AshScylla.DataLayer.can?(nil, :transact) == false
-      assert AshScylla.DataLayer.can?(nil, :sort) == false
       assert AshScylla.DataLayer.can?(nil, :offset) == false
       assert AshScylla.DataLayer.can?(nil, {:aggregate, :sum}) == false
       assert AshScylla.DataLayer.can?(nil, {:join, nil}) == false
       assert AshScylla.DataLayer.can?(nil, {:lateral_join, []}) == false
-      assert AshScylla.DataLayer.can?(nil, :expression_calculation) == false
       assert AshScylla.DataLayer.can?(nil, :lateral_join) == false
       assert AshScylla.DataLayer.can?(nil, :lock) == false
-    end
-  end
-
-  describe "DataLayer bulk_create support" do
-    test "bulk_create is supported" do
-      assert AshScylla.DataLayer.can?(nil, :bulk_create) == true
+      assert AshScylla.DataLayer.can?(nil, {:combine, :union}) == false
     end
   end
 
   describe "CQL generation" do
-    test "build_select/2 generates correct SELECT" do
-      # Test the private function via the module
-      # This is a basic test - in real scenario, test via public API
-      assert true
-    end
-
     test "QueryBuilder handles complex nested filters" do
-      # Test AND/OR combinations
       filter = %{
         op: :and,
         left: %{
@@ -76,9 +61,7 @@ defmodule AshScylla.Test do
       }
 
       {cql, params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
-      # The IN operator should generate the right number of placeholders
       assert String.contains?(cql, "IN")
-      # Should have 5 placeholders for 5 values
       assert String.contains?(cql, "?, ?, ?, ?, ?")
       assert params == ["A", "B", "C", "D", "E"]
     end
@@ -86,7 +69,6 @@ defmodule AshScylla.Test do
 
   describe "DSL module" do
     test "table/1 returns nil when not configured" do
-      # String is not an Ash resource with ash_scylla DSL
       assert AshScylla.DataLayer.Dsl.table(String) == nil
     end
 
@@ -102,45 +84,75 @@ defmodule AshScylla.Test do
       assert AshScylla.DataLayer.Dsl.ttl(String) == nil
     end
 
-    test "table/1 returns configured table for resource with DSL" do
+    test "table/1 returns configured table for TestResource" do
       assert AshScylla.DataLayer.Dsl.table(AshScylla.TestResource) == "test_resource"
     end
 
-    test "table/1 returns configured table for resource with explicit DSL table" do
+    test "table/1 returns configured table for TestResourceWithIndexes" do
       assert AshScylla.DataLayer.Dsl.table(AshScylla.TestResourceWithIndexes) == "test_users"
     end
 
-    test "keyspace/1 returns configured keyspace for resource with DSL" do
+    test "keyspace/1 returns configured keyspace" do
       assert AshScylla.DataLayer.Dsl.keyspace(AshScylla.TestResourceWithIndexes) ==
                "ash_scylla_test"
     end
 
-    test "consistency/1 returns configured consistency for resource with DSL" do
+    test "consistency/1 returns configured consistency" do
       assert AshScylla.DataLayer.Dsl.consistency(AshScylla.TestResourceWithIndexes) == :quorum
     end
 
-    test "ttl/1 returns configured ttl for resource with DSL" do
+    test "ttl/1 returns configured ttl" do
       assert AshScylla.DataLayer.Dsl.ttl(AshScylla.TestResourceWithIndexes) == 3600
+    end
+
+    test "secondary_indexes/1 returns configured indexes" do
+      indexes = AshScylla.DataLayer.Dsl.secondary_indexes(AshScylla.TestResource)
+      assert length(indexes) == 2
+    end
+
+    test "repo/1 returns configured repo" do
+      assert AshScylla.DataLayer.Dsl.repo(AshScylla.TestResource) == AshScylla.TestRepo
     end
   end
 
-  describe "DSL macro" do
-    @tag :skip
-    test "generates __ash_scylla__ function" do
-      # This test requires runtime module compilation which is complex
-      # The DSL functionality is tested via the Dsl module functions
-      assert true
+  describe "TestResource Ash 3.0+ features" do
+    test "has domain configured" do
+      assert Ash.Resource.Info.domain(AshScylla.TestResource) == AshScylla.TestDomain
+    end
+
+    test "has attributes with public? flag" do
+      assert Ash.Resource.Info.attribute(AshScylla.TestResource, :name).public? == true
+      assert Ash.Resource.Info.attribute(AshScylla.TestResource, :password_hash).public? == false
+    end
+
+    test "has create_timestamp and update_timestamp" do
+      attributes = Ash.Resource.Info.attributes(AshScylla.TestResource)
+      attr_names = Enum.map(attributes, & &1.name)
+      assert :created_at in attr_names
+      assert :updated_at in attr_names
+    end
+
+    test "has primary key" do
+      pk = Ash.Resource.Info.primary_key(AshScylla.TestResource)
+      assert :id in pk
+    end
+
+    test "has code_interface definitions" do
+      interfaces = Ash.Resource.Info.interfaces(AshScylla.TestResource)
+      names = Enum.map(interfaces, & &1.name)
+      assert :create in names
+      assert :read in names
     end
   end
 
   describe "Migration helpers" do
     test "create_table_cql/1 generates CQL" do
-      # This would need a mock resource module
-      # For now, just test it doesn't crash
-      assert true
+      cql = AshScylla.Migration.create_table_cql(AshScylla.TestResourceWithIndexes)
+      assert String.contains?(cql, "CREATE TABLE")
+      assert String.contains?(cql, "test_users")
     end
 
-    test "Migration.create_type/2 with nested UDTs" do
+    test "create_type/2 with fields" do
       cql =
         AshScylla.Migration.create_type("address",
           do: [
@@ -154,11 +166,6 @@ defmodule AshScylla.Test do
       assert String.contains?(cql, "first_name TEXT")
       assert String.contains?(cql, "last_name TEXT")
       assert String.contains?(cql, "zip TEXT")
-    end
-
-    test "Migration handles collection types" do
-      # Test that migration module handles list, set, map types
-      assert true
     end
   end
 end

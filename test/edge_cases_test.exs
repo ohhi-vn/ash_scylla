@@ -735,4 +735,58 @@ defmodule AshScylla.EdgeCasesTest do
       assert e.suggestion == nil
     end
   end
+
+  # ============================================================================
+  # Ash 3.0+ Edge Case Tests
+  # ============================================================================
+
+  describe "Ash.Resource.Info edge cases" do
+    test "TestResource domain is TestDomain" do
+      assert Ash.Resource.Info.domain(AshScylla.TestResource) == AshScylla.TestDomain
+    end
+
+    test "TestResource primary key is id" do
+      assert :id in Ash.Resource.Info.primary_key(AshScylla.TestResource)
+    end
+
+    test "TestResource has expected attributes" do
+      names = Ash.Resource.Info.attributes(AshScylla.TestResource) |> Enum.map(& &1.name)
+      assert :id in names
+      assert :name in names
+      assert :email in names
+      assert :age in names
+      assert :password_hash in names
+      assert :org_id in names
+      assert :created_at in names
+      assert :updated_at in names
+    end
+
+    test "TestResource password_hash is not public" do
+      attr = Ash.Resource.Info.attribute(AshScylla.TestResource, :password_hash)
+      assert attr.public? == false
+    end
+
+    test "TestResource name is public" do
+      attr = Ash.Resource.Info.attribute(AshScylla.TestResource, :name)
+      assert attr.public? == true
+    end
+
+    test "TestResource has code interface functions" do
+      interfaces = Ash.Resource.Info.interfaces(AshScylla.TestResource)
+      names = Enum.map(interfaces, & &1.name)
+      assert :create in names
+      assert :read in names
+      assert :update in names
+      assert :destroy in names
+    end
+
+    test "TestResourceWithIndexes has correct table" do
+      assert AshScylla.DataLayer.Dsl.table(AshScylla.TestResourceWithIndexes) == "test_users"
+    end
+
+    test "TestResourceWithIndexes has 3 secondary indexes" do
+      indexes = AshScylla.DataLayer.Dsl.secondary_indexes(AshScylla.TestResourceWithIndexes)
+      assert length(indexes) == 3
+    end
+  end
 end

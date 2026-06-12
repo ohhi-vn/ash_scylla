@@ -190,7 +190,7 @@ defmodule AshScylla.WorkloadTest do
       results = Task.await_many(tasks, 15_000)
       assert length(results) == 3
 
-      [{simple_cql, _}, {complex_cql, complex_params}, {in_cql, in_params}] = results
+      [{simple_cql, _}, {complex_cql, _complex_params}, {in_cql, in_params}] = results
       assert simple_cql == "SELECT * FROM t"
       assert String.contains?(complex_cql, "ORDER BY a asc, b desc")
       assert String.contains?(in_cql, "IN")
@@ -600,7 +600,7 @@ defmodule AshScylla.WorkloadTest do
               end
 
             page_size = 10 + rem(i, 90)
-            token = if rem(i, 2) == 0, do: Pagination.encode_page_token("token_#{i}"), else: nil
+            _token = if rem(i, 2) == 0, do: Pagination.encode_page_token("token_#{i}"), else: nil
             Pagination.build_paginated_query("users", filters, page_size)
           end)
         end)

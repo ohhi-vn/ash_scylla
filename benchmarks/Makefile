@@ -18,7 +18,7 @@ bench-integration:
 	@echo "Running integration benchmarks (existing ScyllaDB)..."
 	@mix run benchmarks/integration_bench.exs
 
-# Run integration benchmarks with a local test container (Docker/Podman)
+# Run integration benchmarks with a local test container (Podman/Docker)
 bench-integration-container:
 	@echo "Running integration benchmarks (test container)..."
 	@mix run benchmarks/integration_bench.exs --container

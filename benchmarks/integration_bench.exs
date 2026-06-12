@@ -6,7 +6,7 @@
 #   # Against an existing ScyllaDB instance:
 #   mix run benchmarks/integration_bench.exs
 #
-#   # Spawn a local test container (Docker/Podman required):
+#   # Spawn a local test container (Podman/Docker required):
 #   mix run benchmarks/integration_bench.exs --container
 #
 #   # Or via the runner:
@@ -21,11 +21,19 @@ defmodule AshScylla.Benchmarks.Integration do
   2. **Container** — spawns a ScyllaDB test container via testcontainer_ex (local-only)
   """
 
-  alias TestcontainerEx.ScyllaContainer
+  alias AshScylla.ScyllaContainer
 
   @scylla_container_config ScyllaContainer.new()
-                           |> ScyllaContainer.with_image("scylladb/scylla:latest")
-                           |> ScyllaContainer.with_wait_timeout(180_000)
+                           |> ScyllaContainer.with_image("scylladb/scylla:5.4")
+                           |> ScyllaContainer.with_cmd([
+                             "--smp",
+                             "1",
+                             "--memory",
+                             "1G",
+                             "--developer-mode",
+                             "1"
+                           ])
+                           |> ScyllaContainer.with_wait_timeout(300_000)
 
   @keyspace "ash_scylla_bench"
   @table "bench_users"
@@ -71,7 +79,7 @@ defmodule AshScylla.Benchmarks.Integration do
         do_benchmarks()
 
         IO.puts("Stopping ScyllaDB test container...")
-        TestcontainerEx.stop_container(container)
+        TestcontainerEx.stop_container(container.container_id)
         {:ok, :completed}
 
       {:error, reason} ->
@@ -110,7 +118,10 @@ defmodule AshScylla.Benchmarks.Integration do
   # ── Schema ───────────────────────────────────────────────────────────────
 
   defp ensure_bench_keyspace(container) do
-    {:ok, conn} = Xandra.start_link(nodes: ["#{TestcontainerEx.get_host(container)}:#{ScyllaContainer.port(container)}"])
+    {:ok, conn} =
+      Xandra.start_link(
+        nodes: ["#{TestcontainerEx.get_host(container)}:#{ScyllaContainer.port(container)}"]
+      )
 
     Xandra.execute(conn, """
     CREATE KEYSPACE IF NOT EXISTS #{@keyspace}
@@ -121,24 +132,27 @@ defmodule AshScylla.Benchmarks.Integration do
   end
 
   defp ensure_schema do
-    {:ok, _} = Repo.query("""
-    CREATE TABLE IF NOT EXISTS #{@keyspace}.#{@table} (
-      id UUID PRIMARY KEY,
-      name TEXT,
-      email TEXT,
-      status TEXT,
-      age INT,
-      inserted_at TIMESTAMP
-    )
-    """)
+    {:ok, _} =
+      Repo.query("""
+      CREATE TABLE IF NOT EXISTS #{@keyspace}.#{@table} (
+        id UUID PRIMARY KEY,
+        name TEXT,
+        email TEXT,
+        status TEXT,
+        age INT,
+        inserted_at TIMESTAMP
+      )
+      """)
 
-    {:ok, _} = Repo.query("""
-    CREATE INDEX IF NOT EXISTS idx_bench_email ON #{@keyspace}.#{@table} (email)
-    """)
+    {:ok, _} =
+      Repo.query("""
+      CREATE INDEX IF NOT EXISTS idx_bench_email ON #{@keyspace}.#{@table} (email)
+      """)
 
-    {:ok, _} = Repo.query("""
-    CREATE INDEX IF NOT EXISTS idx_bench_status ON #{@keyspace}.#{@table} (status)
-    """)
+    {:ok, _} =
+      Repo.query("""
+      CREATE INDEX IF NOT EXISTS idx_bench_status ON #{@keyspace}.#{@table} (status)
+      """)
   end
 
   # ── Benchmarks ───────────────────────────────────────────────────────────
@@ -275,24 +289,24 @@ defmodule AshScylla.Benchmarks.Integration do
       repo: __MODULE__.Repo
 
     ash_scylla do
-      table "bench_users"
-      keyspace "ash_scylla_bench"
-      consistency :quorum
-      secondary_index :email
-      secondary_index :status
+      table("bench_users")
+      keyspace("ash_scylla_bench")
+      consistency(:quorum)
+      secondary_index(:email)
+      secondary_index(:status)
     end
 
     attributes do
-      uuid_primary_key :id
-      attribute :name, :string
-      attribute :email, :string
-      attribute :status, :string
-      attribute :age, :integer
-      attribute :inserted_at, :utc_datetime
+      uuid_primary_key(:id)
+      attribute(:name, :string)
+      attribute(:email, :string)
+      attribute(:status, :string)
+      attribute(:age, :integer)
+      attribute(:inserted_at, :utc_datetime)
     end
 
     actions do
-      defaults [:create, :read, :update, :destroy]
+      defaults([:create, :read, :update, :destroy])
     end
   end
 

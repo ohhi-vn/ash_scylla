@@ -63,6 +63,7 @@ BasicApp.Migrations.create_tables()
 ### Prerequisites
 
 - ScyllaDB running on localhost:9042
+- Or use Podman: `podman run --name scylla -p 9042:9042 -d scylladb/scylla:latest`
 - Or use Docker: `docker run --name scylla -p 9042:9042 -d scylladb/scylla:latest`
 
 ## Running Examples

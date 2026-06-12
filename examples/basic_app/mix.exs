@@ -21,8 +21,7 @@ defmodule BasicApp.MixProject do
   defp deps do
     [
       {:ash, "~> 3.0"},
-      {:ash_scylla, path: "../../"},
-      {:exandra, "~> 0.9"}
+      {:ash_scylla, path: "../../"}
     ]
   end
 end

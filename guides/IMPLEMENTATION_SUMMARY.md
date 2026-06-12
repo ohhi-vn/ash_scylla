@@ -6,7 +6,7 @@
 
 ## Overview
 
-AshScylla is a comprehensive data layer for the Ash Framework that enables persistence with **ScyllaDB** or **Apache Cassandra**. It uses [Exandra](https://github.com/lexhide/exandra) (an Ecto adapter) to communicate via CQL (Cassandra Query Language).
+AshScylla is a comprehensive data layer for the Ash Framework that enables persistence with **ScyllaDB** or **Apache Cassandra**. It uses [Xandra](https://github.com/whatyouhide/xandra) (a native Elixir CQL driver) to communicate via CQL (Cassandra Query Language).
 
 ---
 
@@ -35,8 +35,8 @@ AshScylla is a comprehensive data layer for the Ash Framework that enables persi
                    │
                    ▼
 ┌─────────────────────────────────────────────────────────┐
-│                    Exandra (Ecto)                      │
-│  • Ecto adapter for ScyllaDB/Cassandra               │
+│                    Xandra (direct)                      │
+│  • Native Elixir CQL driver               │
 └──────────────────┬──────────────────────────────────────┘
                    │
                    ▼
@@ -95,18 +95,51 @@ AshScylla is a comprehensive data layer for the Ash Framework that enables persi
 | Feature | Status | Notes |
 |---------|--------|-------|
 | `:create` | ✅ | Create records with TTL support |
-| `:read` | ✅ | Read with filtering and sorting |
+| `:read` | ✅ | Read with filtering |
 | `:update` | ✅ | Update existing records |
 | `:destroy` | ✅ | Delete records |
 | `:filter` | ✅ | Filter queries with CQL WHERE conversion |
-| `:sort` | ✅ | ORDER BY support |
+| `:sort` | ⚠️ | ORDER BY on clustering columns only (within a partition); not natively supported across partitions |
 | `:limit` | ✅ | LIMIT results |
-| `:offset` | ✅ | OFFSET (use with caution) |
+| `:offset` | ⚠️ | Not natively supported in ScyllaDB; silently dropped. Use keyset pagination instead |
 | `:select` | ✅ | Select specific fields |
 | `:multitenancy` | ✅ | Keyspace-based multitenancy |
 | `:bulk_create` | ✅ | Batch INSERT operations |
+| `:upsert` | ✅ | Upsert records (INSERT IF NOT EXISTS with LWT) |
 
 ### ScyllaDB-Specific Features 🚀
+
+#### 7. Token-Based Pagination
+Efficient pagination without OFFSET using Xandra's native paging state:
+
+```elixir
+# First page
+{:ok, records, next_token} =
+  AshScylla.DataLayer.Pagination.fetch_page(repo, "users", [], nil, 10)
+
+# Subsequent pages
+{:ok, records, next_token} =
+  AshScylla.DataLayer.Pagination.fetch_page(repo, "users", [], next_token, 10)
+```
+
+- `AshScylla.DataLayer.Pagination` module
+- Uses Xandra's native paging_state mechanism
+- Opaque base64-encoded page tokens
+- Default page size: 50, max: 1000
+
+#### 8. Prepared Statement Caching
+For high-throughput workloads, eliminate repeated query parsing:
+
+```elixir
+# In your supervision tree
+children = [
+  AshScylla.PreparedStatementCache,
+  # ... other children
+]
+```
+
+- `AshScylla.PreparedStatementCache` GenServer + ETS cache
+- Automatic prepared statement reuse
 
 #### 1. TTL (Time To Live)
 Automatically expire data after a specified time:
@@ -170,24 +203,29 @@ Reduce network round-trips with BATCH statements:
 # Bulk create (uses BATCH internally)
 {:ok, users} = user_data_list
   |> Ash.bulk_create(MyApp.User, :create)
+
+# Async partition-aware batching for large datasets
+AshScylla.DataLayer.Batch.batch_insert_async(repo, statements, resource: MyApp.User, max_concurrency: 8)
 ```
 
 - `AshScylla.DataLayer.Batch` module
 - Supports BATCH INSERT, UPDATE, DELETE
 - Integrated with `bulk_create/3`
+- Async partition-aware batching for large datasets
 
 #### 6. Query Building
 Convert Ash queries to optimized CQL:
 
 ```elixir
 # Builds CQL like:
-# SELECT id, name, email FROM users WHERE age > ? AND status = ? ALLOW FILTERING
+# SELECT id, name, email FROM users WHERE age > ? AND status = ?
 ```
 
 - `QueryBuilder.build_optimized_query/1` - Converts DataLayer struct to CQL
 - `QueryBuilder.filter_to_cql/1` - Converts Ash filters to CQL WHERE
 - Supports operators: `=`, `!=`, `>`, `>=`, `<`, `<=`, `IN`
 - Proper parameter binding with `?` placeholders
+- Filter validation to prevent ALLOW FILTERING anti-pattern
 
 ---
 
@@ -254,9 +292,9 @@ Retry delays are tailored to error types:
 | Dependency | Version | Purpose |
 |------------|---------|---------|
 | `ash` | ~> 3.0 | Ash Framework |
-| `exandra` | ~> 1.0 | Ecto adapter for ScyllaDB/Cassandra |
-| `ecto` | ~> 3.13 | Ecto for database interaction |
-| `ecto_sql` | ~> 3.13 | CQL migration helpers (dev/test only) |
+| `xandra` | ~> 0.19 | Native Elixir CQL driver |
+
+
 | `testcontainer_ex` | ~> 0.3.1 | Integration test containers (dev/test only) |
 | `benchee` | ~> 1.5 | Benchmarking (dev only) |
 | `benchee_html` | ~> 1.0 | Benchmark HTML reports (dev only) |
@@ -326,16 +364,11 @@ Integration tests will:
 
 ## Future Enhancements
 
-1. **Token-based pagination** (instead of OFFSET)
-2. **Lightweight transactions (LWT)** with IF clauses
-3. **User Defined Types (UDT)** support
-4. **Collection types** optimization (lists, sets, maps)
-5. **Query caching** layer
-6. **Automatic schema migrations** from Ash resources
-7. **Prepared statement** caching
-8. **Compression** support for large payloads
-9. **Connection pooling** improvements
-10. **Query optimization** hints
+1. **User Defined Types (UDT)** — full runtime support beyond CQL generation
+2. **Collection types** — deeper optimization for lists, sets, maps
+3. **Automatic schema migrations** from Ash resources
+4. **Compression** support for large payloads
+5. **Query optimization** hints
 
 ---
 
@@ -346,7 +379,6 @@ Integration tests will:
 ```elixir
 config :my_app, MyApp.Repo,
   pool_size: 50,                # Connections per node
-  pool_timeout: 15_000,
   request_timeout: 300_000,     # Query timeout (ms)
   connect_timeout: 10_000
 ```
@@ -371,9 +403,8 @@ pool_size = (expected_concurrent_queries / number_of_nodes) * 1.5
 ```elixir
 # Configure Repo
 defmodule MyApp.Repo do
-  use Ecto.Repo,
-    otp_app: :my_app,
-    adapter: Exandra
+  use AshScylla.Repo,
+    otp_app: :my_app
 end
 
 # Configure Resource with all features

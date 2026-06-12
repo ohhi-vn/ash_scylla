@@ -1,7 +1,7 @@
 defmodule BasicApp.Resources.Post do
   use Ash.Resource,
     data_layer: AshScylla.DataLayer,
-    repo: BasicApp.Repo
+    domain: BasicApp.Domain
 
   ash_scylla do
     table("posts")

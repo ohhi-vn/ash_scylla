@@ -14,7 +14,7 @@
 
 defmodule AshScylla.DataLayer do
   @moduledoc """
-  An Ash data layer for ScyllaDB using Exandra (Ecto adapter for Cassandra/ScyllaDB).
+  An Ash data layer for ScyllaDB using Xandra (direct CQL driver).
 
   This data layer implements the `Ash.DataLayer` behaviour to allow Ash resources
   to be backed by ScyllaDB/Cassandra.
@@ -117,13 +117,16 @@ defmodule AshScylla.DataLayer do
     limit: nil,
     offset: nil,
     select: nil,
+    distinct: nil,
     tenant: nil,
     context: %{},
     atomic: nil,
     upsert?: false,
     upsert_fields: [],
     upsert_identity: nil,
-    keyset: nil
+    keyset: nil,
+    aggregates: [],
+    group_by: nil
   ]
 
   @type t :: %__MODULE__{
@@ -135,13 +138,16 @@ defmodule AshScylla.DataLayer do
           limit: pos_integer() | nil,
           offset: pos_integer() | nil,
           select: list(atom()) | nil,
+          distinct: list(atom()) | nil,
           tenant: term(),
           context: map(),
           atomic: atom() | nil,
           upsert?: boolean(),
           upsert_fields: list(atom()),
           upsert_identity: atom() | nil,
-          keyset: term()
+          keyset: term(),
+          aggregates: list(map()),
+          group_by: list(atom()) | nil
         }
 
   # ============================================================================
@@ -246,7 +252,8 @@ defmodule AshScylla.DataLayer do
 
     Telemetry.span(resource, :read, query, fn ->
       case repo.query(query, params, opts) do
-        {:ok, %{rows: rows}} ->
+        {:ok, %Xandra.Page{content: content}} ->
+          rows = content || []
           records = Enum.map(rows, &to_ash_record(&1, resource))
           # Post-process expression calculations
           %__MODULE__{context: context} = data_layer_query
@@ -651,9 +658,18 @@ defmodule AshScylla.DataLayer do
 
           {query, params} ->
             case repo.query(query, where_params ++ params, opts) do
-              {:ok, %{rows: [[count]]}} ->
-                count = if is_integer(count), do: count, else: String.to_integer(to_string(count))
+              {:ok, %Xandra.Page{content: [[count]]}} when is_integer(count) ->
                 {:cont, Map.put(acc, aggregate.name, count)}
+
+              {:ok, %Xandra.Page{content: [[count]]}} ->
+                count = String.to_integer(to_string(count))
+                {:cont, Map.put(acc, aggregate.name, count)}
+
+              {:ok, %Xandra.Page{content: []}} ->
+                {:cont, Map.put(acc, aggregate.name, 0)}
+
+              {:ok, %Xandra.Page{content: nil}} ->
+                {:cont, Map.put(acc, aggregate.name, 0)}
 
               {:error, reason} ->
                 {:halt, {:error, reason}}
@@ -787,11 +803,11 @@ defmodule AshScylla.DataLayer do
     Logger.debug("Executing UPSERT: #{query} with params #{inspect(values)}")
 
     case repo.query(query, values, opts) do
-      {:ok, %{rows: [[true]]}} ->
+      {:ok, %Xandra.Page{content: [[true]]}} ->
         # LWT succeeded — fetch the record
         {:ok, to_ash_record(attrs, resource)}
 
-      {:ok, %{rows: [[false]]}} ->
+      {:ok, %Xandra.Page{content: [[false]]}} ->
         # LWT conflict — record already exists, do an update instead
         do_update(attrs, changeset, resource, repo)
 
@@ -922,7 +938,7 @@ defmodule AshScylla.DataLayer do
 
                 @repo MyApp.Repo
 
-            The repo must be an Ecto.Repo using the Exandra adapter.
+            The repo must use AshScylla.Repo.
             """
 
           repo ->
@@ -960,10 +976,21 @@ defmodule AshScylla.DataLayer do
   @spec autogenerate_value(map()) :: term()
   defp autogenerate_value(attr) do
     case attr.type do
-      UUID -> Ecto.UUID.generate()
+      UUID -> generate_uuid()
       Ash.Type.Integer -> nil
       _ -> nil
     end
+  end
+
+  @spec generate_uuid() :: String.t()
+  defp generate_uuid do
+    <<a::32, b::16, c::16, d::16, e::48>> = :crypto.strong_rand_bytes(16)
+
+    "#{format_hex(a, 8)}-#{format_hex(b, 4)}-#{format_hex(c, 4)}-#{format_hex(d, 4)}-#{format_hex(e, 12)}"
+  end
+
+  defp format_hex(value, len) do
+    value |> Integer.to_string(16) |> String.pad_leading(len, "0")
   end
 
   @spec autogenerate_attribute?(map()) :: boolean()
@@ -1118,8 +1145,20 @@ defmodule AshScylla.DataLayer do
     Logger.debug("Executing SELECT: #{query} with params #{inspect(pk_values)}")
 
     case repo.query(query, pk_values) do
-      {:ok, %{rows: [row | _]}} ->
+      {:ok, %Xandra.Page{content: [row | _]}} ->
         {:ok, row}
+
+      {:ok, %Xandra.Page{content: []}} ->
+        {:error,
+         AshScylla.Error.ScyllaError.from_error(
+           "Record not found in table #{sanitized_table} with primary key #{inspect(pk)}"
+         )}
+
+      {:ok, %Xandra.Page{content: nil}} ->
+        {:error,
+         AshScylla.Error.ScyllaError.from_error(
+           "Record not found in table #{sanitized_table} with primary key #{inspect(pk)}"
+         )}
 
       {:error, error} ->
         handle_scylla_result({:error, error})
@@ -1150,31 +1189,20 @@ defmodule AshScylla.DataLayer do
     struct(resource, attrs)
   end
 
-  # Build repo query options from resource configuration (keyspace, TTL, consistency).
+  # Build repo query options from resource configuration (consistency only).
+  # Keyspace is handled at connection level; TTL is inline in CQL.
   @spec build_opts(module()) :: keyword()
   defp build_opts(resource) do
-    keyspace = Dsl.keyspace(resource)
-    ttl = Dsl.ttl(resource)
     consistency = Dsl.consistency(resource)
-
-    []
-    |> maybe_put(:prefix, sanitize_keyspace(keyspace))
-    |> maybe_put(:ttl, ttl)
-    |> maybe_put(:consistency, consistency)
+    if consistency, do: [consistency: consistency], else: []
   end
 
-  # Build query options for read operations, including per-action consistency.
+  # Build query options for read operations (consistency only).
+  # Keyspace is handled at connection level.
   @spec build_query_opts(module(), String.t() | nil) :: keyword()
-  defp build_query_opts(resource, tenant) do
-    keyspace = Dsl.keyspace(resource)
+  defp build_query_opts(resource, _tenant) do
     consistency = Dsl.consistency(resource)
-
-    # Use tenant as prefix if set (for multitenancy), otherwise use keyspace
-    prefix = if tenant, do: tenant, else: keyspace
-
-    []
-    |> maybe_put(:prefix, sanitize_keyspace(prefix))
-    |> maybe_put(:consistency, consistency)
+    if consistency, do: [consistency: consistency], else: []
   end
 
   @spec sanitize_keyspace(String.t() | nil) :: String.t() | nil

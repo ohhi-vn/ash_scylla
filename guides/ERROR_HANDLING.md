@@ -230,7 +230,7 @@ IO.puts(formatted)
 ```
 
 **Solution:**
-- Run migrations: `mix ecto.migrate`
+- Run migrations: `AshScylla.Migrator.run!(MyApp.Repo.nodes(), ["CREATE TABLE IF NOT EXISTS ..."])`
 - Verify table name in resource configuration
 - Check keyspace configuration
 
@@ -265,7 +265,29 @@ IO.puts(formatted)
 - Optimize slow queries
 - Use pagination for large result sets
 
-### 6. Consistency Level Not Met
+### 6. Record Not Found
+
+When `fetch_by_primary_key` returns an empty result set (no matching record), AshScylla now returns a structured `ScyllaError` instead of crashing:
+
+```elixir
+{:error, %AshScylla.Error.ScyllaError{
+  type: :query_error,
+  message: "Record not found in table users with primary key %{id: \"uuid\"}"
+}}
+```
+
+This prevents `MatchError` crashes when a record is deleted between the insert and fetch operations.
+
+### 7. Aggregate Query Empty Results
+
+When `run_aggregate_query` returns an empty result set from ScyllaDB, it now gracefully returns `0` for the count instead of crashing with a `MatchError`:
+
+```elixir
+# Empty result from COUNT query returns 0
+{:ok, %{total: 0}} = DataLayer.run_aggregate_query(query, [%{kind: :count, name: :total}], resource)
+```
+
+### 8. Consistency Level Not Met
 
 ```elixir
 %AshScylla.Error.ScyllaError{

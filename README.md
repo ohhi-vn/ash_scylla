@@ -1,3 +1,6 @@
+
+[![Hex.pm](https://img.shields.io/hexpm/v/ash_scylla.svg)](https://hex.pm/packages/ash_scylla)
+
 > **Note:** This library is under active development and the API may change.
 
 # AshScylla
@@ -18,7 +21,7 @@
 
 ## Overview
 
-AshScylla enables you to use **ScyllaDB** or **Apache Cassandra** as a persistence layer for your [Ash Framework](https://ash-hq.org/) resources. It implements the `Ash.DataLayer` behaviour using [Exandra](https://github.com/lexhide/exandra) (an Ecto adapter for ScyllaDB/Cassandra) to communicate via CQL (Cassandra Query Language).
+AshScylla enables you to use **ScyllaDB** or **Apache Cassandra** as a persistence layer for your [Ash Framework](https://ash-hq.org/) resources. It implements the `Ash.DataLayer` behaviour using [Xandra](https://github.com/whatyouhide/xandra) (a native Elixir CQL driver) to communicate via CQL (Cassandra Query Language).
 
 ### Key Benefits
 
@@ -44,7 +47,7 @@ Add `ash_scylla` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ash_scylla, "~> 0.2.0"}
+    {:ash_scylla, "~> 0.6.0"}
   ]
 end
 ```
@@ -56,9 +59,8 @@ end
 ```elixir
 # lib/my_app/repo.ex
 defmodule MyApp.Repo do
-  use Ecto.Repo,
-    otp_app: :my_app,
-    adapter: Exandra
+  use AshScylla.Repo,
+    otp_app: :my_app
 end
 ```
 
@@ -71,7 +73,17 @@ config :my_app, MyApp.Repo,
   pool_size: 10
 ```
 
-**3. Generate a Resource:**
+**3. Add the Repo to your supervision tree:**
+
+```elixir
+# lib/my_app/application.ex
+children = [
+  MyApp.Repo,
+  # ...
+]
+```
+
+**4. Generate a Resource:**
 
 ```bash
 mix ash_scylla.gen User name:string, email:string
@@ -98,7 +110,7 @@ defmodule MyApp.User do
 end
 ```
 
-**4. Create a Domain:**
+**5. Create a Domain:**
 
 ```elixir
 # lib/my_app/domain.ex
@@ -111,7 +123,7 @@ defmodule MyApp.Domain do
 end
 ```
 
-**5. Create Keyspace and Tables:**
+**6. Create Keyspace and Tables:**
 
 ```elixir
 # Create keyspace (using the mix task)
@@ -120,11 +132,14 @@ mix ash_scylla.setup
 # Or programmatically
 MyApp.Repo.create_keyspace()
 
-# Run migrations (if using Ecto migrations)
-mix ecto.migrate
+# Run migrations
+AshScylla.Migrator.run!(MyApp.Repo.nodes(), [
+  AshScylla.Migration.create_table_cql(MyApp.User),
+  "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)"
+])
 ```
 
-**6. Start Using It:**
+**7. Start Using It:**
 
 ```elixir
 # Create
@@ -353,7 +368,6 @@ config :my_app, MyApp.Repo,
   nodes: ["scylla-1:9042", "scylla-2:9042"],  # Cluster nodes
   keyspace: "my_app_prod",
   pool_size: 50,                                # Connections per node
-  pool_timeout: 15_000,
   request_timeout: 300_000,                     # Query timeout (ms)
   connect_timeout: 10_000
 ```
@@ -364,13 +378,6 @@ config :my_app, MyApp.Repo,
 
 ScyllaDB works best with a connections-per-shard approach:
 `pool_size = num_nodes * num_cores_per_node`
-
-Use the built-in helper to calculate the recommended pool size:
-
-```elixir
-config :my_app, MyApp.Repo,
-  pool_size: MyApp.Repo.recommended_pool_size()
-```
 
 ---
 
@@ -460,13 +467,13 @@ For detailed documentation, see:
 Run the test suite:
 
 ```bash
-# All tests (unit + integration; requires Docker for testcontainers)
+# All tests (unit + integration; requires Podman/Docker for testcontainers)
 mix test
 
 # Unit tests only (no ScyllaDB required)
 mix test --exclude integration
 
-# Integration tests only (requires Docker)
+# Integration tests only (requires Podman/Docker)
 mix test test/scylla_integration_test.exs --only integration
 
 # CI pipeline (unit tests + credo)
@@ -478,16 +485,17 @@ mix test.ci
 | File | Description |
 |------|-------------|
 | `test/ash_scylla_test.exs` | Core DataLayer and DSL unit tests |
+| `test/data_layer_crud_test.exs` | CRUD operations with FakeRepo (create, update, destroy, upsert, bulk_create, run_query, aggregates) |
+| `test/data_layer_callbacks_test.exs` | DataLayer callbacks (transform_query, set_tenant, set_context, filter, sort, limit, offset, select, lock, combination_of, calculate, add_aggregate, add_aggregates, distinct) |
+| `test/data_layer_pipeline_test.exs` | Full pipeline DSL → DataLayer → QueryBuilder → CQL generation and execution |
+| `test/data_layer_comprehensive_test.exs` | Comprehensive gap coverage: run_query edge cases, filter OR rewriting, sort edge cases, bulk_create scenarios, source/repo edge cases, upsert delegation, aggregates, distinct, calculate, handle_scylla_result, sanitize_identifier, struct defaults, exhaustive can?/2 |
 | `test/edge_cases_test.exs` | Edge cases for QueryBuilder, Batch, Pagination, MaterializedView, Migration |
 | `test/error_edge_cases_test.exs` | Comprehensive error handling edge cases |
-| `test/ash_scylla/error_test.exs` | Error wrapping, retry logic, and formatting tests |
-| `test/ash_scylla/dsl_repo_migration_test.exs` | DSL configuration, Repo, and Migration tests |
-| `test/ash_scylla/query_builder_test.exs` | QueryBuilder and Pagination unit tests |
-| `test/ash_scylla/batch_materialized_view_test.exs` | Batch operations and MaterializedView tests |
+| `test/dsl_resource_test.exs` | DSL compilation, public API, secondary_index parsing, materialized_view |
 | `test/integration_test.exs` | Integration test placeholder |
 | `test/scylla_integration_test.exs` | Full integration tests with testcontainers |
 
-Integration tests use [testcontainers](https://github.com/testcontainers/testcontainers-elixir) to spin up a ScyllaDB instance automatically.
+Integration tests use [testcontainer_ex](https://github.com/manhvu/testcontainers-elixir) to spin up a ScyllaDB instance automatically via Podman or Docker.
 
 ---
 
@@ -510,10 +518,16 @@ Contributions are welcome! Here's how to get started:
 # Install dependencies
 mix deps.get
 
-# Start ScyllaDB via Docker Compose (includes health checks)
+# Start ScyllaDB via Podman Compose (includes health checks)
+podman-compose up -d
+
+# Or via Docker Compose
 docker compose up -d
 
-# Or start ScyllaDB manually
+# Or start ScyllaDB manually with Podman
+podman run -p 9042:9042 scylladb/scylla:latest
+
+# Or with Docker
 docker run -p 9042:9042 scylladb/scylla:latest
 
 # Run tests
@@ -523,7 +537,7 @@ mix test
 ### Dev Container
 
 A `.devcontainer/devcontainer.json` is provided for VS Code Dev Containers.
-It brings up both Elixir and ScyllaDB together via Docker Compose.
+It brings up both Elixir and ScyllaDB together via Podman Compose or Docker Compose.
 
 ---
 
@@ -536,7 +550,7 @@ This project is licensed under the **Apache License 2.0** - see the [LICENSE](LI
 ## Acknowledgments
 
 - [Ash Framework](https://ash-hq.org/) - The Elixir framework this data layer integrates with
-- [Exandra](https://github.com/lexhide/exandra) - Ecto adapter for ScyllaDB/Cassandra
+- [Xandra](https://github.com/whatyouhide/xandra) - Native Elixir CQL driver for ScyllaDB/Cassandra
 - [ScyllaDB](https://www.scylladb.com/) - High-performance NoSQL database
 
 ---

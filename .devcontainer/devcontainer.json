@@ -5,9 +5,7 @@
   "workspaceFolder": "/workspace",
   "customizations": {
     "vscode": {
-      "extensions": [
-        "jakebecker.elixir-ls"
-      ]
+      "extensions": ["jakebecker.elixir-ls"]
     }
   }
 }

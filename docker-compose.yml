@@ -27,3 +27,11 @@ services:
 
 volumes:
   scylla_data:
+
+# Usage with Podman Compose:
+#   podman-compose up -d
+#   podman-compose down
+#
+# Usage with Docker Compose:
+#   docker compose up -d
+#   docker compose down

@@ -6,21 +6,29 @@ This is a simple example application demonstrating how to use AshScylla with Scy
 
 - Elixir 1.19 or later
 - ScyllaDB running on localhost:9042 (or update the config)
-- Docker (optional, for running ScyllaDB)
+- Podman or Docker (optional, for running ScyllaDB)
 
-## Quick Start with Docker
+## Quick Start with Podman
 
-If you don't have ScyllaDB installed, you can run it with Docker:
+If you don't have ScyllaDB installed, you can run it with Podman:
 
 ```bash
-docker run --name scylla -p 9042:9042 -d scylladb/scylla:latest
+podman run --name scylla -p 9042:9042 -d scylladb/scylla:latest
 ```
 
-Or use the docker-compose file from the main project:
+Or use the docker-compose file from the main project with Podman Compose:
 
 ```bash
 cd ../..
-docker-compose up -d
+podman-compose up -d
+```
+
+Or with Docker / Docker Compose:
+
+```bash
+docker run --name scylla -p 9042:9042 -d scylladb/scylla:latest
+cd ../..
+docker compose up -d
 ```
 
 ## Setup
@@ -187,9 +195,9 @@ iex -S mix
 # Get published posts only
 {:ok, published} = BasicApp.Resources.Post.published("published")
 
-# Filter posts
+# Filter posts by author
 {:ok, posts} = BasicApp.Resources.Post
-  |> Ash.Query.filter(author_id == user.id and has_tag?(tags, "elixir"))
+  |> Ash.Query.filter(author_id == user.id)
   |> Ash.read()
 
 # Increment view count

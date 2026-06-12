@@ -22,31 +22,31 @@ defmodule AshScylla.DataLayer.CrudTest do
       case query do
         # --- inserts ---
         "INSERT INTO crud_items" <> _ ->
-          {:ok, %{rows: []}}
+          {:ok, %Xandra.Page{content: []}}
 
         "INSERT INTO lwt_items" <> _ ->
-          {:ok, %{rows: [[false]]}}
+          {:ok, %Xandra.Page{content: [[false]]}}
 
         "INSERT INTO lwt_success_items" <> _ ->
-          {:ok, %{rows: [[true]]}}
+          {:ok, %Xandra.Page{content: [[true]]}}
 
         # --- batch ---
         "BEGIN BATCH" <> _ ->
-          {:ok, :completed}
+          {:ok, %Xandra.Void{}}
 
         # --- updates ---
         "UPDATE crud_items SET" <> _ ->
-          {:ok, %{rows: []}}
+          {:ok, %Xandra.Page{content: []}}
 
         "UPDATE lwt_items SET" <> _ ->
-          {:ok, %{rows: []}}
+          {:ok, %Xandra.Page{content: []}}
 
         # --- deletes ---
         "DELETE FROM crud_items WHERE id = ?" ->
-          {:ok, %{rows: []}}
+          {:ok, %Xandra.Page{content: []}}
 
         "DELETE FROM crud_items WHERE status = ?" ->
-          {:ok, %{rows: []}}
+          {:ok, %Xandra.Page{content: []}}
 
         # --- selects ---
         "SELECT * FROM crud_items WHERE id = ? LIMIT 1" ->
@@ -55,18 +55,18 @@ defmodule AshScylla.DataLayer.CrudTest do
           if id == "bad-fetch" do
             {:error, %Xandra.ConnectionError{reason: :timeout, action: nil}}
           else
-            {:ok, %{rows: [%{id: id, name: "Ada", status: "active", age: 42}]}}
+            {:ok, %Xandra.Page{content: [%{id: id, name: "Ada", status: "active", age: 42}]}}
           end
 
         "SELECT * FROM lwt_items WHERE id = ? LIMIT 1" ->
           [id] = params
-          {:ok, %{rows: [%{id: id, name: "Grace", status: "inactive"}]}}
+          {:ok, %Xandra.Page{content: [%{id: id, name: "Grace", status: "inactive"}]}}
 
         "SELECT * FROM crud_items WHERE status = ? LIMIT ?" ->
-          {:ok, %{rows: [%{id: "row-1", name: "Ada", status: "active", age: 42}]}}
+          {:ok, %Xandra.Page{content: [%{id: "row-1", name: "Ada", status: "active", age: 42}]}}
 
         "SELECT COUNT(*) FROM crud_items" <> _ ->
-          {:ok, %{rows: [[2]]}}
+          {:ok, %Xandra.Page{content: [[2]]}}
 
         # --- fallback ---
         _ ->
@@ -126,6 +126,8 @@ defmodule AshScylla.DataLayer.CrudTest do
     ash_scylla do
       repo(FakeRepo)
       table("lwt_items")
+      keyspace("test_ks")
+      consistency(:one)
       ttl(120)
       lwt(true)
     end
@@ -153,6 +155,8 @@ defmodule AshScylla.DataLayer.CrudTest do
     ash_scylla do
       repo(FakeRepo)
       table("lwt_success_items")
+      keyspace("test_ks")
+      consistency(:one)
       ttl(120)
       lwt(true)
     end
@@ -219,7 +223,6 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert_receive {:ash_scylla_query, insert_query, insert_params, opts}
       assert insert_query =~ "INSERT INTO crud_items"
       assert insert_query =~ "USING TTL 60"
-      assert opts[:prefix] == "test_ks"
       assert opts[:consistency] == :one
       assert Enum.sort(insert_params) == Enum.sort([record_id, "Ada", 42, "active"])
 
@@ -245,7 +248,7 @@ defmodule AshScylla.DataLayer.CrudTest do
 
   describe "update/2" do
     test "updates by primary key and fetches the updated record" do
-      id = Ecto.UUID.generate()
+      id = generate_uuid()
       changeset = changeset(%{id: id, name: "Grace"})
 
       assert {:ok, record} = DataLayer.update(Resource, changeset)
@@ -256,7 +259,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert_receive {:ash_scylla_query, update_query, update_params, opts}
       assert update_query =~ "UPDATE crud_items SET"
       assert update_query =~ "WHERE id = ?"
-      assert opts[:ttl] == 60
+      assert opts[:consistency] == :one
 
       assert_receive {:ash_scylla_query, "SELECT * FROM crud_items WHERE id = ? LIMIT 1", [^id],
                       []}
@@ -269,7 +272,7 @@ defmodule AshScylla.DataLayer.CrudTest do
 
   describe "destroy/2" do
     test "deletes by primary key" do
-      id = Ecto.UUID.generate()
+      id = generate_uuid()
 
       assert DataLayer.destroy(Resource, changeset(%{id: id})) == :ok
 
@@ -285,7 +288,7 @@ defmodule AshScylla.DataLayer.CrudTest do
 
   describe "upsert/3" do
     test "performs a non-LWT upsert with TTL" do
-      id = Ecto.UUID.generate()
+      id = generate_uuid()
 
       assert {:ok, record} = DataLayer.upsert(Resource, changeset(%{id: id, name: "Upsert"}))
       assert record.name == "Upsert"
@@ -294,11 +297,11 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert upsert_query =~ "INSERT INTO crud_items"
       assert upsert_query =~ "USING TTL 60"
       refute upsert_query =~ "IF NOT EXISTS"
-      assert opts[:ttl] == 60
+      assert opts[:consistency] == :one
     end
 
     test "falls back to update when LWT insert reports a conflict" do
-      id = Ecto.UUID.generate()
+      id = generate_uuid()
 
       assert {:ok, record} = DataLayer.upsert(LwtResource, changeset(%{id: id, name: "Grace"}))
       assert record.name == "Grace"
@@ -307,7 +310,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert_receive {:ash_scylla_query, upsert_query, [^id, "Grace"], opts}
       assert upsert_query =~ "INSERT INTO lwt_items"
       assert upsert_query =~ "IF NOT EXISTS"
-      assert opts[:ttl] == 120
+      assert opts[:consistency] == :one
 
       assert_receive {:ash_scylla_query, update_query, _update_params, _opts}
       assert update_query =~ "UPDATE lwt_items SET"
@@ -318,7 +321,7 @@ defmodule AshScylla.DataLayer.CrudTest do
     end
 
     test "returns the record when LWT insert succeeds" do
-      id = Ecto.UUID.generate()
+      id = generate_uuid()
 
       assert {:ok, record} =
                DataLayer.upsert(LwtSuccessResource, changeset(%{id: id, name: "LWT"}))
@@ -328,7 +331,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert_receive {:ash_scylla_query, upsert_query, [^id, "LWT"], opts}
       assert upsert_query =~ "INSERT INTO lwt_success_items"
       assert upsert_query =~ "IF NOT EXISTS"
-      assert opts[:ttl] == 120
+      assert opts[:consistency] == :one
     end
   end
 
@@ -338,8 +341,8 @@ defmodule AshScylla.DataLayer.CrudTest do
 
   describe "bulk_create/3" do
     test "builds a batch insert and returns records from changeset attributes" do
-      id1 = Ecto.UUID.generate()
-      id2 = Ecto.UUID.generate()
+      id1 = generate_uuid()
+      id2 = generate_uuid()
 
       changesets = [
         changeset(%{id: id1, name: "Ada", status: "active"}),
@@ -353,8 +356,6 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert batch_query =~ "BEGIN BATCH"
       assert batch_query =~ "INSERT INTO crud_items"
       assert batch_query =~ "APPLY BATCH"
-      # batch_insert passes prefix/consistency but NOT ttl (TTL is per-statement)
-      assert opts[:prefix] == "test_ks"
       assert opts[:consistency] == :one
 
       assert Enum.sort(batch_params) ==
@@ -385,7 +386,6 @@ defmodule AshScylla.DataLayer.CrudTest do
 
       assert_receive {:ash_scylla_query, select_query, ["active", 10], opts}
       assert select_query == "SELECT * FROM crud_items WHERE status = ? LIMIT ?"
-      assert opts[:prefix] == "test_ks"
       assert opts[:consistency] == :one
     end
 
@@ -447,7 +447,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert record.name == "Ada"
 
       assert_receive {:ash_scylla_query, _update_query, _update_params, opts}
-      assert opts[:ttl] == 60
+      assert opts[:consistency] == :one
 
       # update_query re-runs the original query (with original filters) to fetch results
       assert_receive {:ash_scylla_query, select_query, ["active", 10], _opts}
@@ -508,5 +508,17 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert {:ok, query} = DataLayer.distinct(base_query(), [:id], Resource)
       assert query.select == [:id]
     end
+  end
+
+  # ── Helpers ────────────────────────────────────────────────────────────────
+
+  defp generate_uuid do
+    <<a::32, b::16, c::16, d::16, e::48>> = :crypto.strong_rand_bytes(16)
+
+    "#{format_hex(a, 8)}-#{format_hex(b, 4)}-#{format_hex(c, 4)}-#{format_hex(d, 4)}-#{format_hex(e, 12)}"
+  end
+
+  defp format_hex(value, len) do
+    value |> Integer.to_string(16) |> String.pad_leading(len, "0")
   end
 end

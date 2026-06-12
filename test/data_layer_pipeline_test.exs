@@ -4,9 +4,9 @@ defmodule AshScylla.DataLayer.PipelineTest do
 
   Tests the complete flow from resource configuration through to actual database
   operations, verifying that the DataLayer correctly bridges Ash resources and
-  ScyllaDB via Exandra.
+  ScyllaDB via Xandra.
 
-  Uses testcontainer_ex 0.4 ScyllaContainer for container lifecycle management.
+  Uses testcontainer_ex 0.5 ScyllaContainer for container lifecycle management.
   """
 
   use ExUnit.Case, async: false
@@ -14,19 +14,66 @@ defmodule AshScylla.DataLayer.PipelineTest do
   alias AshScylla.DataLayer
   alias AshScylla.DataLayer.QueryBuilder
   alias AshScylla.TestRepo
-  alias TestcontainerEx.ScyllaContainer
+  alias AshScylla.ScyllaContainer
 
   @moduletag :integration
 
   # ── Container config ────────────────────────────────────────────────────────
 
   @scylla_container_config ScyllaContainer.new()
-                           |> ScyllaContainer.with_image("scylladb/scylla:latest")
-                           |> ScyllaContainer.with_wait_timeout(180_000)
+                           |> ScyllaContainer.with_image("scylladb/scylla:5.4")
+                           |> ScyllaContainer.with_cmd([
+                             "--smp",
+                             "1",
+                             "--memory",
+                             "1G",
+                             "--developer-mode",
+                             "1"
+                           ])
+                           |> ScyllaContainer.with_wait_timeout(300_000)
 
   # ── Shared helpers ──────────────────────────────────────────────────────────
 
-  defp uid, do: Ecto.UUID.generate()
+  defp connect_with_retry(host, port, retries \\ 30) do
+    case Xandra.start_link(nodes: ["#{host}:#{port}"], connect_timeout: 10_000) do
+      {:ok, conn} ->
+        case wait_for_cql(conn, 5) do
+          :ok ->
+            conn
+
+          {:error, _} when retries > 0 ->
+            Xandra.stop(conn)
+            Process.sleep(2_000)
+            connect_with_retry(host, port, retries - 1)
+
+          {:error, reason} ->
+            raise "ScyllaDB not ready: #{inspect(reason)}"
+        end
+
+      {:error, _} when retries > 0 ->
+        Process.sleep(2_000)
+        connect_with_retry(host, port, retries - 1)
+
+      {:error, reason} ->
+        raise "Failed to connect to ScyllaDB: #{inspect(reason)}"
+    end
+  end
+
+  defp wait_for_cql(conn, retries \\ 30) do
+    case Xandra.execute(conn, "SELECT now() FROM system.local") do
+      {:ok, _} ->
+        :ok
+
+      {:error, _} when retries > 0 ->
+        Process.sleep(1_000)
+        wait_for_cql(conn, retries - 1)
+
+      {:error, reason} ->
+        raise "ScyllaDB not ready after 30s: #{inspect(reason)}"
+    end
+  end
+
+  defp uid, do: generate_uuid()
 
   defp xq(conn, query, params \\ []) do
     encoded = Enum.map(params, &encode_param/1)
@@ -52,18 +99,30 @@ defmodule AshScylla.DataLayer.PipelineTest do
     end
   end
 
-  defp encode_param(value) when is_binary(value) do
-    case Ecto.UUID.cast(value) do
-      {:ok, _} -> {"uuid", value}
-      :error -> {"text", value}
-    end
-  end
-
   defp encode_param(value) when is_integer(value), do: {"int", value}
   defp encode_param(value) when is_float(value), do: {"double", value}
   defp encode_param(value) when is_boolean(value), do: {"boolean", value}
   defp encode_param(nil), do: {"null", nil}
+
+  defp encode_param(value) when is_binary(value) do
+    if uuid?(value), do: {"uuid", value}, else: {"text", value}
+  end
+
   defp encode_param(value), do: {"text", to_string(value)}
+
+  defp uuid?(value) when is_binary(value) do
+    Regex.match?(~r/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, value)
+  end
+
+  defp generate_uuid do
+    <<a::32, b::16, c::16, d::16, e::48>> = :crypto.strong_rand_bytes(16)
+
+    "#{format_hex(a, 8)}-#{format_hex(b, 4)}-#{format_hex(c, 4)}-#{format_hex(d, 4)}-#{format_hex(e, 12)}"
+  end
+
+  defp format_hex(value, len) do
+    value |> Integer.to_string(16) |> String.pad_leading(len, "0")
+  end
 
   defp rows_to_maps(%{rows: rows, columns: cols}) do
     col_names = Enum.map(cols, fn {_, _, name, _} -> to_string(name) end)
@@ -82,7 +141,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
       {:ok, scylla_container} ->
         port = ScyllaContainer.port(scylla_container)
         host = TestcontainerEx.get_host(scylla_container)
-        {:ok, conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
+        conn = connect_with_retry(host, port)
 
         # Create keyspace and tables if they don't exist
         Xandra.execute!(
@@ -114,7 +173,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
 
       {:error, reason} ->
         IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
-        raise ExUnit.Skip, "Docker/Podman not available"
+        {:skip, "Docker/Podman not available"}
     end
   end
 

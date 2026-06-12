@@ -22,7 +22,6 @@ defmodule AshScylla.DslRepoMigrationTest do
     end
 
     test "returns nil for a resource without ash_scylla config" do
-      # A plain module that doesn't use the ash_scylla DSL
       assert Dsl.table(String) == nil
     end
   end
@@ -132,6 +131,43 @@ defmodule AshScylla.DslRepoMigrationTest do
   end
 
   # ============================================================================
+  # Ash 3.0+ Resource Introspection Tests
+  # ============================================================================
+
+  describe "Ash.Resource.Info introspection" do
+    test "TestResource has domain configured" do
+      assert Ash.Resource.Info.domain(AshScylla.TestResource) == AshScylla.TestDomain
+    end
+
+    test "TestResource has primary key" do
+      pk = Ash.Resource.Info.primary_key(AshScylla.TestResource)
+      assert :id in pk
+    end
+
+    test "TestResource has attributes" do
+      attrs = Ash.Resource.Info.attributes(AshScylla.TestResource)
+      names = Enum.map(attrs, & &1.name)
+      assert :id in names
+      assert :name in names
+      assert :email in names
+      assert :age in names
+      assert :created_at in names
+      assert :updated_at in names
+    end
+
+    test "TestResource has code interface" do
+      interfaces = Ash.Resource.Info.interfaces(AshScylla.TestResource)
+      names = Enum.map(interfaces, & &1.name)
+      assert :create in names
+      assert :read in names
+    end
+
+    test "TestResourceWithIndexes has domain configured" do
+      assert Ash.Resource.Info.domain(AshScylla.TestResourceWithIndexes) == AshScylla.TestDomain
+    end
+  end
+
+  # ============================================================================
   # Repo Tests
   # ============================================================================
 
@@ -144,8 +180,6 @@ defmodule AshScylla.DslRepoMigrationTest do
       assert {:__using__, 1} in AshScylla.Repo.__info__(:macros)
     end
   end
-
-  # Repo inline module test must be async: false because it defines a module at runtime
 end
 
 defmodule AshScylla.DslRepoMigrationRepoInlineTest do
@@ -247,8 +281,18 @@ defmodule AshScylla.DslRepoMigrationContinuedTest do
       end)
     end
 
+    test "returns indexes for TestResource" do
+      result = Migration.create_secondary_indexes_cql(AshScylla.TestResource)
+      assert length(result) == 2
+      assert Enum.any?(result, &String.contains?(&1, "idx_test_resource_email"))
+      assert Enum.any?(result, &String.contains?(&1, "idx_test_resource_name"))
+    end
+
     test "returns [] for a resource with no indexes" do
-      assert Migration.create_secondary_indexes_cql(AshScylla.TestResource) == []
+      defmodule NoIndexResource do
+      end
+
+      assert Migration.create_secondary_indexes_cql(NoIndexResource) == []
     end
 
     test "generates auto-index names for indexes without custom name" do
@@ -330,7 +374,7 @@ defmodule AshScylla.DslRepoMigrationContinuedTest do
 
     test "creates a UDT with udt field" do
       result = Migration.create_type("my_type", do: [address: {:udt, type_name: "address"}])
-      assert result =~ "address address"
+      assert result =~ "address frozen<address>"
     end
 
     test "creates a UDT with udt field defaulting to frozen<undefined>" do

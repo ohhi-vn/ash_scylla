@@ -14,7 +14,7 @@
 
 defmodule AshScylla do
   @moduledoc """
-  AshScylla is a data layer for Ash Framework that uses ScyllaDB (via Exandra).
+  AshScylla is a data layer for Ash Framework that uses ScyllaDB (via Xandra).
 
   ## Usage
 
@@ -31,12 +31,11 @@ defmodule AshScylla do
         end
       end
 
-  Configure your repo to use Exandra adapter:
+  Configure your repo to use AshScylla:
 
       defmodule MyApp.Repo do
-        use Ecto.Repo,
-          otp_app: :my_app,
-          adapter: Exandra
+        use AshScylla.Repo,
+          otp_app: :my_app
       end
 
   Then configure your resource to use the repo:
@@ -54,5 +53,41 @@ defmodule AshScylla do
   def version do
     {:ok, version} = :application.get_key(:ash_scylla, :vsn)
     to_string(version)
+  end
+
+  @doc """
+  Runs migrations for all AshScylla resources against the given repo.
+
+  This is a convenience function for use in release tasks or scripts.
+
+  ## Options
+
+  - `:resources` - List of specific resource modules to migrate (default: auto-discover)
+  - `:dry_run` - If true, only log statements without executing
+  - `:create_keyspace` - Create the keyspace before migrating
+
+  ## Examples
+
+      AshScylla.migrate(MyApp.Repo)
+
+      AshScylla.migrate(MyApp.Repo, resources: [MyApp.User])
+
+      AshScylla.migrate(MyApp.Repo, dry_run: true)
+  """
+  @spec migrate(module(), keyword()) :: :ok | {:error, term()}
+  def migrate(repo, opts \\ []) do
+    AshScylla.Release.migrate(repo, [repo], opts)
+  end
+
+  @doc """
+  Creates the keyspace for a repo if it doesn't exist.
+
+  ## Examples
+
+      AshScylla.create_keyspace(MyApp.Repo)
+  """
+  @spec create_keyspace(module()) :: :ok | {:error, term()}
+  def create_keyspace(repo) do
+    AshScylla.Release.create_keyspace(repo)
   end
 end

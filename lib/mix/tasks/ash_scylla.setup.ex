@@ -3,7 +3,7 @@ defmodule Mix.Tasks.AshScylla.Setup do
   Sets up the ScyllaDB keyspace for AshScylla.
 
   This task creates the keyspace configured in your repo if it doesn't exist.
-  It follows the `mix ecto.create` / `mix ash_postgres.create` pattern.
+  It follows the `mix ash_scylla.setup` pattern.
 
   ## Usage
 

@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Comprehensive test suite (`data_layer_comprehensive_test.exs`) covering 65+ test cases for gaps in existing coverage:
+  - `run_query/2` edge cases (empty results, multiple rows, select, distinct, keyset pagination, AND/OR filters, sort+limit, nil content)
+  - `filter/3` OR rewriting edge cases (triple OR, different columns, nested AND/OR, single filter)
+  - `sort/3` edge cases (empty list, multiple items, map format, tuple format)
+  - `bulk_create/3` scenarios (empty list, batch_size, return_records?, error handling, map opts)
+  - `source/1` edge cases (empty string table, @table attribute, caching)
+  - `repo/1` edge cases (@repo attribute, caching, resource without DSL)
+  - `upsert/4` delegation to `upsert/3`
+  - `run_aggregate_query/3` (multiple aggregates, COUNT(field), empty aggregates, WHERE clause)
+  - `distinct/3` (multiple PK columns, mixed PK/non-PK, empty list)
+  - `calculate/3` (multiple calculations, module without calculate/2)
+  - `handle_scylla_result/1` (all 6 error paths)
+  - `sanitize_identifier/1` (valid/invalid identifiers)
+  - `maybe_rewrite_or_to_in/1` (4-way OR, nested AND, single equality)
+  - DataLayer struct defaults verification
+  - Exhaustive `can?/2` feature testing (supported, unsupported, tuples, nil/string/integer)
+
+### Fixed
+- `run_aggregate_query/3`: Handle empty page content (`[]` and `nil`) gracefully by returning `0` instead of crashing with `MatchError`
+- `fetch_by_primary_key/3`: Return structured `ScyllaError` for empty results instead of crashing with `MatchError`
+- Updated README test structure documentation
+- Updated error handling guide with record-not-found and aggregate empty result scenarios
+
+## [0.6.0] - 2026-06-11
+
+### Changed
+- **BREAKING**: Migrated from Exandra/Ecto.Repo pattern to direct Xandra connections. `AshScylla.Repo` now wraps `AshScylla.Connection` (a GenServer around `Xandra.start_link/1`) instead of using Ecto.Repo.
+- `AshScylla.Connection` replaces the Exandra/Ecto.Repo pattern for direct Xandra connection management.
+- `AshScylla.Migrator` now uses `AshScylla.Connection` instead of Ecto SQL migrations.
+- Resource definitions now use `domain:` instead of `repo:` (Ash Framework best practice).
+- Relaxed Ash dependency from `~> 3.28` to `~> 3.0` for broader compatibility.
+
+### Added
+- `AshScylla.Connection` — direct Xandra connection wrapper with `query/4`, `query!/4`, `prepare/3`, `prepare!/3`, `stop/1`.
+- `AshScylla.Migrator.run_on/2` and `run_on!/2` — execute CQL on an existing named connection.
+- Prepared statement caching via `AshScylla.PreparedStatementCache`.
+- Telemetry integration via `AshScylla.Telemetry`.
+- Token-based pagination via `AshScylla.DataLayer.Pagination`.
+- Async partition-aware batch operations via `AshScylla.DataLayer.Batch.batch_insert_async/3`.
+
+### Fixed
+- All documentation and examples updated to reflect Xandra migration (no more Ecto.Repo, Ecto.Migration, or Exandra references in user-facing code).
+- Mock repos in tests now return proper `Xandra.Page` structs instead of plain maps.
+
+## [0.5.0] - 2026-06-11
+
+### Added
+- `@spec` annotations across all public and private API modules.
+- `dialyxir` for CI type checking.
+- Filter validation to prevent ALLOW FILTERING anti-pattern.
+- `AshScylla.ResourceGenerator` — `mix ash_scylla.gen` task for scaffolding resources.
+- Dev container support (.devcontainer).
+
+### Fixed
+- Integration tests can now be run with `mix test test/scylla_integration_test.exs --only integration`.
+- Removed unused `require Logger` from several modules.
+- Updated README feature/limitation tables for ScyllaDB accuracy.
+
 ## [0.4.0] - 2026-06-10
 
 ### Changed
@@ -18,15 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Clarified `AshScylla.Migration` docs — it generates raw CQL DDL strings, not Ecto SQL migrations.
 - Updated `IMPLEMENTATION_SUMMARY.md` dependency table to remove incorrect `reactor` and `testcontainers` entries, add missing dev deps.
 
-### Added
-- `@spec` annotations across all public and private API modules (DataLayer, QueryBuilder, Pagination, FilterValidator, Batch, MaterializedView, Migration, Error, ScyllaError, Repo, Telemetry, DSL).
-- `dialyxir` added to `[:dev, :test]` for CI type checking.
-- CI dialyzer step now fails on type errors (previously used `--ignore-exit-status || true`).
-
 ### Fixed
-- Integration tests can now be run with `mix test test/scylla_integration_test.exs --only integration` (previously excluded by global `ExUnit.configure`).
 - Removed unused `require Logger` from `FilterValidator`, `Dsl`, `Telemetry` and `require Xandra` from `DataLayer`.
-- Updated README feature/limitation tables for ScyllaDB accuracy (sort, offset, filter constraints).
 - Updated test assertions to match new `can?/2` behavior and current version `0.4.0`.
 
 ## [0.3.0] - 2026-06-09
@@ -36,14 +88,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Token-based pagination support via `AshScylla.DataLayer.Pagination`
 - Prepared statement caching via `AshScylla.PreparedStatementCache` (GenServer + ETS)
 - Telemetry integration via `AshScylla.Telemetry` with query/batch span events
-- Filter validation to prevent ALLOW FILTERING anti-pattern
 - `AshScylla.Error.ScyllaError` structured error types with suggestions
 - Retry logic with error-type-specific delays
 - `AshScylla.Repo` helper module with `create_keyspace/1`, `drop_keyspace/1`, `recommended_pool_size/0`
 - `AshScylla.Migration` helpers for CQL generation from Ash resources
 - Materialized view support with CQL generation
 - Async partition-aware batch operations via `batch_insert_async/4`
-- Dev container support (.devcontainer)
 - Testcontainer-based integration tests
 
 ## [0.2.0] - 2025-01-01
@@ -63,13 +113,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Initial release
-- Ash.DataLayer behaviour implementation for ScyllaDB via Exandra
+- Ash.DataLayer behaviour implementation for ScyllaDB via Xandra
 - CRUD operations (create, read, update, destroy)
 - Filter, sort, limit, offset, select support
 - Multitenancy via keyspace-based tenant isolation
 - Basic CQL query generation from Ash queries
 
-[Unreleased]: https://github.com/ohhi-vn/ash_scylla/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/ohhi-vn/ash_scylla/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/ohhi-vn/ash_scylla/compare/v0.4.0...v0.6.0
+[0.5.0]: https://github.com/ohhi-vn/ash_scylla/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ohhi-vn/ash_scylla/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/ohhi-vn/ash_scylla/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/ohhi-vn/ash_scylla/compare/v0.1.0...v0.2.0

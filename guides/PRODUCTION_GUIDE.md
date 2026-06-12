@@ -50,7 +50,7 @@ This guide covers running AshScylla in production against a ScyllaDB cluster. To
 │  │ BEAM VM  │  │ BEAM VM  │  │ BEAM VM  │  │ BEAM VM  │        │
 │  │  Node 1  │  │  Node 2  │  │  Node 3  │  │  Node N  │        │
 │  │          │  │          │  │          │  │          │        │
-│  │ Exandra  │  │ Exandra  │  │ Exandra  │  │ Exandra  │        │
+│  │ Xandra   │  │ Xandra   │  │ Xandra   │  │ Xandra   │        │
 │  │  Pool    │  │  Pool    │  │  Pool    │  │  Pool    │        │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘        │
 │       │              │              │              │              │
@@ -79,7 +79,7 @@ This guide covers running AshScylla in production against a ScyllaDB cluster. To
 └───────────────────────────────────────────────────────────────────┘
 ```
 
-Each BEAM node runs an Exandra connection pool. Exandra uses ScyllaDB's shard-aware routing to send queries directly to the node owning the data, minimizing cross-node hops.
+Each BEAM node runs a Xandra connection pool. Xandra uses ScyllaDB's shard-aware routing to send queries directly to the node owning the data, minimizing cross-node hops.
 
 ---
 
@@ -439,12 +439,8 @@ config :my_app, MyApp.Repo,
            |> Enum.map(&String.trim/1),
   keyspace: System.get_env("SCYLLA_KEYSPACE", "my_app_prod"),
   pool_size: String.to_integer(System.get_env("SCYLLA_POOL_SIZE", "50")),
-  pool_timeout: 15_000,
   request_timeout: 300_000,
   connect_timeout: 10_000,
-  queue_target: 100_000,
-  queue_interval: 2_000,
-  consistency: String.to_atom(System.get_env("SCYLLA_CONSISTENCY", "quorum")),
   # TLS (recommended for production)
   ssl: true,
   ssl_opts: [
@@ -453,6 +449,9 @@ config :my_app, MyApp.Repo,
     certfile: "/etc/ssl/certs/client.crt",
     keyfile: "/etc/ssl/private/client.key"
   ]
+
+# Note: consistency is configured per-resource in the ash_scylla DSL,
+# not as a connection option. See per-resource overrides below.
 ```
 
 ### Per-Resource Overrides
@@ -494,24 +493,18 @@ pool_size = (concurrent_requests_per_node × 1.5) + burst_headroom
 | High traffic (1000-10000 req/s) | 50-200 | 100-300 |
 | Very high traffic (> 10000 req/s) | 200+ | 300+ |
 
-### Exandra-Specific Tuning
+### Xandra-Specific Tuning
 
 ```elixir
 config :my_app, MyApp.Repo,
   # Core pool settings
   pool_size: 50,
-  pool_timeout: 15_000,
-
   # Request handling
   request_timeout: 300_000,      # 5 minutes for complex queries
   connect_timeout: 10_000,       # 10 seconds for initial connection
 
-  # Queue management (backpressure)
-  queue_target: 100_000,         # Target queue time in microseconds
-  queue_interval: 2_000,         # Measurement window in milliseconds
-
-  # TCP options
-  tcp_opts: [
+  # TCP options (passed to :gen_tcp / :ssl)
+  transport_options: [
     keepalive: true,
     nodelay: true,
     send_timeout: 30_000,
@@ -901,11 +894,8 @@ config :my_app, MyApp.Repo,
   nodes: nodes,
   keyspace: System.fetch_env!("SCYLLA_KEYSPACE"),
   pool_size: String.to_integer(System.get_env("SCYLLA_POOL_SIZE", "50")),
-  pool_timeout: 15_000,
   request_timeout: 300_000,
   connect_timeout: 10_000,
-  queue_target: 100_000,
-  queue_interval: 2_000,
   consistency: :quorum,
   ssl: true,
   ssl_opts: [

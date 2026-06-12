@@ -5,7 +5,6 @@ defmodule AshScylla.DataLayer.FilterValidatorTest do
 
   use ExUnit.Case, async: true
 
-  alias AshScylla.DataLayer.Dsl
   alias AshScylla.DataLayer.FilterValidator
 
   # ---------------------------------------------------------------------------

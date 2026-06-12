@@ -14,11 +14,9 @@
 
 defmodule AshScylla.Repo do
   @moduledoc """
-  Configuration module for using Exandra with AshScylla.
+  Configuration module for AshScylla using direct Xandra connections.
 
   ## Usage
-
-  Define your repo module:
 
       defmodule MyApp.Repo do
         use AshScylla.Repo,
@@ -29,138 +27,132 @@ defmodule AshScylla.Repo do
 
       config :my_app, MyApp.Repo,
         nodes: ["127.0.0.1:9042"],
-        keyspace: "my_app_dev",
-        pool_size: 10
+        keyspace: "my_app_dev"
+
+  ## Adding to your supervision tree
+
+      children = [
+        MyApp.Repo,
+        # ...
+      ]
 
   ## Options
 
   - `:nodes` - List of ScyllaDB/Cassandra nodes to connect to
   - `:keyspace` - The keyspace to use
-  - `:pool_size` - The number of connections in the pool (default: 10)
-  - `:sync_connect` - Timeout for initial connection in milliseconds (default: 5000)
-  - `:pool_timeout` - Timeout for checking out a connection from the pool in milliseconds (default: 5000)
-  - `:queue_target` - Target queue time in microseconds for connection checkout (default: 50_000)
-  - `:queue_interval` - Interval to measure queue target in milliseconds (default: 1000)
-  - `:connect_timeout` - Timeout for establishing TCP connection in milliseconds (default: 5000)
-  - `:request_timeout` - Timeout for queries in milliseconds (default: 120_000)
-  - `:log` - Log options for the repo
-
-  ## Connection Pool Tuning Examples
-
-  Basic configuration:
-
-      config :my_app, MyApp.Repo,
-        nodes: ["127.0.0.1:9042"],
-        keyspace: "my_app_dev",
-        pool_size: 10,
-        sync_connect: 10_000
-
-  Production configuration with optimized timeouts:
-
-      config :my_app, MyApp.Repo,
-        nodes: ["scylla-1:9042", "scylla-2:9042", "scylla-3:9042"],
-        keyspace: "my_app_prod",
-        pool_size: 50,
-        sync_connect: 30_000,
-        pool_timeout: 15_000,
-        queue_target: 100_000,
-        queue_interval: 2000,
-        connect_timeout: 10_000,
-        request_timeout: 300_000
-
-  Development configuration:
-
-      config :my_app, MyApp.Repo,
-        nodes: ["127.0.0.1:9042"],
-        keyspace: "my_app_dev",
-        pool_size: 5,
-        sync_connect: 5_000,
-        request_timeout: 60_000
+  - `:pool_size` - The number of connections in the pool (default: 5)
+  - `:connect_timeout` - TCP connection timeout in ms (default: 5000)
+  - `:request_timeout` - Query timeout in ms (default: 120_000)
   """
 
   defmacro __using__(opts) do
-    quote bind_quoted: [opts: opts] do
-      use Ecto.Repo, Keyword.merge(opts, adapter: Exandra)
+    otp_app = Keyword.get(opts, :otp_app)
 
-      @doc """
-      Returns the configured keyspace for this repo.
-      """
+    quote do
+      @otp_app unquote(otp_app)
+      @behaviour AshScylla.Repo
+
+      @doc false
+      @impl AshScylla.Repo
+      def child_spec(opts) do
+        AshScylla.Connection.child_spec(
+          [name: __MODULE__] ++ AshScylla.Repo.config_to_conn_opts(__MODULE__)
+        )
+      end
+
+      @doc "Returns the configured keyspace."
+      @impl AshScylla.Repo
       @spec keyspace() :: String.t() | nil
       def keyspace do
         config = __MODULE__.config()
         Keyword.get(config, :keyspace)
       end
 
-      @doc """
-      Creates the keyspace if it doesn't exist.
-      """
+      @doc "Returns the configured nodes."
+      @impl AshScylla.Repo
+      @spec nodes() :: [String.t()]
+      def nodes do
+        config = __MODULE__.config()
+        Keyword.get(config, :nodes, ["127.0.0.1:9042"])
+      end
+
+      @doc "Returns the connection struct."
+      @impl AshScylla.Repo
+      @spec connection() :: AshScylla.Connection.t() | nil
+      def connection do
+        AshScylla.Connection.get_conn(__MODULE__)
+      end
+
+      @doc "Executes a CQL query."
+      @impl AshScylla.Repo
+      @spec query(String.t(), list(), keyword()) :: {:ok, term()} | {:error, term()}
+      def query(cql, params, opts \\ []) do
+        AshScylla.Connection.query(__MODULE__, cql, params, opts)
+      end
+
+      @doc "Executes a CQL query, raising on error."
+      @impl AshScylla.Repo
+      @spec query!(String.t(), list(), keyword()) :: term() | no_return()
+      def query!(cql, params, opts \\ []) do
+        AshScylla.Connection.query!(__MODULE__, cql, params, opts)
+      end
+
+      @doc "Prepares a CQL statement."
+      @impl AshScylla.Repo
+      @spec prepare(String.t(), keyword()) :: {:ok, Xandra.Prepared.t()} | {:error, term()}
+      def prepare(cql, opts \\ []) do
+        AshScylla.Connection.prepare(__MODULE__, cql, opts)
+      end
+
+      @doc "Prepares a CQL statement, raising on error."
+      @impl AshScylla.Repo
+      @spec prepare!(String.t(), keyword()) :: Xandra.Prepared.t() | no_return()
+      def prepare!(cql, opts \\ []) do
+        AshScylla.Connection.prepare!(__MODULE__, cql, opts)
+      end
+
+      @doc "Creates the keyspace if it doesn't exist."
+      @impl AshScylla.Repo
       @spec create_keyspace(String.t() | nil) :: {:ok, term()} | {:error, term()}
       def create_keyspace(keyspace_name \\ nil) do
         keyspace = keyspace_name || keyspace()
-
         validate_keyspace!(keyspace)
 
-        query = """
-        CREATE KEYSPACE IF NOT EXISTS #{keyspace}
-        WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}
-        """
+        # Start a temporary connection without keyspace to create it
+        temp_name = :"#{__MODULE__}_temp_#{:erlang.unique_integer([:positive])}"
+        nodes = nodes()
 
-        __MODULE__.query(query, [])
+        conn_opts = [
+          name: temp_name,
+          nodes: nodes,
+          pool_size: 1
+        ]
+
+        with {:ok, _} <- AshScylla.Connection.start_link(conn_opts) do
+          query = """
+          CREATE KEYSPACE IF NOT EXISTS #{keyspace}
+          WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}
+          """
+
+          result = AshScylla.Connection.query(temp_name, query, [], consistency: :quorum)
+          AshScylla.Connection.stop(temp_name)
+          result
+        end
       end
 
-      @doc """
-      Drops the keyspace if it exists.
-      """
+      @doc "Drops the keyspace if it doesn't exist."
+      @impl AshScylla.Repo
       @spec drop_keyspace(String.t() | nil) :: {:ok, term()} | {:error, term()}
       def drop_keyspace(keyspace_name \\ nil) do
         keyspace = keyspace_name || keyspace()
-
         validate_keyspace!(keyspace)
 
         query = "DROP KEYSPACE IF EXISTS #{keyspace}"
-        __MODULE__.query(query, [])
-      end
-
-      @doc """
-      Returns the recommended pool size based on ScyllaDB's shard-per-core architecture.
-
-      ScyllaDB works best with a connections-per-shard approach:
-      `pool_size = num_nodes * num_cores_per_node`
-
-      This helper queries ScyllaDB's system table for core count and
-      calculates the recommended pool size.
-
-      ## Examples
-
-          # In config/config.exs
-          config :my_app, MyApp.Repo,
-            nodes: ["scylla-1:9042", "scylla-2:9042"],
-            keyspace: "my_app_prod",
-            pool_size: MyApp.Repo.recommended_pool_size()
-
-      Returns a default of 25 if the query fails.
-      """
-      @spec recommended_pool_size() :: pos_integer()
-      def recommended_pool_size do
-        try do
-          result = __MODULE__.query("SELECT COUNT(*) as count FROM system.local", [])
-
-          case result do
-            {:ok, %{rows: [[count]]}} when is_integer(count) and count > 0 ->
-              # Default to single node; multiply by node count for clusters
-              count * 5
-
-            _ ->
-              25
-          end
-        rescue
-          _ -> 25
-        end
+        __MODULE__.query(query, [], consistency: :quorum)
       end
 
       @valid_keyspace_regex ~r/^[a-zA-Z_][a-zA-Z0-9_]{0,47}$/
 
-      @spec validate_keyspace!(String.t()) :: :ok
       defp validate_keyspace!(keyspace) do
         unless is_binary(keyspace) do
           raise ArgumentError, "Keyspace name must be a string, got: #{inspect(keyspace)}"
@@ -173,6 +165,43 @@ defmodule AshScylla.Repo do
 
         :ok
       end
+
+      @impl AshScylla.Repo
+      @spec config() :: keyword()
+      def config do
+        case Application.get_env(@otp_app, __MODULE__) do
+          nil -> []
+          config when is_list(config) -> config
+        end
+      end
+
+      defoverridable config: 0
     end
+  end
+
+  @callback config() :: keyword()
+  @callback keyspace() :: String.t() | nil
+  @callback nodes() :: [String.t()]
+  @callback connection() :: AshScylla.Connection.t() | nil
+  @callback query(String.t(), list(), keyword()) :: {:ok, term()} | {:error, term()}
+  @callback query!(String.t(), list(), keyword()) :: term() | no_return()
+  @callback prepare(String.t(), keyword()) :: {:ok, Xandra.Prepared.t()} | {:error, term()}
+  @callback prepare!(String.t(), keyword()) :: Xandra.Prepared.t() | no_return()
+  @callback create_keyspace(String.t() | nil) :: {:ok, term()} | {:error, term()}
+  @callback drop_keyspace(String.t() | nil) :: {:ok, term()} | {:error, term()}
+  @callback child_spec(keyword()) :: Supervisor.child_spec()
+
+  @doc "Converts repo config to Xandra connection options."
+  @spec config_to_conn_opts(module()) :: keyword()
+  def config_to_conn_opts(repo_module) do
+    config = repo_module.config()
+
+    [
+      nodes: Keyword.get(config, :nodes, ["127.0.0.1:9042"]),
+      keyspace: Keyword.get(config, :keyspace),
+      pool_size: Keyword.get(config, :pool_size, 5),
+      connect_timeout: Keyword.get(config, :connect_timeout, 5_000),
+      request_timeout: Keyword.get(config, :request_timeout, 120_000)
+    ]
   end
 end

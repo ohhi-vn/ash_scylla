@@ -93,22 +93,26 @@ defmodule AshScylla.DataLayer.Pagination do
     opts =
       if page_token do
         page_state = Base.decode64!(page_token)
-        [page_size: page_size, page_state: page_state]
+        [page_size: page_size, paging_state: page_state]
       else
         [page_size: page_size]
       end
 
     case repo.query(query, params, opts) do
-      {:ok, %{rows: rows, paging_state: nil}} ->
+      {:ok, %Xandra.Page{content: content, paging_state: nil}} ->
+        rows = content || []
         records = Enum.map(rows, &normalize_record/1)
         {:ok, records, nil}
 
-      {:ok, %{rows: rows, paging_state: next_state}} when is_binary(next_state) ->
+      {:ok, %Xandra.Page{content: content, paging_state: next_state}}
+      when is_binary(next_state) ->
+        rows = content || []
         records = Enum.map(rows, &normalize_record/1)
         next_token = Base.encode64(next_state)
         {:ok, records, next_token}
 
-      {:ok, %{rows: rows}} ->
+      {:ok, %Xandra.Page{content: content}} ->
+        rows = content || []
         records = Enum.map(rows, &normalize_record/1)
         {:ok, records, nil}
 

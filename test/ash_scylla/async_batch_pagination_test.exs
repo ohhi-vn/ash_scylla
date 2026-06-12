@@ -213,10 +213,10 @@ defmodule AshScylla.DataLayer.PaginationUpdatedTest do
 
       if page_state do
         # Simulate returning a next page token
-        {:ok, %{rows: [%{id: 2}], paging_state: "next_page_state"}}
+        {:ok, %Xandra.Page{content: [%{id: 2}], paging_state: "next_page_state"}}
       else
         # First page
-        {:ok, %{rows: [%{id: 1}], paging_state: "first_page_state"}}
+        {:ok, %Xandra.Page{content: [%{id: 1}], paging_state: "first_page_state"}}
       end
     end
   end
@@ -225,7 +225,7 @@ defmodule AshScylla.DataLayer.PaginationUpdatedTest do
     @moduledoc false
 
     def query(_query, _params, _opts) do
-      {:ok, %{rows: [%{id: 1}], paging_state: nil}}
+      {:ok, %Xandra.Page{content: [%{id: 1}], paging_state: nil}}
     end
   end
 
@@ -312,7 +312,7 @@ defmodule AshScylla.DataLayer.PaginationUpdatedTest do
     end
 
     test "uses default page_size" do
-      {_query, params} = Pagination.build_paginated_query("users", [], nil)
+      {_query, _params} = Pagination.build_paginated_query("users", [], nil)
       # nil page_size gets min(nil, 1000) which is nil, but the function handles it
     end
 
