@@ -164,45 +164,16 @@ defmodule AshScylla.DataLayer.Udt do
     "SELECT type_name FROM system_schema.types WHERE type_name = '#{type_name}'"
   end
 
+  alias AshScylla.DataLayer.Types
+
   @doc "Returns the CQL type string for a UDT field type"
   @spec field_type_to_cql(atom()) :: String.t()
-  def field_type_to_cql(:text), do: "TEXT"
-  def field_type_to_cql(:int), do: "INT"
-  def field_type_to_cql(:bigint), do: "BIGINT"
-  def field_type_to_cql(:boolean), do: "BOOLEAN"
-  def field_type_to_cql(:uuid), do: "UUID"
-  def field_type_to_cql(:timestamp), do: "TIMESTAMP"
-  def field_type_to_cql(:float), do: "FLOAT"
-  def field_type_to_cql(:double), do: "DOUBLE"
-  def field_type_to_cql(:blob), do: "BLOB"
-  def field_type_to_cql(:inet), do: "INET"
-  def field_type_to_cql(:date), do: "DATE"
-  def field_type_to_cql(:time), do: "TIME"
-  def field_type_to_cql(:smallint), do: "SMALLINT"
-  def field_type_to_cql(:tinyint), do: "TINYINT"
-  def field_type_to_cql(:duration), do: "DURATION"
-  def field_type_to_cql(type) when is_atom(type), do: Atom.to_string(type) |> String.upcase()
+  def field_type_to_cql(type), do: Types.field_type_to_cql(type)
 
   @doc "Validates a UDT field specification"
   @spec validate_fields([udt_field_spec()]) :: :ok | {:error, String.t()}
   def validate_fields(fields) when is_list(fields) do
-    valid_types = [
-      :text,
-      :int,
-      :bigint,
-      :boolean,
-      :uuid,
-      :timestamp,
-      :float,
-      :double,
-      :blob,
-      :inet,
-      :date,
-      :time,
-      :smallint,
-      :tinyint,
-      :duration
-    ]
+    valid_types = Types.valid_cql_types()
 
     Enum.reduce_while(fields, :ok, fn {name, type}, _acc ->
       cond do

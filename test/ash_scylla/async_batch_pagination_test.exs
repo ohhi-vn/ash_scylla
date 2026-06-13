@@ -70,22 +70,20 @@ defmodule AshScylla.DataLayer.AsyncBatchTest do
       :ok
     end
 
-    test "returns {:ok, :completed} for valid statements" do
+    test "returns {:ok, results} for valid statements" do
       statements = [
         {"INSERT INTO t (id, name) VALUES (?, ?)", [1, "Alice"]},
         {"INSERT INTO t (id, name) VALUES (?, ?)", [2, "Bob"]}
       ]
 
-      assert {:ok, :completed} =
+      assert {:ok, _results} =
                Batch.batch_insert_async(SimpleMockRepo, statements,
                  resource: TestResourceForPartition
                )
     end
 
     test "works without :resource option" do
-      # :resource is optional — batch_insert_async uses partition_key_hash/1
-      # for grouping when :resource is not provided
-      assert {:ok, :completed} == Batch.batch_insert_async(SimpleMockRepo, [], max_concurrency: 4)
+      assert {:ok, []} == Batch.batch_insert_async(SimpleMockRepo, [], max_concurrency: 4)
     end
 
     test "uses default max_concurrency from System.schedulers_online" do
@@ -93,8 +91,7 @@ defmodule AshScylla.DataLayer.AsyncBatchTest do
         {"INSERT INTO t (id) VALUES (?)", [1]}
       ]
 
-      # Should not raise — default concurrency is used
-      assert {:ok, :completed} =
+      assert {:ok, _results} =
                Batch.batch_insert_async(SimpleMockRepo, statements,
                  resource: TestResourceForPartition
                )
@@ -106,7 +103,7 @@ defmodule AshScylla.DataLayer.AsyncBatchTest do
         {"INSERT INTO t (id) VALUES (?)", [2]}
       ]
 
-      assert {:ok, :completed} =
+      assert {:ok, _results} =
                Batch.batch_insert_async(SimpleMockRepo, statements,
                  resource: TestResourceForPartition,
                  max_concurrency: 1
@@ -125,14 +122,13 @@ defmodule AshScylla.DataLayer.AsyncBatchTest do
     end
 
     test "groups statements by partition key hash" do
-      # Statements with different first params should be grouped separately
       statements = [
         {"INSERT INTO t (id) VALUES (?)", ["a"]},
         {"INSERT INTO t (id) VALUES (?)", ["b"]},
         {"INSERT INTO t (id) VALUES (?)", ["c"]}
       ]
 
-      assert {:ok, :completed} =
+      assert {:ok, _results} =
                Batch.batch_insert_async(SimpleMockRepo, statements,
                  resource: TestResourceForPartition,
                  max_concurrency: 1
@@ -140,26 +136,24 @@ defmodule AshScylla.DataLayer.AsyncBatchTest do
     end
 
     test "handles empty statement list" do
-      assert {:ok, :completed} =
+      assert {:ok, []} =
                Batch.batch_insert_async(SimpleMockRepo, [], resource: TestResourceForPartition)
     end
 
     test "executes multiple groups concurrently" do
       TrackingRepo.clear_calls()
 
-      # Create statements that will be grouped into different buckets
       statements =
         for i <- 1..10 do
           {"INSERT INTO t (id) VALUES (?)", [i]}
         end
 
-      assert {:ok, :completed} =
+      assert {:ok, _results} =
                Batch.batch_insert_async(TrackingRepo, statements,
                  resource: TestResourceForPartition,
                  max_concurrency: 4
                )
 
-      # Verify that query was called at least once
       calls = TrackingRepo.get_calls()
       assert length(calls) >= 1
     end

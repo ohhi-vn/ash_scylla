@@ -1,0 +1,174 @@
+# Copyright [2024] AshScylla Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+defmodule AshScylla.DataLayer.Types do
+  @moduledoc """
+  Shared CQL type mapping and conversion helpers.
+
+  Centralizes the canonical type-to-CQL-string mappings used across
+  `AshScylla.Migration`, `AshScylla.DataLayer.Udt`, and
+  `AshScylla.DataLayer.Collection`.
+  """
+
+  @cql_type_mapping %{
+    # UDT / collection element types
+    :text => "TEXT",
+    :int => "INT",
+    :bigint => "BIGINT",
+    :boolean => "BOOLEAN",
+    :uuid => "UUID",
+    :timestamp => "TIMESTAMP",
+    :float => "FLOAT",
+    :double => "DOUBLE",
+    :blob => "BLOB",
+    :inet => "INET",
+    :date => "DATE",
+    :time => "TIME",
+    :smallint => "SMALLINT",
+    :tinyint => "TINYINT",
+    :duration => "DURATION",
+    # Ash DSL type aliases
+    :string => "TEXT",
+    :integer => "BIGINT",
+    :utc_datetime => "TIMESTAMP"
+  }
+
+  @doc false
+  @spec cql_type_mapping() :: %{atom() => String.t()}
+  def cql_type_mapping, do: @cql_type_mapping
+
+  @doc """
+  Returns the CQL type string for a given type atom.
+
+  Known types are resolved via the canonical mapping.
+  Unknown types fall back to "TEXT".
+
+  ## Examples
+
+      iex> AshScylla.DataLayer.Types.cql_type(:text)
+      "TEXT"
+
+      iex> AshScylla.DataLayer.Types.cql_type(:bigint)
+      "BIGINT"
+
+      iex> AshScylla.DataLayer.Types.cql_type(:custom_type)
+      "TEXT"
+  """
+  @spec cql_type(atom()) :: String.t()
+  def cql_type(type) when is_atom(type) do
+    Map.get(@cql_type_mapping, type, "TEXT")
+  end
+
+  @doc """
+  Returns the CQL type string for a UDT field type atom.
+
+  Delegates to `cql_type/1`.
+
+  ## Examples
+
+      iex> AshScylla.DataLayer.Types.field_type_to_cql(:text)
+      "TEXT"
+
+      iex> AshScylla.DataLayer.Types.field_type_to_cql(:uuid)
+      "UUID"
+  """
+  @spec field_type_to_cql(atom()) :: String.t()
+  def field_type_to_cql(type), do: cql_type(type)
+
+  @doc """
+  Returns the CQL type string for a collection element type atom.
+
+  Delegates to `cql_type/1`.
+
+  ## Examples
+
+      iex> AshScylla.DataLayer.Types.cql_element_type(:int)
+      "INT"
+
+      iex> AshScylla.DataLayer.Types.cql_element_type(:float)
+      "FLOAT"
+  """
+  @spec cql_element_type(atom()) :: String.t()
+  def cql_element_type(type), do: cql_type(type)
+
+  @doc """
+  Returns the list of all known valid CQL type atoms.
+  """
+  @spec valid_cql_types() :: [atom()]
+  def valid_cql_types, do: Map.keys(@cql_type_mapping)
+
+  @doc """
+  Converts an Ash type atom to its CQL type string representation.
+
+  Handles special collection and structured types:
+
+  - `:map` — rendered as `MAP<key_type, value_type>`
+  - `:array` — rendered as `LIST<element_type>`
+  - `:set` — rendered as `SET<element_type>`
+  - `:udt` — rendered as `frozen<type_name>`
+
+  All other atoms are resolved via the canonical `cql_type/1` mapping.
+
+  The `:frozen` option wraps the result in `frozen<...>`.
+
+  ## Options
+
+  - `:key_type` — for `:map`, the CQL key type (default: `"TEXT"`)
+  - `:value_type` — for `:map`, the CQL value type (default: `"TEXT"`)
+  - `:element_type` — for `:array` / `:set`, the CQL element type (default: `"TEXT"`)
+  - `:type_name` — for `:udt`, the UDT name
+  - `:frozen` — if `true`, wraps the result in `frozen<...>`
+
+  ## Examples
+
+      iex> AshScylla.DataLayer.Types.ash_type_to_cql_type(:uuid, [])
+      "UUID"
+
+      iex> AshScylla.DataLayer.Types.ash_type_to_cql_type(:string, [])
+      "TEXT"
+
+      iex> AshScylla.DataLayer.Types.ash_type_to_cql_type(:map, key_type: "TEXT", value_type: "INT")
+      "MAP<TEXT, INT>"
+
+      iex> AshScylla.DataLayer.Types.ash_type_to_cql_type(:array, element_type: "UUID")
+      "LIST<UUID>"
+  """
+  @spec ash_type_to_cql_type(atom(), keyword()) :: String.t()
+  def ash_type_to_cql_type(type, opts) when is_atom(type) do
+    base_type =
+      case type do
+        :map ->
+          "MAP<#{Keyword.get(opts, :key_type, "TEXT")}, #{Keyword.get(opts, :value_type, "TEXT")}>"
+
+        :array ->
+          "LIST<#{Keyword.get(opts, :element_type, "TEXT")}>"
+
+        :set ->
+          "SET<#{Keyword.get(opts, :element_type, "TEXT")}>"
+
+        :udt ->
+          type_name = Keyword.get(opts, :type_name, "undefined")
+
+          type_name_str =
+            if is_atom(type_name), do: Atom.to_string(type_name), else: to_string(type_name)
+
+          "frozen<#{type_name_str}>"
+
+        mapped_type ->
+          cql_type(mapped_type)
+      end
+
+    if Keyword.get(opts, :frozen), do: "frozen<#{base_type}>", else: base_type
+  end
+end

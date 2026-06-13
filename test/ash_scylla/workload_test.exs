@@ -507,7 +507,7 @@ defmodule AshScylla.WorkloadTest do
           {"INSERT INTO t (id, name) VALUES (?, ?)", [i, "User#{i}"]}
         end)
 
-      assert {:ok, :completed} =
+      assert {:ok, _results} =
                Batch.batch_insert_async(WorkloadMockRepo, statements,
                  resource: WorkloadResource,
                  max_concurrency: 8
@@ -517,7 +517,7 @@ defmodule AshScylla.WorkloadTest do
     test "handles single-statement batch" do
       statements = [{"INSERT INTO t (id) VALUES (?)", [1]}]
 
-      assert {:ok, :completed} =
+      assert {:ok, _results} =
                Batch.batch_insert_async(WorkloadMockRepo, statements, resource: WorkloadResource)
     end
 
@@ -556,7 +556,7 @@ defmodule AshScylla.WorkloadTest do
       results = Task.await_many(tasks, 30_000)
 
       assert Enum.all?(results, fn
-               {:ok, :completed} -> true
+               {:ok, _list} -> true
                _ -> false
              end)
     end
@@ -687,7 +687,7 @@ defmodule AshScylla.WorkloadTest do
       end)
 
       Enum.each(write_results, fn
-        {:ok, :completed} -> :ok
+        {:ok, _list} -> :ok
         other -> flunk("Unexpected: #{inspect(other)}")
       end)
     end
@@ -796,9 +796,9 @@ defmodule AshScylla.WorkloadTest do
 
       results = Task.await_many(tasks, 15_000)
       assert length(results) == 3
-      assert {:ok, :completed} = Enum.at(results, 0)
+      assert {:ok, _list} = Enum.at(results, 0)
       assert {:error, :mock_error} = Enum.at(results, 1)
-      assert {:ok, :completed} = Enum.at(results, 2)
+      assert {:ok, _list} = Enum.at(results, 2)
     end
 
     test "DSL getters work correctly under concurrent access" do

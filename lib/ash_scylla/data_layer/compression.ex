@@ -79,7 +79,7 @@ defmodule AshScylla.DataLayer.Compression do
   """
   @spec compress(binary(), atom()) :: binary()
   def compress(value, algorithm) when is_binary(value) and is_atom(algorithm) do
-    marker = Map.fetch!(@algorithm_markers, algorithm)
+    marker = fetch_algorithm_marker(algorithm)
     compressed = do_compress(value, algorithm)
     <<marker::binary, compressed::binary>>
   end
@@ -95,7 +95,7 @@ defmodule AshScylla.DataLayer.Compression do
   """
   @spec decompress(binary(), atom()) :: binary()
   def decompress(<<marker::binary-size(1), compressed::binary>>, algorithm) do
-    expected_marker = Map.fetch!(@algorithm_markers, algorithm)
+    expected_marker = fetch_algorithm_marker(algorithm)
 
     if marker != expected_marker do
       raise ArgumentError,
@@ -301,36 +301,28 @@ defmodule AshScylla.DataLayer.Compression do
   # Private functions
   # ---------------------------------------------------------------------------
 
+  defp fetch_algorithm_marker(algorithm) do
+    case @algorithm_markers do
+      %{^algorithm => marker} -> marker
+      %{} -> raise ArgumentError, "Unknown compression algorithm: #{inspect(algorithm)}"
+    end
+  end
+
   @doc false
   defp do_compress(value, :deflate) do
     :zlib.compress(value)
   end
 
   defp do_compress(value, :lz4) do
-    if Code.ensure_loaded?(:lz4) and function_exported?(:lz4, :raw_compress, 1) do
-      apply(:lz4, :raw_compress, [value])
-    else
-      raise ArgumentError,
-            "LZ4 compression requires the lz4 package. Add it to your deps."
-    end
+    call_compress_fun(:lz4, :raw_compress, value, "LZ4 compression")
   end
 
   defp do_compress(value, :snappy) do
-    if Code.ensure_loaded?(:snappy) and function_exported?(:snappy, :compress, 1) do
-      apply(:snappy, :compress, [value])
-    else
-      raise ArgumentError,
-            "Snappy compression requires the snappy package. Add it to your deps."
-    end
+    call_compress_fun(:snappy, :compress, value, "Snappy compression")
   end
 
   defp do_compress(value, :zstd) do
-    if Code.ensure_loaded?(:ezstd) and function_exported?(:ezstd, :compress, 1) do
-      apply(:ezstd, :compress, [value])
-    else
-      raise ArgumentError,
-            "Zstd compression requires the ezstd package. Add it to your deps."
-    end
+    call_compress_fun(:ezstd, :compress, value, "Zstd compression")
   end
 
   @doc false
@@ -339,29 +331,23 @@ defmodule AshScylla.DataLayer.Compression do
   end
 
   defp do_decompress(value, :lz4) do
-    if Code.ensure_loaded?(:lz4) and function_exported?(:lz4, :raw_uncompress, 1) do
-      apply(:lz4, :raw_uncompress, [value])
-    else
-      raise ArgumentError,
-            "LZ4 decompression requires the lz4 package. Add it to your deps."
-    end
+    call_compress_fun(:lz4, :raw_uncompress, value, "LZ4 decompression")
   end
 
   defp do_decompress(value, :snappy) do
-    if Code.ensure_loaded?(:snappy) and function_exported?(:snappy, :decompress, 1) do
-      apply(:snappy, :decompress, [value])
-    else
-      raise ArgumentError,
-            "Snappy decompression requires the snappy package. Add it to your deps."
-    end
+    call_compress_fun(:snappy, :decompress, value, "Snappy decompression")
   end
 
   defp do_decompress(value, :zstd) do
-    if Code.ensure_loaded?(:ezstd) and function_exported?(:ezstd, :decompress, 1) do
-      apply(:ezstd, :decompress, [value])
+    call_compress_fun(:ezstd, :decompress, value, "Zstd decompression")
+  end
+
+  defp call_compress_fun(mod, fun, value, operation) do
+    if Code.ensure_loaded?(mod) and function_exported?(mod, fun, 1) do
+      apply(mod, fun, [value])
     else
       raise ArgumentError,
-            "Zstd decompression requires the ezstd package. Add it to your deps."
+            "#{operation} requires the #{inspect(mod)} package. Add it to your deps."
     end
   end
 end

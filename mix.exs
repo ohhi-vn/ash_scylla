@@ -4,7 +4,7 @@ defmodule AshScylla.MixProject do
   def project do
     [
       app: :ash_scylla,
-      version: "0.7.0",
+      version: "0.8.0",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -32,7 +32,7 @@ defmodule AshScylla.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     extra =
-      if Mix.env() == :test do
+      if Mix.env() == :test or Mix.env() == :dev do
         [:testcontainer_ex]
       else
         []
@@ -117,7 +117,7 @@ defmodule AshScylla.MixProject do
       {:xandra, "~> 0.19"},
       {:decimal, "~> 3.1", override: true, only: [:dev, :test]},
       {:hackney, "~> 4.2", override: true, only: [:dev, :test]},
-      {:testcontainer_ex, "~> 0.5", only: [:test, :dev]},
+      {:testcontainer_ex, "~> 0.6", only: [:test, :dev]},
       # {:testcontainer_ex, path: "../testcontainer_ex", only: [:test, :dev]},
       {:benchee, "~> 1.5", only: :dev},
       {:benchee_html, "~> 1.0", only: :dev},

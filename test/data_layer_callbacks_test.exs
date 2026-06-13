@@ -271,22 +271,28 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
   # ---------------------------------------------------------------------------
 
   describe "offset/3" do
-    test "sets the offset" do
+    test "raises because OFFSET is not supported in ScyllaDB" do
       query = base_query()
-      {:ok, updated} = DataLayer.offset(query, 100, nil)
-      assert updated.offset == 100
+
+      assert_raise RuntimeError, ~r/OFFSET is not supported/, fn ->
+        DataLayer.offset(query, 100, nil)
+      end
     end
 
-    test "overwrites previous offset" do
+    test "raises even when overwriting a previous offset" do
       query = %{base_query() | offset: 50}
-      {:ok, updated} = DataLayer.offset(query, 200, nil)
-      assert updated.offset == 200
+
+      assert_raise RuntimeError, ~r/OFFSET is not supported/, fn ->
+        DataLayer.offset(query, 200, nil)
+      end
     end
 
-    test "returns {:ok, updated_query} tuple" do
+    test "raises for any offset value" do
       query = base_query()
-      result = DataLayer.offset(query, 10, nil)
-      assert match?({:ok, %DataLayer{}}, result)
+
+      assert_raise RuntimeError, ~r/OFFSET is not supported/, fn ->
+        DataLayer.offset(query, 10, nil)
+      end
     end
   end
 

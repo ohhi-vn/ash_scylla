@@ -451,27 +451,14 @@ defmodule AshScylla.DataLayer.Collection do
     end
   end
 
+  alias AshScylla.DataLayer.Types
+
   # ---------------------------------------------------------------------------
   # Private functions
   # ---------------------------------------------------------------------------
 
   @spec cql_element_type(atom()) :: String.t()
-  defp cql_element_type(:text), do: "TEXT"
-  defp cql_element_type(:int), do: "INT"
-  defp cql_element_type(:bigint), do: "BIGINT"
-  defp cql_element_type(:boolean), do: "BOOLEAN"
-  defp cql_element_type(:uuid), do: "UUID"
-  defp cql_element_type(:timestamp), do: "TIMESTAMP"
-  defp cql_element_type(:float), do: "FLOAT"
-  defp cql_element_type(:double), do: "DOUBLE"
-  defp cql_element_type(:blob), do: "BLOB"
-  defp cql_element_type(:inet), do: "INET"
-  defp cql_element_type(:date), do: "DATE"
-  defp cql_element_type(:time), do: "TIME"
-  defp cql_element_type(:smallint), do: "SMALLINT"
-  defp cql_element_type(:tinyint), do: "TINYINT"
-  defp cql_element_type(:duration), do: "DURATION"
-  defp cql_element_type(type) when is_atom(type), do: type |> Atom.to_string() |> String.upcase()
+  defp cql_element_type(type), do: Types.cql_element_type(type)
 
   @spec maybe_freeze(String.t(), keyword()) :: String.t()
   defp maybe_freeze(inner, opts) do

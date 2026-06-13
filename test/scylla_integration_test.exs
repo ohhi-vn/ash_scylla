@@ -1,8 +1,8 @@
 defmodule AshScylla.ScyllaIntegrationTest do
   @moduledoc """
   Integration tests for AshScylla with a real ScyllaDB instance.
-  Uses testcontainer_ex 0.5 ScyllaContainer for container lifecycle management.
-  Gracefully skips all tests when Docker/Podman is not available.
+  Uses testcontainer_ex 0.6 ScyllaContainer for container lifecycle management.
+  Gracefully skips all tests when Podman is not available.
   """
 
   use ExUnit.Case, async: false
@@ -116,7 +116,19 @@ defmodule AshScylla.ScyllaIntegrationTest do
            connect_timeout: 10_000
          ) do
       {:ok, conn} ->
-        conn
+        case wait_for_cql(conn, 5) do
+          :ok ->
+            conn
+
+          {:error, _} when retries > 0 ->
+            Xandra.stop(conn)
+            Process.sleep(3_000)
+            connect_with_retry(host, port, retries - 1)
+
+          {:error, reason} ->
+            Xandra.stop(conn)
+            raise "ScyllaDB not ready: #{inspect(reason)}"
+        end
 
       {:error, _} when retries > 0 ->
         Process.sleep(3_000)
@@ -137,7 +149,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
   end
 
   defp wait_for_cql(_conn, retries) when retries <= 0 do
-    raise "ScyllaDB not ready: timeout"
+    {:error, :timeout}
   end
 
   defp wait_for_cql(conn, retries) do
@@ -155,21 +167,25 @@ defmodule AshScylla.ScyllaIntegrationTest do
   end
 
   defp schema(conn) do
-    wait_for_cql(conn, 60)
+    case wait_for_cql(conn, 60) do
+      :ok ->
+        Enum.each(
+          [
+            "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}",
+            "CREATE TABLE IF NOT EXISTS ash_scylla_test.users (id UUID PRIMARY KEY, name TEXT, email TEXT, age INT, status TEXT, created_at TIMESTAMP)",
+            "CREATE INDEX IF NOT EXISTS idx_users_email ON ash_scylla_test.users (email)",
+            "CREATE INDEX IF NOT EXISTS idx_users_status ON ash_scylla_test.users (status)",
+            "CREATE INDEX IF NOT EXISTS idx_users_age ON ash_scylla_test.users (age)",
+            "CREATE MATERIALIZED VIEW IF NOT EXISTS ash_scylla_test.users_by_email AS SELECT * FROM ash_scylla_test.users WHERE email IS NOT NULL AND id IS NOT NULL PRIMARY KEY (email, id)",
+            "CREATE TABLE IF NOT EXISTS ash_scylla_test.events (user_id UUID, event_type TEXT, event_id TIMEUUID, payload TEXT, PRIMARY KEY ((user_id, event_type), event_id)) WITH CLUSTERING ORDER BY (event_id DESC)",
+            "CREATE TABLE IF NOT EXISTS ash_scylla_test.counters (id UUID PRIMARY KEY, views COUNTER, likes COUNTER)"
+          ],
+          fn q -> {:ok, _} = Xandra.execute(conn, q) end
+        )
 
-    Enum.each(
-      [
-        "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}",
-        "CREATE TABLE IF NOT EXISTS ash_scylla_test.users (id UUID PRIMARY KEY, name TEXT, email TEXT, age INT, status TEXT, created_at TIMESTAMP)",
-        "CREATE INDEX IF NOT EXISTS idx_users_email ON ash_scylla_test.users (email)",
-        "CREATE INDEX IF NOT EXISTS idx_users_status ON ash_scylla_test.users (status)",
-        "CREATE INDEX IF NOT EXISTS idx_users_age ON ash_scylla_test.users (age)",
-        "CREATE MATERIALIZED VIEW IF NOT EXISTS ash_scylla_test.users_by_email AS SELECT * FROM ash_scylla_test.users WHERE email IS NOT NULL AND id IS NOT NULL PRIMARY KEY (email, id)",
-        "CREATE TABLE IF NOT EXISTS ash_scylla_test.events (user_id UUID, event_type TEXT, event_id TIMEUUID, payload TEXT, PRIMARY KEY ((user_id, event_type), event_id)) WITH CLUSTERING ORDER BY (event_id DESC)",
-        "CREATE TABLE IF NOT EXISTS ash_scylla_test.counters (id UUID PRIMARY KEY, views COUNTER, likes COUNTER)"
-      ],
-      fn q -> {:ok, _} = Xandra.execute(conn, q) end
-    )
+      {:error, reason} ->
+        raise "ScyllaDB not ready after 60s: #{inspect(reason)}"
+    end
   end
 
   # ── Setup ──────────────────────────────────────────────────────────────────
@@ -177,48 +193,46 @@ defmodule AshScylla.ScyllaIntegrationTest do
   setup_all do
     case AshScylla.Test.ContainerEngine.ensure_running() do
       :ok ->
-        case TestcontainerEx.start_container(@scylla_container_config) do
+        case ScyllaContainer.start(@scylla_container_config) do
           {:ok, scylla_container} ->
             port = ScyllaContainer.port(scylla_container)
-            host = TestcontainerEx.get_host(scylla_container)
+            host = ScyllaContainer.host(scylla_container)
 
             case try_connect(host, port) do
               {:ok, conn} ->
                 schema(conn)
 
                 on_exit(fn ->
-                  TestcontainerEx.stop_container(scylla_container.container_id)
+                  ScyllaContainer.stop(scylla_container.container_id)
                 end)
 
                 %{scylla: scylla_container}
 
               {:error, _} ->
                 IO.puts("WARNING: Skipping integration tests — ScyllaDB not reachable")
-                TestcontainerEx.stop_container(scylla_container.container_id)
-                %{scylla: nil}
+                ScyllaContainer.stop(scylla_container.container_id)
+                :ok
             end
 
           {:error, reason} ->
             IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
-            %{scylla: nil}
+            :ok
         end
 
       {:error, reason} ->
         IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
-        %{scylla: nil}
+        :ok
     end
-  end
-
-  setup %{scylla: nil} do
-    {:skip, "Container engine not available"}
   end
 
   setup %{scylla: scylla_container} do
     port = ScyllaContainer.port(scylla_container)
-    host = TestcontainerEx.get_host(scylla_container)
-    conn = connect_with_retry(host, port)
-    %{conn: conn, scylla: scylla_container}
+    host = ScyllaContainer.host(scylla_container)
+    conn = connect_with_retry(host, port, 5)
+    %{conn: conn}
   end
+
+  setup _, do: :ok
 
   # ══════════════════════════════════════════════════════════════════════════
   # 1. Basic connectivity

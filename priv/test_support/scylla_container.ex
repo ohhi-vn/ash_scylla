@@ -1,7 +1,11 @@
 defmodule AshScylla.ScyllaContainer do
   @moduledoc """
-  Shim module that provides the legacy ScyllaContainer API over the
-  testcontainer_ex 0.5 CustomContainer backend.
+  Shim module that provides a ScyllaDB container configuration over the
+  testcontainer_ex 0.6 CustomContainer backend.
+
+  > Uses `TestcontainerEx` 0.6+ (`start_container/2`, `stop_container/2`, `get_host/1`, `get_port/2`).
+  > For `start_containers/2` (parallel), `monitor_container/4`, and other 0.6 features,
+  > call directly on `TestcontainerEx`.
   """
 
   alias TestcontainerEx.CustomContainer
@@ -62,5 +66,39 @@ defmodule AshScylla.ScyllaContainer do
   @spec port(TestcontainerEx.Container.Config.t()) :: integer() | nil
   def port(%TestcontainerEx.Container.Config{} = container) do
     TestcontainerEx.get_port(container, @default_cql_port)
+  end
+
+  @doc """
+  Convenience: starts the container with `TestcontainerEx.start_container/2`.
+  """
+  @spec start(CustomContainer.t(), atom()) ::
+          {:ok, TestcontainerEx.Container.Config.t()} | {:error, term()}
+  def start(container, name \\ :default) do
+    case name do
+      :default -> TestcontainerEx.start_container(container)
+      _ -> TestcontainerEx.start_container(container, name)
+    end
+  end
+
+  @doc """
+  Convenience: stops the container via `TestcontainerEx.stop_container/2`.
+  """
+  @spec stop(binary(), atom()) :: :ok
+  def stop(container_id, name \\ :default) do
+    case name do
+      :default -> TestcontainerEx.stop_container(container_id)
+      _ -> TestcontainerEx.stop_container(container_id, name)
+    end
+  end
+
+  @doc """
+  Convenience: returns the host via `TestcontainerEx.get_host/2`.
+  """
+  @spec host(TestcontainerEx.Container.Config.t(), atom()) :: String.t()
+  def host(container, name \\ :default) do
+    case name do
+      :default -> TestcontainerEx.get_host(container)
+      _ -> TestcontainerEx.get_host(container, name)
+    end
   end
 end

@@ -286,39 +286,15 @@ defmodule AshScylla.DataLayer do
         {:ok, %Xandra.Page{content: content}} ->
           rows = content || []
           records = Enum.map(rows, &to_ash_record(&1, resource))
-          # Post-process expression calculations
           %__MODULE__{context: context} = data_layer_query
-          records = apply_calculations(records, context)
-          {:ok, records}
+          {:ok, apply_calculations(records, context)}
 
-        {:error, %Xandra.Error{} = error} ->
-          Logger.warning("Xandra error in run_query repo.query: #{Exception.message(error)}")
-          {:error, AshScylla.Error.wrap_xandra_error(error)}
-
-        {:error, %Xandra.ConnectionError{} = error} ->
-          Logger.warning(
-            "Xandra connection error in run_query repo.query: #{Exception.message(error)}"
-          )
-
-          {:error, AshScylla.Error.wrap_xandra_error(error)}
-
-        {:error, error} ->
-          Logger.error("Unexpected error in run_query repo.query: #{inspect(error)}")
-          {:error, AshScylla.Error.wrap_xandra_error(error)}
+        error ->
+          handle_query_result(error)
       end
     end)
   rescue
-    e in Xandra.Error ->
-      Logger.warning("Xandra error in run_query: #{Exception.message(e)}")
-      {:error, AshScylla.Error.wrap_xandra_error(e)}
-
-    e in Xandra.ConnectionError ->
-      Logger.warning("Xandra connection error in run_query: #{Exception.message(e)}")
-      {:error, AshScylla.Error.wrap_xandra_error(e)}
-
-    e ->
-      Logger.error("Unexpected error in run_query: #{Exception.message(e)}")
-      {:error, AshScylla.Error.wrap_xandra_error(e)}
+    e -> handle_query_result({:error, e})
   end
 
   # ============================================================================
@@ -358,12 +334,8 @@ defmodule AshScylla.DataLayer do
 
   @impl Ash.DataLayer
   @spec offset(t(), pos_integer(), Ash.Resource.t()) :: {:ok, t()}
-  def offset(data_layer_query, offset, _resource) do
-    Logger.warning(
-      "offset/3: OFFSET is not natively supported in ScyllaDB and results will be silently dropped"
-    )
-
-    {:ok, %{data_layer_query | offset: offset}}
+  def offset(_data_layer_query, _offset, _resource) do
+    raise "OFFSET is not supported in ScyllaDB/Cassandra. Use keyset pagination instead."
   end
 
   # ============================================================================
@@ -529,46 +501,25 @@ defmodule AshScylla.DataLayer do
           {:ok, [Ash.Resource.t()]} | {:error, term()}
   def update_query(data_layer_query, changeset, _opts, resource) do
     repo = repo(resource)
-    table = source(resource)
     opts = build_opts(resource)
-    sanitized_table = sanitize_identifier(table)
-
+    sanitized_table = sanitize_identifier(source(resource))
     attrs = changeset_to_update_attrs(changeset, resource)
 
-    # Build SET clauses
-    {set_clauses_reversed, values_reversed} =
-      Enum.reduce(attrs, {[], []}, fn {k, v}, {cs, vs} ->
-        {["#{sanitize_identifier(to_string(k))} = ?" | cs], [v | vs]}
-      end)
+    {set_clauses, set_values} = build_set_clauses(attrs)
 
-    set_clauses = Enum.reverse(set_clauses_reversed)
-    values = :lists.reverse(values_reversed)
-
-    # Build WHERE clause from filters
     %__MODULE__{filters: filters} = data_layer_query
     {where_clause, where_params} = QueryBuilder.build_where_clause(filters)
 
     query =
       IO.iodata_to_binary([
-        "UPDATE ",
-        sanitized_table,
-        " SET ",
-        Enum.join(set_clauses, ", "),
-        " WHERE ",
-        where_clause
+        "UPDATE ", sanitized_table, " SET ", Enum.join(set_clauses, ", "),
+        " WHERE ", where_clause
       ])
 
-    all_params = values ++ where_params
+    Logger.debug("Executing bulk UPDATE: #{query} with params #{inspect(set_values ++ where_params)}")
 
-    Logger.debug("Executing bulk UPDATE: #{query} with params #{inspect(all_params)}")
-
-    case repo.query(query, all_params, opts) do
-      {:ok, _} ->
-        # Re-run the query to fetch updated records
-        run_query(data_layer_query, resource)
-
-      {:error, error} ->
-        handle_scylla_result({:error, error})
+    with {:ok, _} <- repo.query(query, set_values ++ where_params, opts) do
+      run_query(data_layer_query, resource)
     end
   end
 
@@ -577,27 +528,18 @@ defmodule AshScylla.DataLayer do
           :ok | {:error, term()}
   def destroy_query(data_layer_query, _changeset, _opts, resource) do
     repo = repo(resource)
-    table = source(resource)
     opts = build_opts(resource)
-    sanitized_table = sanitize_identifier(table)
+    sanitized_table = sanitize_identifier(source(resource))
 
     %__MODULE__{filters: filters} = data_layer_query
     {where_clause, where_params} = QueryBuilder.build_where_clause(filters)
 
     query =
-      IO.iodata_to_binary([
-        "DELETE FROM ",
-        sanitized_table,
-        " WHERE ",
-        where_clause
-      ])
+      IO.iodata_to_binary(["DELETE FROM ", sanitized_table, " WHERE ", where_clause])
 
     Logger.debug("Executing bulk DELETE: #{query} with params #{inspect(where_params)}")
 
-    case repo.query(query, where_params, opts) do
-      {:ok, _} -> :ok
-      {:error, error} -> handle_scylla_result({:error, error})
-    end
+    with {:ok, _} <- repo.query(query, where_params, opts), do: :ok
   end
 
   @impl Ash.DataLayer
@@ -750,24 +692,12 @@ defmodule AshScylla.DataLayer do
 
   @spec build_insert_statement(String.t(), map(), pos_integer() | nil) :: {String.t(), list()}
   defp build_insert_statement(table, attrs, ttl) do
-    {sanitized_fields, values} =
-      Enum.reduce(attrs, {[], []}, fn {k, v}, {fs, vs} ->
-        {[sanitize_identifier(to_string(k)) | fs], [v | vs]}
-      end)
-
-    sanitized_fields = Enum.reverse(sanitized_fields)
-    values = :lists.reverse(values)
-    field_count = length(sanitized_fields)
+    {sanitized_fields, values} = build_field_value_pairs(attrs)
 
     query =
       IO.iodata_to_binary([
-        "INSERT INTO ",
-        table,
-        " (",
-        Enum.join(sanitized_fields, ", "),
-        ") VALUES (",
-        Enum.map_join(1..field_count, ", ", fn _ -> "?" end),
-        ")",
+        "INSERT INTO ", table, " (", Enum.join(sanitized_fields, ", "), ") VALUES (",
+        Enum.map_join(1..length(sanitized_fields), ", ", fn _ -> "?" end), ")",
         if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
       ])
 
@@ -800,19 +730,13 @@ defmodule AshScylla.DataLayer do
   @spec do_upsert(map(), Ash.Changeset.t(), Ash.Resource.t(), module(), keyword()) ::
           {:ok, Ash.Resource.t()} | {:error, term()}
   defp do_upsert(attrs, changeset, resource, repo, _opts) do
-    table = source(resource)
     opts = build_opts(resource)
     ttl = Dsl.ttl(resource)
     lwt? = Dsl.lwt(resource)
 
-    {sanitized_fields, values} =
-      Enum.reduce(attrs, {[], []}, fn {k, v}, {fs, vs} ->
-        {[sanitize_identifier(to_string(k)) | fs], [v | vs]}
-      end)
+    sanitized_table = sanitize_identifier(source(resource))
 
-    sanitized_fields = Enum.reverse(sanitized_fields)
-    values = :lists.reverse(values)
-    sanitized_table = sanitize_identifier(table)
+    {sanitized_fields, values} = build_field_value_pairs(attrs)
     field_count = length(sanitized_fields)
 
     # Use INSERT ... IF NOT EXISTS for LWT upsert semantics
@@ -820,13 +744,9 @@ defmodule AshScylla.DataLayer do
 
     query =
       IO.iodata_to_binary([
-        "INSERT INTO ",
-        sanitized_table,
-        " (",
-        Enum.join(sanitized_fields, ", "),
-        ") VALUES (",
-        Enum.map_join(1..field_count, ", ", fn _ -> "?" end),
-        ")",
+        "INSERT INTO ", sanitized_table,
+        " (", Enum.join(sanitized_fields, ", "), ") VALUES (",
+        Enum.map_join(1..field_count, ", ", fn _ -> "?" end), ")",
         lwt_suffix,
         if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
       ])
@@ -835,15 +755,21 @@ defmodule AshScylla.DataLayer do
 
     case repo.query(query, values, opts) do
       {:ok, %Xandra.Page{content: [[true]]}} ->
-        # LWT succeeded — fetch the record
         {:ok, to_ash_record(attrs, resource)}
 
       {:ok, %Xandra.Page{content: [[false]]}} ->
-        # LWT conflict — record already exists, do an update instead
-        do_update(attrs, changeset, resource, repo)
+        # LWT conflict — record already exists, do an update instead.
+        pk_names =
+          resource
+          |> Info.attributes()
+          |> Enum.filter(& &1.primary_key?)
+          |> Enum.map(& &1.name)
+          |> MapSet.new()
+
+        update_attrs = Map.reject(attrs, fn {k, _} -> MapSet.member?(pk_names, k) end)
+        do_update(update_attrs, changeset, resource, repo)
 
       {:ok, _} ->
-        # Non-LWT insert succeeded
         {:ok, to_ash_record(attrs, resource)}
 
       {:error, error} ->
@@ -1026,31 +952,17 @@ defmodule AshScylla.DataLayer do
 
   @spec do_insert(map(), module(), module()) :: {:ok, term()} | {:error, term()}
   defp do_insert(attrs, resource, repo) do
-    table = source(resource)
     opts = build_opts(resource)
     ttl = Dsl.ttl(resource)
 
-    {sanitized_fields, values} =
-      Enum.reduce(attrs, {[], []}, fn {k, v}, {fs, vs} ->
-        {[sanitize_identifier(to_string(k)) | fs], [v | vs]}
-      end)
-
-    # Both lists are reversed (prepended), so reverse back
-    sanitized_fields = Enum.reverse(sanitized_fields)
-    values = :lists.reverse(values)
-
-    sanitized_table = sanitize_identifier(table)
-    field_count = length(sanitized_fields)
+    sanitized_table = sanitize_identifier(source(resource))
+    {sanitized_fields, values} = build_field_value_pairs(attrs)
 
     query =
       IO.iodata_to_binary([
-        "INSERT INTO ",
-        sanitized_table,
-        " (",
-        Enum.join(sanitized_fields, ", "),
-        ") VALUES (",
-        Enum.map_join(1..field_count, ", ", fn _ -> "?" end),
-        ")",
+        "INSERT INTO ", sanitized_table,
+        " (", Enum.join(sanitized_fields, ", "), ") VALUES (",
+        Enum.map_join(1..length(sanitized_fields), ", ", fn _ -> "?" end), ")",
         if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
       ])
 
@@ -1066,44 +978,42 @@ defmodule AshScylla.DataLayer do
 
   @spec do_update(map(), term(), module(), module()) :: {:ok, term()} | {:error, term()}
   defp do_update(attrs, changeset, resource, repo) do
-    table = source(resource)
+    # If there are no changed attributes (e.g. only relationships touched),
+    # skip the UPDATE entirely — generating UPDATE table SET WHERE ... is invalid CQL.
+    if map_size(attrs) == 0 do
+      Logger.debug(
+        "do_update: no changed attributes, skipping UPDATE and fetching existing record"
+      )
+
+      pk = get_primary_key(changeset, resource)
+
+      case fetch_by_primary_key(pk, resource, repo) do
+        {:ok, record} -> {:ok, to_ash_record(record, resource)}
+        {:error, _} = error -> handle_scylla_result(error)
+      end
+    else
+      do_update_non_empty(attrs, changeset, resource, repo)
+    end
+  end
+
+  defp do_update_non_empty(attrs, changeset, resource, repo) do
     opts = build_opts(resource)
-    sanitized_table = sanitize_identifier(table)
+    sanitized_table = sanitize_identifier(source(resource))
 
-    # Build SET clauses and values in a single pass
-    {set_clauses_reversed, values_reversed} =
-      Enum.reduce(attrs, {[], []}, fn {k, v}, {cs, vs} ->
-        {["#{sanitize_identifier(to_string(k))} = ?" | cs], [v | vs]}
-      end)
+    {set_clauses, values} = build_set_clauses(attrs)
 
-    set_clauses = Enum.reverse(set_clauses_reversed)
-    values = :lists.reverse(values_reversed)
-
-    # Build WHERE clause from primary key
-    pk = get_primary_key(changeset, resource)
-
-    {pk_clauses_reversed, pk_values_reversed} =
-      Enum.reduce(pk, {[], []}, fn {k, v}, {cs, vs} ->
-        {["#{sanitize_identifier(to_string(k))} = ?" | cs], [v | vs]}
-      end)
-
-    pk_clauses = Enum.reverse(pk_clauses_reversed)
-    pk_values = :lists.reverse(pk_values_reversed)
+    {pk_where, pk_values} = build_pk_where_clause(changeset, resource)
 
     query =
       IO.iodata_to_binary([
-        "UPDATE ",
-        sanitized_table,
-        " SET ",
-        Enum.join(set_clauses, ", "),
-        " WHERE ",
-        Enum.join(pk_clauses, " AND ")
+        "UPDATE ", sanitized_table, " SET ", Enum.join(set_clauses, ", "),
+        " WHERE ", pk_where
       ])
 
     Logger.debug("Executing UPDATE: #{query} with params #{inspect(values ++ pk_values)}")
 
     with {:ok, _} <- repo.query(query, values ++ pk_values, opts),
-         {:ok, record} <- fetch_by_primary_key(pk, resource, repo) do
+         {:ok, record} <- fetch_by_pk(changeset, resource, repo) do
       {:ok, to_ash_record(record, resource)}
     end
     |> handle_scylla_result()
@@ -1111,81 +1021,49 @@ defmodule AshScylla.DataLayer do
 
   @spec do_delete(term(), module(), module()) :: :ok | {:error, term()}
   defp do_delete(changeset, resource, repo) do
-    table = source(resource)
     opts = build_opts(resource)
-    pk = get_primary_key(changeset, resource)
-    sanitized_table = sanitize_identifier(table)
+    sanitized_table = sanitize_identifier(source(resource))
 
-    {pk_clauses_reversed, pk_values_reversed} =
-      Enum.reduce(pk, {[], []}, fn {k, v}, {cs, vs} ->
-        {["#{sanitize_identifier(to_string(k))} = ?" | cs], [v | vs]}
-      end)
-
-    pk_clauses = Enum.reverse(pk_clauses_reversed)
-    pk_values = :lists.reverse(pk_values_reversed)
+    {pk_where, pk_values} = build_pk_where_clause(changeset, resource)
 
     query =
-      IO.iodata_to_binary([
-        "DELETE FROM ",
-        sanitized_table,
-        " WHERE ",
-        Enum.join(pk_clauses, " AND ")
-      ])
+      IO.iodata_to_binary(["DELETE FROM ", sanitized_table, " WHERE ", pk_where])
 
     Logger.debug("Executing DELETE: #{query} with params #{inspect(pk_values)}")
 
-    case repo.query(query, pk_values, opts) do
-      {:ok, _} ->
-        :ok
-
-      {:error, error} ->
-        handle_scylla_result({:error, error})
-    end
+    with {:ok, _} <- repo.query(query, pk_values, opts), do: :ok
   end
 
   @spec fetch_by_primary_key(map(), module(), module()) :: {:ok, term()} | {:error, term()}
   defp fetch_by_primary_key(pk, resource, repo) do
-    table = source(resource)
-    sanitized_table = sanitize_identifier(table)
-
-    {pk_clauses_reversed, pk_values_reversed} =
-      Enum.reduce(pk, {[], []}, fn {k, v}, {cs, vs} ->
-        {["#{sanitize_identifier(to_string(k))} = ?" | cs], [v | vs]}
-      end)
-
-    pk_clauses = Enum.reverse(pk_clauses_reversed)
-    pk_values = :lists.reverse(pk_values_reversed)
+    sanitized_table = sanitize_identifier(source(resource))
+    {pk_where, pk_values} = build_where_from_map(pk)
 
     query =
       IO.iodata_to_binary([
-        "SELECT * FROM ",
-        sanitized_table,
-        " WHERE ",
-        Enum.join(pk_clauses, " AND "),
-        " LIMIT 1"
+        "SELECT * FROM ", sanitized_table, " WHERE ", pk_where, " LIMIT 1"
       ])
 
     Logger.debug("Executing SELECT: #{query} with params #{inspect(pk_values)}")
 
     case repo.query(query, pk_values) do
-      {:ok, %Xandra.Page{content: [row | _]}} ->
-        {:ok, row}
-
-      {:ok, %Xandra.Page{content: []}} ->
-        {:error,
-         AshScylla.Error.ScyllaError.from_error(
-           "Record not found in table #{sanitized_table} with primary key #{inspect(pk)}"
-         )}
-
-      {:ok, %Xandra.Page{content: nil}} ->
-        {:error,
-         AshScylla.Error.ScyllaError.from_error(
-           "Record not found in table #{sanitized_table} with primary key #{inspect(pk)}"
-         )}
-
-      {:error, error} ->
-        handle_scylla_result({:error, error})
+      {:ok, %Xandra.Page{content: [row | _]}} -> {:ok, row}
+      {:ok, %Xandra.Page{content: []}} -> not_found_error(sanitized_table, pk)
+      {:ok, %Xandra.Page{content: nil}} -> not_found_error(sanitized_table, pk)
+      {:error, error} -> handle_scylla_result({:error, error})
     end
+  end
+
+  defp not_found_error(table, pk) do
+    {:error,
+     AshScylla.Error.ScyllaError.from_error(
+       "Record not found in table #{table} with primary key #{inspect(pk)}"
+     )}
+  end
+
+  defp fetch_by_pk(changeset, resource, repo) do
+    pk = get_primary_key(changeset, resource)
+    fetch_by_primary_key(pk, resource, repo)
   end
 
   @spec get_primary_key(term(), module()) :: map()
@@ -1260,5 +1138,70 @@ defmodule AshScylla.DataLayer do
   defp handle_scylla_result({:error, error}) do
     Logger.error("Unexpected error: #{inspect(error)}")
     {:error, AshScylla.Error.wrap_xandra_error(error)}
+  end
+
+  # ---------------------------------------------------------------------------
+  # SQL Construction Helpers
+  # ---------------------------------------------------------------------------
+
+  @spec handle_query_result({:ok, term()} | {:error, term()}) :: {:ok, term()} | {:error, term()}
+  defp handle_query_result({:ok, _} = ok), do: ok
+
+  defp handle_query_result({:error, %Xandra.Error{} = error}) do
+    Logger.warning("Xandra error: #{Exception.message(error)}")
+    {:error, AshScylla.Error.wrap_xandra_error(error)}
+  end
+
+  defp handle_query_result({:error, %Xandra.ConnectionError{} = error}) do
+    Logger.warning("Xandra connection error: #{Exception.message(error)}")
+    {:error, AshScylla.Error.wrap_xandra_error(error)}
+  end
+
+  defp handle_query_result({:error, error}) when is_exception(error) do
+    Logger.error("Unexpected error in run_query: #{Exception.message(error)}")
+    {:error, AshScylla.Error.wrap_xandra_error(error)}
+  end
+
+  defp handle_query_result({:error, error}) do
+    Logger.error("Unexpected error: #{inspect(error)}")
+    {:error, AshScylla.Error.wrap_xandra_error(error)}
+  end
+
+  @spec build_field_value_pairs(map()) :: {[String.t()], [term()]}
+  defp build_field_value_pairs(attrs) do
+    {fields, values} =
+      Enum.reduce(attrs, {[], []}, fn {k, v}, {fs, vs} ->
+        {[sanitize_identifier(to_string(k)) | fs], [v | vs]}
+      end)
+
+    {Enum.reverse(fields), :lists.reverse(values)}
+  end
+
+  @spec build_set_clauses(map()) :: {[String.t()], [term()]}
+  defp build_set_clauses(attrs) do
+    {clauses, values} =
+      Enum.reduce(attrs, {[], []}, fn {k, v}, {cs, vs} ->
+        sanitized = sanitize_identifier(to_string(k))
+        {["#{sanitized} = ?" | cs], [v | vs]}
+      end)
+
+    {Enum.reverse(clauses), :lists.reverse(values)}
+  end
+
+  @spec build_pk_where_clause(term(), module()) :: {String.t(), [term()]}
+  defp build_pk_where_clause(changeset, resource) do
+    pk = get_primary_key(changeset, resource)
+    build_where_from_map(pk)
+  end
+
+  @spec build_where_from_map(map()) :: {String.t(), [term()]}
+  defp build_where_from_map(pk_map) do
+    {clauses, values} =
+      Enum.reduce(pk_map, {[], []}, fn {k, v}, {cs, vs} ->
+        sanitized = sanitize_identifier(to_string(k))
+        {["#{sanitized} = ?" | cs], [v | vs]}
+      end)
+
+    {Enum.reverse(clauses) |> Enum.join(" AND "), :lists.reverse(values)}
   end
 end

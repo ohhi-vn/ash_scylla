@@ -56,8 +56,7 @@ defmodule AshScylla.DataLayer.Batch do
   @spec batch_insert(module(), [{String.t(), list()}], keyword()) ::
           {:ok, term()} | {:error, term()}
   def batch_insert(repo, statements, opts \\ []) do
-    Logger.debug("AshScylla: Executing batch insert with #{length(statements)} statements")
-    build_batch_query(statements, repo, opts)
+    do_batch(repo, statements, opts, "insert")
   end
 
   @doc """
@@ -66,8 +65,7 @@ defmodule AshScylla.DataLayer.Batch do
   @spec batch_update(module(), [{String.t(), list()}], keyword()) ::
           {:ok, term()} | {:error, term()}
   def batch_update(repo, statements, opts \\ []) do
-    Logger.debug("AshScylla: Executing batch update with #{length(statements)} statements")
-    build_batch_query(statements, repo, opts)
+    do_batch(repo, statements, opts, "update")
   end
 
   @doc """
@@ -76,8 +74,7 @@ defmodule AshScylla.DataLayer.Batch do
   @spec batch_delete(module(), [{String.t(), list()}], keyword()) ::
           {:ok, term()} | {:error, term()}
   def batch_delete(repo, statements, opts \\ []) do
-    Logger.debug("AshScylla: Executing batch delete with #{length(statements)} statements")
-    build_batch_query(statements, repo, opts)
+    do_batch(repo, statements, opts, "delete")
   end
 
   @doc """
@@ -147,7 +144,7 @@ defmodule AshScylla.DataLayer.Batch do
       end)
 
     case results do
-      {:ok, _} -> {:ok, :completed}
+      {:ok, acc} -> {:ok, Enum.reverse(acc)}
       {:error, _} = error -> error
     end
   end
@@ -170,6 +167,15 @@ defmodule AshScylla.DataLayer.Batch do
     end)
   end
 
+  # ---------------------------------------------------------------------------
+  # Private functions
+  # ---------------------------------------------------------------------------
+
+  defp do_batch(repo, statements, opts, operation) do
+    Logger.debug("AshScylla: Executing batch #{operation} with #{length(statements)} statements")
+    build_batch_query(statements, repo, opts)
+  end
+
   @spec build_batch_query([{String.t(), list()}], module(), keyword()) ::
           {:ok, term()} | {:error, term()}
   defp build_batch_query(statements, repo, opts) do
@@ -179,14 +185,7 @@ defmodule AshScylla.DataLayer.Batch do
         {:ok, []}
 
       _ ->
-        # Validate all statements are {query_string, params_list} tuples
-        invalid_count =
-          Enum.count(statements, fn
-            {query, params} when is_binary(query) and is_list(params) -> false
-            _ -> true
-          end)
-
-        if invalid_count > 0 do
+        unless valid_statements?(statements) do
           invalid =
             Enum.find(statements, fn
               {query, params} when is_binary(query) and is_list(params) -> false
@@ -199,18 +198,20 @@ defmodule AshScylla.DataLayer.Batch do
                 "Invalid batch statement: #{inspect(invalid)}. Expected {query_string, params_list}"
         end
 
-        {queries_reversed, params_reversed} =
-          Enum.reduce(statements, {[], []}, fn {query, params}, {acc_q, acc_p} ->
-            {[query | acc_q], Enum.reverse(params, acc_p)}
-          end)
-
-        joined_queries = Enum.reverse(queries_reversed) |> Enum.join("; ")
-        all_params = :lists.reverse(params_reversed)
-        batch_query = "BEGIN BATCH #{joined_queries} APPLY BATCH;"
+        queries = Enum.map(statements, fn {query, _} -> query end)
+        all_params = Enum.flat_map(statements, fn {_, params} -> params end)
+        batch_query = "BEGIN BATCH #{Enum.join(queries, "; ")} APPLY BATCH;"
 
         Logger.debug("AshScylla: Built batch query with #{length(statements)} statements")
         repo.query(batch_query, all_params, opts)
     end
+  end
+
+  defp valid_statements?(statements) do
+    Enum.all?(statements, fn
+      {query, params} when is_binary(query) and is_list(params) -> true
+      _ -> false
+    end)
   end
 
   @spec partition_key_hash(list()) :: non_neg_integer()

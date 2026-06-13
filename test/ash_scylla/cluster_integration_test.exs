@@ -2,7 +2,7 @@ defmodule AshScylla.ClusterIntegrationTest do
   @moduledoc """
   Integration tests for AshScylla against a real ScyllaDB cluster.
 
-  Uses testcontainer_ex to spin up multiple ScyllaDB containers
+  Uses testcontainer_ex 0.6 (Podman) to spin up multiple ScyllaDB containers
   and verifies the data layer works correctly across the cluster.
 
   Run with: mix test test/ash_scylla/cluster_integration_test.exs --only integration
@@ -42,6 +42,12 @@ defmodule AshScylla.ClusterIntegrationTest do
   end
 
   defp start_node(index) do
+    container_name = "ash_scylla_cluster_node_#{index}"
+    # Remove leftover container from previous runs to avoid HTTP 409
+    case System.cmd("docker", ["rm", "-f", container_name], stderr_to_stdout: true) do
+      {_, _} -> :ok
+    end
+
     container = build_container(index)
     {:ok, started} = TestcontainerEx.start_container(container)
     {index, started}
@@ -182,24 +188,26 @@ defmodule AshScylla.ClusterIntegrationTest do
 
           :pending ->
             stop_container(elem(node1, 1))
-            %{nodes: nil}
+            :ok
         end
 
       {:error, reason} ->
         IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
-        %{nodes: nil}
+        :ok
     end
   end
 
-  setup %{nodes: nil} do
-    {:skip, "Container engine not available or cluster did not become ready"}
+  setup %{nodes: nodes} do
+    if nodes != [] do
+      {_index, container} = hd(nodes)
+      conn = connect_node(container, 5)
+      %{conn: conn}
+    else
+      :ok
+    end
   end
 
-  setup %{nodes: nodes} do
-    [node1 | _] = nodes
-    conn = connect_node(elem(node1, 1))
-    %{conn: conn, nodes: nodes}
-  end
+  setup _, do: :ok
 
   # ── Helpers ─────────────────────────────────────────────────────────────────
 

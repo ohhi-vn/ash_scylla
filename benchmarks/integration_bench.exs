@@ -6,7 +6,7 @@
 #   # Against an existing ScyllaDB instance:
 #   mix run benchmarks/integration_bench.exs
 #
-#   # Spawn a local test container (Podman/Docker required):
+#   # Spawn a local test container (Podman required):
 #   mix run benchmarks/integration_bench.exs --container
 #
 #   # Or via the runner:
@@ -59,10 +59,10 @@ defmodule AshScylla.Benchmarks.Integration do
   def run_with_container do
     IO.puts("Starting ScyllaDB test container...")
 
-    case TestcontainerEx.start_container(@scylla_container_config) do
+    case ScyllaContainer.start(@scylla_container_config) do
       {:ok, container} ->
         port = ScyllaContainer.port(container)
-        host = TestcontainerEx.get_host(container)
+        host = ScyllaContainer.host(container)
         IO.puts("  ScyllaDB container ready at #{host}:#{port}")
 
         repo_config = [
@@ -77,7 +77,7 @@ defmodule AshScylla.Benchmarks.Integration do
         do_benchmarks()
 
         IO.puts("Stopping ScyllaDB test container...")
-        TestcontainerEx.stop_container(container.container_id)
+        ScyllaContainer.stop(container.container_id)
         {:ok, :completed}
 
       {:error, reason} ->
@@ -118,7 +118,7 @@ defmodule AshScylla.Benchmarks.Integration do
   defp ensure_bench_keyspace(container) do
     {:ok, conn} =
       Xandra.start_link(
-        nodes: ["#{TestcontainerEx.get_host(container)}:#{ScyllaContainer.port(container)}"]
+        nodes: ["#{ScyllaContainer.host(container)}:#{ScyllaContainer.port(container)}"]
       )
 
     Xandra.execute(conn, """

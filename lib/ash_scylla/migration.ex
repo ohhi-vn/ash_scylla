@@ -316,46 +316,29 @@ defmodule AshScylla.Migration do
     "SELECT type_name FROM system_schema.types WHERE type_name = '#{type_name}'"
   end
 
-  @spec attribute_to_cql(Ash.Resource.Attribute.t()) :: String.t()
-  defp attribute_to_cql(%Ash.Resource.Attribute{} = attr) do
-    name = attr.name
-    type = attr.type
-    opts = attr.constraints
+  defp attribute_to_cql(attr_or_keyword) do
+    {name, type, opts, primary_key?, allow_nil?} =
+      case attr_or_keyword do
+        %Ash.Resource.Attribute{} = attr ->
+          {attr.name, attr.type, attr.constraints, attr.primary_key?, attr.allow_nil?}
+
+        attr when is_list(attr) ->
+          {Keyword.get(attr, :name), Keyword.get(attr, :type, :string),
+           Keyword.get(attr, :type_opts, []), Keyword.get(attr, :primary_key, false),
+           Keyword.get(attr, :allow_nil, true)}
+      end
 
     type_str = ash_type_to_cql_type(type, opts)
-
-    primary_key = if attr.primary_key?, do: " PRIMARY KEY", else: ""
-    nullable = if attr.allow_nil?, do: "", else: " NOT NULL"
+    primary_key = if primary_key?, do: " PRIMARY KEY", else: ""
+    nullable = if allow_nil?, do: "", else: " NOT NULL"
 
     "#{name} #{type_str}#{primary_key}#{nullable}"
   end
-
-  # Fallback for keyword-list attributes (compile-time usage)
-  defp attribute_to_cql(attr) when is_list(attr) do
-    name = Keyword.get(attr, :name)
-    type = Keyword.get(attr, :type, :string)
-    opts = Keyword.get(attr, :type_opts, [])
-
-    type_str = ash_type_to_cql_type(type, opts)
-
-    primary_key = if Keyword.get(attr, :primary_key), do: " PRIMARY KEY", else: ""
-    nullable = if Keyword.get(attr, :allow_nil, true), do: "", else: " NOT NULL"
-
-    "#{name} #{type_str}#{primary_key}#{nullable}"
-  end
-
-  @type_mapping %{
-    :uuid => "UUID",
-    :string => "TEXT",
-    :integer => "BIGINT",
-    :boolean => "BOOLEAN",
-    :utc_datetime => "TIMESTAMP",
-    :date => "DATE",
-    :time => "TIME"
-  }
 
   @doc """
   Converts an Ash type atom to its CQL type string representation.
+
+  Delegates to `AshScylla.DataLayer.Types.ash_type_to_cql_type/2`.
 
   ## Examples
 
@@ -369,30 +352,6 @@ defmodule AshScylla.Migration do
       "MAP<TEXT, INT>"
   """
   @spec ash_type_to_cql_type(atom(), keyword()) :: String.t()
-  def ash_type_to_cql_type(type, opts) when is_atom(type) do
-    base_type =
-      case type do
-        :map ->
-          "MAP<#{Keyword.get(opts, :key_type, "TEXT")}, #{Keyword.get(opts, :value_type, "TEXT")}>"
-
-        :array ->
-          "LIST<#{Keyword.get(opts, :element_type, "TEXT")}>"
-
-        :set ->
-          "SET<#{Keyword.get(opts, :element_type, "TEXT")}>"
-
-        :udt ->
-          type_name = Keyword.get(opts, :type_name, "undefined")
-
-          type_name_str =
-            if is_atom(type_name), do: Atom.to_string(type_name), else: to_string(type_name)
-
-          "frozen<#{type_name_str}>"
-
-        mapped_type ->
-          Map.get(@type_mapping, mapped_type, "TEXT")
-      end
-
-    if Keyword.get(opts, :frozen), do: "frozen<#{base_type}>", else: base_type
-  end
+  def ash_type_to_cql_type(type, opts),
+    do: AshScylla.DataLayer.Types.ash_type_to_cql_type(type, opts)
 end

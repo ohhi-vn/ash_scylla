@@ -369,10 +369,11 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
   # 5. DataLayer.repo/1 - Edge cases
   # ===========================================================================
 
-  describe "repo/1 - @repo module attribute" do
-    test "uses @repo attribute when set directly" do
+  describe "repo/1 - DSL repo" do
+    test "uses repo from DSL config" do
       changeset = %Ash.Changeset{attributes: %{id: "test-id", name: "Test"}}
-      # This will call repo/1 internally; if @repo is not found, it raises
+      # DirectRepoResource has repo(FakeRepo) in its DSL block
+      # FakeRepo returns empty page for direct_repo_items SELECT, so fetch_by_PK fails
       assert {:error, %ScyllaError{}} = DataLayer.create(DirectRepoResource, changeset)
     end
   end
@@ -606,7 +607,7 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
     end
 
     test "accepts identifier from DSL table config" do
-      assert DataLayer.source(AshScylla.TestResource) == "test_resource"
+      assert DataLayer.source(DirectRepoResource) == "direct_repo_items"
     end
   end
 

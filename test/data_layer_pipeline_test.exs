@@ -6,7 +6,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
   operations, verifying that the DataLayer correctly bridges Ash resources and
   ScyllaDB via Xandra.
 
-  Uses testcontainer_ex 0.5 ScyllaContainer for container lifecycle management.
+  Uses testcontainer_ex 0.6 ScyllaContainer for container lifecycle management (Podman).
   """
 
   use ExUnit.Case, async: false
@@ -69,7 +69,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
         wait_for_cql(conn, retries - 1)
 
       {:error, reason} ->
-        raise "ScyllaDB not ready after 30s: #{inspect(reason)}"
+        {:error, reason}
     end
   end
 
@@ -139,10 +139,10 @@ defmodule AshScylla.DataLayer.PipelineTest do
   setup_all do
     case AshScylla.Test.ContainerEngine.ensure_running() do
       :ok ->
-        case TestcontainerEx.start_container(@scylla_container_config) do
+        case ScyllaContainer.start(@scylla_container_config) do
           {:ok, scylla_container} ->
             port = ScyllaContainer.port(scylla_container)
-            host = TestcontainerEx.get_host(scylla_container)
+            host = ScyllaContainer.host(scylla_container)
             conn = connect_with_retry(host, port)
 
             # Create keyspace and tables if they don't exist
@@ -172,30 +172,33 @@ defmodule AshScylla.DataLayer.PipelineTest do
             )
 
             on_exit(fn ->
-              TestcontainerEx.stop_container(scylla_container.container_id)
+              ScyllaContainer.stop(scylla_container.container_id)
             end)
 
             %{conn: conn, scylla: scylla_container}
 
           {:error, reason} ->
             IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
-            %{conn: nil, scylla: nil}
+            Process.put(:pipeline_test_conn, nil)
+            :ok
         end
 
       {:error, reason} ->
         IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
-        %{conn: nil, scylla: nil}
+        Process.put(:pipeline_test_conn, nil)
+        :ok
     end
   end
 
-  setup %{conn: nil} do
-    {:skip, "Container engine not available"}
-  end
+  setup do
+    case Process.get(:pipeline_test_conn) do
+      nil ->
+        :ok
 
-  setup %{conn: conn} do
-    # Clean the users table before each test
-    {:ok, _} = Xandra.execute(conn, "TRUNCATE ash_scylla_test.users")
-    %{conn: conn}
+      conn ->
+        {:ok, _} = Xandra.execute(conn, "TRUNCATE ash_scylla_test.users")
+        %{conn: conn}
+    end
   end
 
   # ══════════════════════════════════════════════════════════════════════════

@@ -581,120 +581,44 @@ defmodule AshScylla.DataLayer.Dsl do
 
       unquote(transformed)
 
-      # ── Existing getter functions ──
-      @doc false
-      def __ash_scylla__(:table), do: @ash_scylla_table
+      # ── Unified getter function ──
+      @ash_scylla_config %{
+        table: @ash_scylla_table,
+        keyspace: @ash_scylla_keyspace,
+        consistency: @ash_scylla_consistency,
+        ttl: @ash_scylla_ttl,
+        secondary_indexes: @ash_scylla_secondary_indexes,
+        materialized_views: @ash_scylla_materialized_views,
+        pagination: @ash_scylla_pagination,
+        per_action_consistency: @ash_scylla_per_action_consistency,
+        lwt: @ash_scylla_lwt,
+        repo: @ash_scylla_repo,
+        base_filter: @ash_scylla_base_filter,
+        default_context: @ash_scylla_default_context,
+        description: @ash_scylla_description,
+        identities: @ash_scylla_identities,
+        aggregates: @ash_scylla_aggregates,
+        calculations: @ash_scylla_calculations,
+        preparations: @ash_scylla_preparations,
+        changes: @ash_scylla_changes,
+        validations: @ash_scylla_validations,
+        pipelines: @ash_scylla_pipelines,
+        multitenancy: @ash_scylla_multitenancy,
+        code_interface: @ash_scylla_code_interface,
+        relationships: @ash_scylla_relationships,
+        action_configs: @ash_scylla_action_configs
+      }
 
-      @doc false
-      def __ash_scylla__(:keyspace), do: @ash_scylla_keyspace
-
-      @doc false
-      def __ash_scylla__(:consistency), do: @ash_scylla_consistency
-
-      @doc false
-      def __ash_scylla__(:ttl), do: @ash_scylla_ttl
-
-      @doc false
-      def __ash_scylla__(:secondary_indexes) do
-        @ash_scylla_secondary_indexes
-      end
-
-      @doc false
-      def __ash_scylla__(:materialized_views) do
-        @ash_scylla_materialized_views
-      end
-
-      @doc false
-      def __ash_scylla__(:pagination), do: @ash_scylla_pagination
-
-      @doc false
-      def __ash_scylla__(:per_action_consistency), do: @ash_scylla_per_action_consistency
-
-      @doc false
-      def __ash_scylla__(:lwt), do: @ash_scylla_lwt
-
-      @doc false
-      def __ash_scylla__(:repo), do: @ash_scylla_repo
-
-      # ── Ash 3.0+ getter functions ──
-      @doc false
-      def __ash_scylla__(:base_filter), do: @ash_scylla_base_filter
-
-      @doc false
-      def __ash_scylla__(:default_context), do: @ash_scylla_default_context
-
-      @doc false
-      def __ash_scylla__(:description), do: @ash_scylla_description
-
-      # ── Identity getter ──
-      @doc false
-      def __ash_scylla__(:identities) do
-        @ash_scylla_identities
-      end
-
-      # ── Aggregate getter ──
-      @doc false
-      def __ash_scylla__(:aggregates) do
-        @ash_scylla_aggregates
-      end
-
-      # ── Calculation getter ──
-      @doc false
-      def __ash_scylla__(:calculations) do
-        @ash_scylla_calculations
-      end
-
-      # ── Preparation getter ──
-      @doc false
-      def __ash_scylla__(:preparations) do
-        @ash_scylla_preparations
-      end
-
-      # ── Change getter ──
-      @doc false
-      def __ash_scylla__(:changes) do
-        @ash_scylla_changes
-      end
-
-      # ── Validation getter ──
-      @doc false
-      def __ash_scylla__(:validations) do
-        @ash_scylla_validations
-      end
-
-      # ── Pipeline getter ──
-      @doc false
-      def __ash_scylla__(:pipelines) do
-        @ash_scylla_pipelines
-      end
-
-      # ── Multitenancy getter ──
-      @doc false
-      def __ash_scylla__(:multitenancy), do: @ash_scylla_multitenancy
-
-      # ── Code Interface getter ──
-      @doc false
-      def __ash_scylla__(:code_interface), do: @ash_scylla_code_interface
-
-      # ── Relationship getter ──
-      @doc false
-      def __ash_scylla__(:relationships) do
-        @ash_scylla_relationships
-      end
-
-      # ── Action config getter ──
-      @doc false
-      def __ash_scylla__(:action_configs) do
-        @ash_scylla_action_configs
-      end
-
-      @doc false
-      def __ash_scylla__(_opt), do: nil
+      def __ash_scylla__(key), do: Map.get(@ash_scylla_config, key)
     end
   end
 
+  # ============================================================================
+  # Parse helpers
+  # ============================================================================
+
   @doc false
-  @spec parse_secondary_index(atom() | list() | {atom(), keyword()}) :: map()
+  @spec parse_secondary_index(atom() | list(atom()) | {atom(), keyword()}) :: map()
   def parse_secondary_index(column) when is_atom(column) do
     %{columns: [column], name: nil, options: []}
   end
@@ -712,6 +636,25 @@ defmodule AshScylla.DataLayer.Dsl do
   end
 
   # ============================================================================
+  # Private helpers
+  # ============================================================================
+
+  defp get_config(resource, key, default \\ nil) do
+    if function_exported?(resource, :__ash_scylla__, 1) do
+      resource.__ash_scylla__(key)
+    else
+      default
+    end
+  end
+
+  defp put_attr(module, attr, value), do: Module.put_attribute(module, attr, value)
+
+  defp add_to_attr(module, attr, value) do
+    current = Module.get_attribute(module, attr)
+    Module.put_attribute(module, attr, [value | current])
+  end
+
+  # ============================================================================
   # Existing public API getters
   # ============================================================================
 
@@ -719,49 +662,25 @@ defmodule AshScylla.DataLayer.Dsl do
   Gets the configured table name for a resource.
   """
   @spec table(module()) :: String.t() | nil
-  def table(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:table)
-    else
-      nil
-    end
-  end
+  def table(resource), do: get_config(resource, :table)
 
   @doc """
   Gets the configured keyspace for a resource.
   """
   @spec keyspace(module()) :: String.t() | nil
-  def keyspace(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:keyspace)
-    else
-      nil
-    end
-  end
+  def keyspace(resource), do: get_config(resource, :keyspace)
 
   @doc """
   Gets the configured consistency level for a resource.
   """
   @spec consistency(module()) :: atom() | nil
-  def consistency(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:consistency)
-    else
-      nil
-    end
-  end
+  def consistency(resource), do: get_config(resource, :consistency)
 
   @doc """
   Gets the configured TTL for a resource.
   """
   @spec ttl(module()) :: pos_integer() | nil
-  def ttl(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:ttl)
-    else
-      nil
-    end
-  end
+  def ttl(resource), do: get_config(resource, :ttl)
 
   @doc """
   Gets the secondary indexes defined for a resource.
@@ -772,13 +691,7 @@ defmodule AshScylla.DataLayer.Dsl do
   - `:options` - additional options
   """
   @spec secondary_indexes(module()) :: [map()]
-  def secondary_indexes(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:secondary_indexes)
-    else
-      []
-    end
-  end
+  def secondary_indexes(resource), do: get_config(resource, :secondary_indexes, [])
 
   @doc """
   Gets the materialized views defined for a resource.
@@ -788,13 +701,7 @@ defmodule AshScylla.DataLayer.Dsl do
   - `:config` - the view configuration keyword list
   """
   @spec materialized_views(module()) :: [map()]
-  def materialized_views(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:materialized_views)
-    else
-      []
-    end
-  end
+  def materialized_views(resource), do: get_config(resource, :materialized_views, [])
 
   @doc """
   Gets the pagination mode for a resource.
@@ -802,13 +709,7 @@ defmodule AshScylla.DataLayer.Dsl do
   Returns `:offset` or `:token`.
   """
   @spec pagination(module()) :: :offset | :token
-  def pagination(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:pagination)
-    else
-      :offset
-    end
-  end
+  def pagination(resource), do: get_config(resource, :pagination, :offset)
 
   @doc """
   Gets the per-action consistency configuration for a resource.
@@ -816,13 +717,7 @@ defmodule AshScylla.DataLayer.Dsl do
   Returns a map of action_name => consistency_level.
   """
   @spec per_action_consistency(module()) :: map()
-  def per_action_consistency(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:per_action_consistency)
-    else
-      %{}
-    end
-  end
+  def per_action_consistency(resource), do: get_config(resource, :per_action_consistency, %{})
 
   @doc """
   Checks if a column has a secondary index defined.
@@ -834,25 +729,13 @@ defmodule AshScylla.DataLayer.Dsl do
   end
 
   @spec lwt(module()) :: boolean()
-  def lwt(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:lwt)
-    else
-      false
-    end
-  end
+  def lwt(resource), do: get_config(resource, :lwt, false)
 
   @doc """
   Gets the configured repo for a resource.
   """
   @spec repo(module()) :: module() | nil
-  def repo(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:repo)
-    else
-      nil
-    end
-  end
+  def repo(resource), do: get_config(resource, :repo)
 
   # ============================================================================
   # Ash 3.0+ public API getters
@@ -865,13 +748,7 @@ defmodule AshScylla.DataLayer.Dsl do
   to all queries on this resource (Ash 3.0 feature).
   """
   @spec base_filter(module()) :: term() | nil
-  def base_filter(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:base_filter)
-    else
-      nil
-    end
-  end
+  def base_filter(resource), do: get_config(resource, :base_filter)
 
   @doc """
   Gets the default_context configured for a resource.
@@ -880,25 +757,13 @@ defmodule AshScylla.DataLayer.Dsl do
   changeset context for this resource (Ash 3.0 feature).
   """
   @spec default_context(module()) :: map() | nil
-  def default_context(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:default_context)
-    else
-      nil
-    end
-  end
+  def default_context(resource), do: get_config(resource, :default_context)
 
   @doc """
   Gets the description configured for a resource.
   """
   @spec description(module()) :: String.t() | nil
-  def description(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:description)
-    else
-      nil
-    end
-  end
+  def description(resource), do: get_config(resource, :description)
 
   @doc """
   Gets the identities defined for a resource.
@@ -909,13 +774,7 @@ defmodule AshScylla.DataLayer.Dsl do
   - `:options` - additional options
   """
   @spec identities(module()) :: [map()]
-  def identities(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:identities)
-    else
-      []
-    end
-  end
+  def identities(resource), do: get_config(resource, :identities, [])
 
   @doc """
   Gets the aggregates defined for a resource.
@@ -927,13 +786,7 @@ defmodule AshScylla.DataLayer.Dsl do
   - `:options` - additional options (filter, etc.)
   """
   @spec aggregates(module()) :: [map()]
-  def aggregates(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:aggregates)
-    else
-      []
-    end
-  end
+  def aggregates(resource), do: get_config(resource, :aggregates, [])
 
   @doc """
   Gets the calculations defined for a resource.
@@ -945,61 +798,31 @@ defmodule AshScylla.DataLayer.Dsl do
   - `:options` - additional options
   """
   @spec calculations(module()) :: [map()]
-  def calculations(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:calculations)
-    else
-      []
-    end
-  end
+  def calculations(resource), do: get_config(resource, :calculations, [])
 
   @doc """
   Gets the preparations defined for a resource.
   """
   @spec preparations(module()) :: [map()]
-  def preparations(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:preparations)
-    else
-      []
-    end
-  end
+  def preparations(resource), do: get_config(resource, :preparations, [])
 
   @doc """
   Gets the changes defined for a resource.
   """
   @spec changes(module()) :: [map()]
-  def changes(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:changes)
-    else
-      []
-    end
-  end
+  def changes(resource), do: get_config(resource, :changes, [])
 
   @doc """
   Gets the validations defined for a resource.
   """
   @spec validations(module()) :: [map()]
-  def validations(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:validations)
-    else
-      []
-    end
-  end
+  def validations(resource), do: get_config(resource, :validations, [])
 
   @doc """
   Gets the pipelines defined for a resource.
   """
   @spec pipelines(module()) :: [map()]
-  def pipelines(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:pipelines)
-    else
-      []
-    end
-  end
+  def pipelines(resource), do: get_config(resource, :pipelines, [])
 
   @doc """
   Gets the multitenancy configuration for a resource.
@@ -1009,25 +832,13 @@ defmodule AshScylla.DataLayer.Dsl do
   - `:attribute` - the attribute name for :attribute strategy (optional)
   """
   @spec multitenancy(module()) :: map() | nil
-  def multitenancy(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:multitenancy)
-    else
-      nil
-    end
-  end
+  def multitenancy(resource), do: get_config(resource, :multitenancy)
 
   @doc """
   Gets the code_interface configuration for a resource.
   """
   @spec scylla_code_interface(module()) :: map() | nil
-  def scylla_code_interface(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:code_interface)
-    else
-      nil
-    end
-  end
+  def scylla_code_interface(resource), do: get_config(resource, :code_interface)
 
   @doc """
   Gets the relationships defined for a resource.
@@ -1039,13 +850,7 @@ defmodule AshScylla.DataLayer.Dsl do
   - `:options` - additional options
   """
   @spec relationships(module()) :: [map()]
-  def relationships(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:relationships)
-    else
-      []
-    end
-  end
+  def relationships(resource), do: get_config(resource, :relationships, [])
 
   @doc """
   Gets the action configurations defined for a resource.
@@ -1056,13 +861,7 @@ defmodule AshScylla.DataLayer.Dsl do
   - `:options` - action options (accept, argument, change, validate, etc.)
   """
   @spec action_configs(module()) :: [map()]
-  def action_configs(resource) do
-    if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(:action_configs)
-    else
-      []
-    end
-  end
+  def action_configs(resource), do: get_config(resource, :action_configs, [])
 
   # ============================================================================
   # DSL setter functions — called by the DSL body at compile time
@@ -1072,47 +871,34 @@ defmodule AshScylla.DataLayer.Dsl do
 
   @doc false
   @spec __set_table__(module(), String.t()) :: :ok
-  def __set_table__(module, value) do
-    Module.put_attribute(module, :ash_scylla_table, value)
-  end
+  def __set_table__(module, value), do: put_attr(module, :ash_scylla_table, value)
 
   @doc false
   @spec __set_keyspace__(module(), String.t()) :: :ok
-  def __set_keyspace__(module, value) do
-    Module.put_attribute(module, :ash_scylla_keyspace, value)
-  end
+  def __set_keyspace__(module, value), do: put_attr(module, :ash_scylla_keyspace, value)
 
   @doc false
   @spec __set_consistency__(module(), atom()) :: :ok
-  def __set_consistency__(module, value) do
-    Module.put_attribute(module, :ash_scylla_consistency, value)
-  end
+  def __set_consistency__(module, value), do: put_attr(module, :ash_scylla_consistency, value)
 
   @doc false
   @spec __set_ttl__(module(), pos_integer()) :: :ok
-  def __set_ttl__(module, value) do
-    Module.put_attribute(module, :ash_scylla_ttl, value)
-  end
+  def __set_ttl__(module, value), do: put_attr(module, :ash_scylla_ttl, value)
 
   @doc false
   @spec __add_secondary_index__(module(), map()) :: :ok
-  def __add_secondary_index__(module, index_config) do
-    current = Module.get_attribute(module, :ash_scylla_secondary_indexes)
-    Module.put_attribute(module, :ash_scylla_secondary_indexes, [index_config | current])
-  end
+  def __add_secondary_index__(module, index_config),
+    do: add_to_attr(module, :ash_scylla_secondary_indexes, index_config)
 
   @doc false
   @spec __add_materialized_view__(module(), map()) :: :ok
-  def __add_materialized_view__(module, view_config) do
-    current = Module.get_attribute(module, :ash_scylla_materialized_views)
-    Module.put_attribute(module, :ash_scylla_materialized_views, [view_config | current])
-  end
+  def __add_materialized_view__(module, view_config),
+    do: add_to_attr(module, :ash_scylla_materialized_views, view_config)
 
   @doc false
   @spec __set_pagination__(module(), :offset | :token) :: :ok
-  def __set_pagination__(module, value) when value in [:offset, :token] do
-    Module.put_attribute(module, :ash_scylla_pagination, value)
-  end
+  def __set_pagination__(module, value) when value in [:offset, :token],
+    do: put_attr(module, :ash_scylla_pagination, value)
 
   @spec __set_pagination__(module(), :offset | :token) :: :ok
   def __set_pagination__(_module, value) do
@@ -1123,136 +909,108 @@ defmodule AshScylla.DataLayer.Dsl do
   @spec __set_per_action_consistency__(module(), keyword()) :: :ok
   def __set_per_action_consistency__(module, action_consistency)
       when is_list(action_consistency) do
-    map = Map.new(action_consistency)
-    Module.put_attribute(module, :ash_scylla_per_action_consistency, map)
+    put_attr(module, :ash_scylla_per_action_consistency, Map.new(action_consistency))
   end
 
   @doc false
   @spec __set_lwt__(module(), boolean()) :: :ok
-  def __set_lwt__(module, value) when is_boolean(value) do
-    Module.put_attribute(module, :ash_scylla_lwt, value)
-  end
+  def __set_lwt__(module, value) when is_boolean(value),
+    do: put_attr(module, :ash_scylla_lwt, value)
 
   @doc false
   @spec __set_repo__(module(), module()) :: :ok
-  def __set_repo__(module, value) do
-    Module.put_attribute(module, :ash_scylla_repo, value)
-  end
+  def __set_repo__(module, value), do: put_attr(module, :ash_scylla_repo, value)
 
   # ── Ash 3.0+ setters ──
 
   @doc false
   @spec __set_base_filter__(module(), term()) :: :ok
-  def __set_base_filter__(module, value) do
-    Module.put_attribute(module, :ash_scylla_base_filter, value)
-  end
+  def __set_base_filter__(module, value), do: put_attr(module, :ash_scylla_base_filter, value)
 
   @doc false
   @spec __set_default_context__(module(), map()) :: :ok
-  def __set_default_context__(module, value) when is_map(value) do
-    Module.put_attribute(module, :ash_scylla_default_context, value)
-  end
+  def __set_default_context__(module, value) when is_map(value),
+    do: put_attr(module, :ash_scylla_default_context, value)
 
   @doc false
   @spec __set_description__(module(), String.t()) :: :ok
-  def __set_description__(module, value) when is_binary(value) do
-    Module.put_attribute(module, :ash_scylla_description, value)
-  end
+  def __set_description__(module, value) when is_binary(value),
+    do: put_attr(module, :ash_scylla_description, value)
 
   # ── Identity setters ──
 
   @doc false
   @spec __add_identity__(module(), map()) :: :ok
-  def __add_identity__(module, identity_config) do
-    current = Module.get_attribute(module, :ash_scylla_identities)
-    Module.put_attribute(module, :ash_scylla_identities, [identity_config | current])
-  end
+  def __add_identity__(module, identity_config),
+    do: add_to_attr(module, :ash_scylla_identities, identity_config)
 
   # ── Aggregate setters ──
 
   @doc false
   @spec __add_aggregate__(module(), map()) :: :ok
-  def __add_aggregate__(module, aggregate_config) do
-    current = Module.get_attribute(module, :ash_scylla_aggregates)
-    Module.put_attribute(module, :ash_scylla_aggregates, [aggregate_config | current])
-  end
+  def __add_aggregate__(module, aggregate_config),
+    do: add_to_attr(module, :ash_scylla_aggregates, aggregate_config)
 
   # ── Calculation setters ──
 
   @doc false
   @spec __add_calculation__(module(), map()) :: :ok
-  def __add_calculation__(module, calc_config) do
-    current = Module.get_attribute(module, :ash_scylla_calculations)
-    Module.put_attribute(module, :ash_scylla_calculations, [calc_config | current])
-  end
+  def __add_calculation__(module, calc_config),
+    do: add_to_attr(module, :ash_scylla_calculations, calc_config)
 
   # ── Preparation setters ──
 
   @doc false
   @spec __add_preparation__(module(), map()) :: :ok
-  def __add_preparation__(module, prep_config) do
-    current = Module.get_attribute(module, :ash_scylla_preparations)
-    Module.put_attribute(module, :ash_scylla_preparations, [prep_config | current])
-  end
+  def __add_preparation__(module, prep_config),
+    do: add_to_attr(module, :ash_scylla_preparations, prep_config)
 
   # ── Change setters ──
 
   @doc false
   @spec __add_change__(module(), map()) :: :ok
-  def __add_change__(module, change_config) do
-    current = Module.get_attribute(module, :ash_scylla_changes)
-    Module.put_attribute(module, :ash_scylla_changes, [change_config | current])
-  end
+  def __add_change__(module, change_config),
+    do: add_to_attr(module, :ash_scylla_changes, change_config)
 
   # ── Validation setters ──
 
   @doc false
   @spec __add_validation__(module(), map()) :: :ok
-  def __add_validation__(module, validation_config) do
-    current = Module.get_attribute(module, :ash_scylla_validations)
-    Module.put_attribute(module, :ash_scylla_validations, [validation_config | current])
-  end
+  def __add_validation__(module, validation_config),
+    do: add_to_attr(module, :ash_scylla_validations, validation_config)
 
   # ── Pipeline setters ──
 
   @doc false
   @spec __add_pipeline__(module(), map()) :: :ok
-  def __add_pipeline__(module, pipeline_config) do
-    current = Module.get_attribute(module, :ash_scylla_pipelines)
-    Module.put_attribute(module, :ash_scylla_pipelines, [pipeline_config | current])
-  end
+  def __add_pipeline__(module, pipeline_config),
+    do: add_to_attr(module, :ash_scylla_pipelines, pipeline_config)
 
   # ── Multitenancy setters ──
 
   @doc false
   @spec __set_multitenancy__(module(), map()) :: :ok
-  def __set_multitenancy__(module, mt_config) do
-    Module.put_attribute(module, :ash_scylla_multitenancy, mt_config)
-  end
+  def __set_multitenancy__(module, mt_config),
+    do: put_attr(module, :ash_scylla_multitenancy, mt_config)
 
   # ── Code Interface setters ──
 
   @doc false
   @spec __set_code_interface__(module(), map()) :: :ok
-  def __set_code_interface__(module, ci_config) do
-    Module.put_attribute(module, :ash_scylla_code_interface, ci_config)
-  end
+  def __set_code_interface__(module, ci_config),
+    do: put_attr(module, :ash_scylla_code_interface, ci_config)
 
   # ── Relationship setters ──
 
   @doc false
   @spec __add_relationship__(module(), map()) :: :ok
-  def __add_relationship__(module, rel_config) do
-    current = Module.get_attribute(module, :ash_scylla_relationships)
-    Module.put_attribute(module, :ash_scylla_relationships, [rel_config | current])
-  end
+  def __add_relationship__(module, rel_config),
+    do: add_to_attr(module, :ash_scylla_relationships, rel_config)
 
   # ── Action config setters ──
 
   @doc false
   @spec __add_action_config__(module(), map()) :: :ok
-  def __add_action_config__(module, action_config) do
-    current = Module.get_attribute(module, :ash_scylla_action_configs)
-    Module.put_attribute(module, :ash_scylla_action_configs, [action_config | current])
-  end
+  def __add_action_config__(module, action_config),
+    do: add_to_attr(module, :ash_scylla_action_configs, action_config)
 end

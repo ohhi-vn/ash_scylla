@@ -64,32 +64,7 @@ defmodule AshScylla.Telemetry do
   @spec span(module(), atom(), String.t(), (-> result)) :: result when result: var
   def span(resource, operation, query, fun) do
     metadata = %{resource: resource, operation: operation, query: query}
-    start_time = System.monotonic_time()
-
-    :telemetry.execute(
-      [:ash_scylla, :query, :start],
-      %{system_time: System.system_time()},
-      metadata
-    )
-
-    try do
-      result = fun.()
-      duration = System.monotonic_time() - start_time
-      :telemetry.execute([:ash_scylla, :query, :stop], %{duration: duration}, metadata)
-      result
-    rescue
-      exception ->
-        duration = System.monotonic_time() - start_time
-        exception_metadata = Map.put(metadata, :kind, :error)
-
-        :telemetry.execute(
-          [:ash_scylla, :query, :exception],
-          %{duration: duration},
-          exception_metadata
-        )
-
-        reraise exception, __STACKTRACE__
-    end
+    emit_span(:query, metadata, fn -> fun.() end)
   end
 
   @doc """
@@ -101,18 +76,7 @@ defmodule AshScylla.Telemetry do
   @spec batch_span(module(), atom(), integer(), (-> result)) :: result when result: var
   def batch_span(resource, operation, batch_size, fun) do
     metadata = %{resource: resource, operation: operation, batch_size: batch_size}
-    start_time = System.monotonic_time()
-
-    :telemetry.execute(
-      [:ash_scylla, :batch, :start],
-      %{system_time: System.system_time()},
-      metadata
-    )
-
-    result = fun.()
-    duration = System.monotonic_time() - start_time
-    :telemetry.execute([:ash_scylla, :batch, :stop], %{duration: duration}, metadata)
-    result
+    emit_span(:batch, metadata, fn -> fun.() end)
   end
 
   @doc """
@@ -125,6 +89,39 @@ defmodule AshScylla.Telemetry do
       nanoseconds < 1_000_000 -> "#{div(nanoseconds, 1_000)}µs"
       nanoseconds < 1_000_000_000 -> "#{div(nanoseconds, 1_000_000)}ms"
       true -> "#{Float.round(nanoseconds / 1_000_000_000, 2)}s"
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private functions
+  # ---------------------------------------------------------------------------
+
+  defp emit_span(prefix, metadata, fun) do
+    start_time = System.monotonic_time()
+
+    :telemetry.execute(
+      [:ash_scylla, prefix, :start],
+      %{system_time: System.system_time()},
+      metadata
+    )
+
+    try do
+      result = fun.()
+      duration = System.monotonic_time() - start_time
+      :telemetry.execute([:ash_scylla, prefix, :stop], %{duration: duration}, metadata)
+      result
+    rescue
+      exception ->
+        duration = System.monotonic_time() - start_time
+        exception_metadata = Map.put(metadata, :kind, :error)
+
+        :telemetry.execute(
+          [:ash_scylla, prefix, :exception],
+          %{duration: duration},
+          exception_metadata
+        )
+
+        reraise exception, __STACKTRACE__
     end
   end
 end

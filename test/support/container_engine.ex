@@ -14,14 +14,11 @@
 
 defmodule AshScylla.Test.ContainerEngine do
   @moduledoc """
-  Helper to ensure the container engine (Docker/Podman/Colima) is running.
+  Helper to ensure Podman is running for test containers.
 
   Provides `ensure_running/0` which:
-  1. Checks if the container engine is reachable via `TestcontainerEx` resolver.
-  2. If not reachable, attempts to restart it using known strategies:
-     - Colima: `colima start`
-     - Podman: `podman machine start`
-     - Docker: logs a warning (Docker Desktop must be started manually)
+  1. Checks if Podman is reachable via `TestcontainerEx` resolver.
+  2. If not reachable, attempts to start the Podman machine.
   3. Retries the connection after restart.
   4. Returns `:ok` if reachable, `{:error, reason}` if not.
   """
@@ -32,9 +29,9 @@ defmodule AshScylla.Test.ContainerEngine do
   @retry_delay_ms 5_000
 
   @doc """
-  Ensures the container engine is running.
+  Ensures Podman is running.
 
-  Returns `:ok` if the engine is reachable, or `{:error, reason}` if it
+  Returns `:ok` if reachable, or `{:error, reason}` if it
   could not be started after attempting recovery.
   """
   @spec ensure_running() :: :ok | {:error, term()}
@@ -44,60 +41,29 @@ defmodule AshScylla.Test.ContainerEngine do
         :ok
 
       false ->
-        Logger.warning("Container engine not reachable, attempting to restart...")
-        attempt_restart()
+        Logger.warning("Podman not reachable, attempting to start machine...")
+        attempt_start()
     end
   end
 
   @doc """
-  Checks if the container engine is currently reachable.
+  Checks if Podman is currently reachable.
   """
   @spec reachable?() :: boolean()
   def reachable? do
-    case TestcontainerEx.Connection.Resolver.resolve() do
-      {:ok, _url} -> true
-      {:error, _} -> false
-    end
+    TestcontainerEx.connected?()
   end
 
-  # --- Restart strategies ---
+  # --- Start strategies ---
 
-  defp attempt_restart do
+  defp attempt_start do
     cond do
-      colima_installed?() ->
-        restart_colima()
-
       podman_installed?() ->
-        restart_podman()
-
-      docker_installed?() ->
-        Logger.warning(
-          "Docker detected but not reachable. Docker Desktop must be started manually."
-        )
-
-        {:error, :docker_not_reachable}
+        start_podman()
 
       true ->
-        Logger.warning("No container engine (Docker/Podman/Colima) found on this system.")
+        Logger.warning("Podman not found on this system.")
         {:error, :no_container_engine}
-    end
-  end
-
-  # --- Colima ---
-
-  defp colima_installed?, do: not is_nil(System.find_executable("colima"))
-
-  defp restart_colima do
-    Logger.info("Attempting to start Colima...")
-
-    case System.cmd("colima", ["start"], stderr_to_stdout: true, timeout: 120_000) do
-      {output, 0} ->
-        Logger.info("Colima started successfully: #{String.trim(output)}")
-        wait_for_reachable(@max_retries)
-
-      {output, _} ->
-        Logger.error("Failed to start Colima: #{String.trim(output)}")
-        {:error, :colima_start_failed}
     end
   end
 
@@ -105,23 +71,28 @@ defmodule AshScylla.Test.ContainerEngine do
 
   defp podman_installed?, do: not is_nil(System.find_executable("podman"))
 
-  defp restart_podman do
+  defp start_podman do
     Logger.info("Attempting to start Podman machine...")
 
-    # Try to get the default machine name, fall back to "podman-machine-default"
     machine = podman_default_machine()
 
-    case System.cmd("podman", ["machine", "start", machine],
-           stderr_to_stdout: true,
-           timeout: 120_000
-         ) do
-      {output, 0} ->
+    task =
+      Task.async(fn ->
+        System.cmd("podman", ["machine", "start", machine], stderr_to_stdout: true)
+      end)
+
+    case Task.yield(task, 120_000) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {output, 0}} ->
         Logger.info("Podman machine '#{machine}' started: #{String.trim(output)}")
         wait_for_reachable(@max_retries)
 
-      {output, _} ->
+      {:ok, {output, _}} ->
         Logger.error("Failed to start Podman machine '#{machine}': #{String.trim(output)}")
         {:error, :podman_start_failed}
+
+      nil ->
+        Logger.error("Podman machine start timed out after 120s")
+        {:error, :podman_start_timeout}
     end
   end
 
@@ -135,7 +106,7 @@ defmodule AshScylla.Test.ContainerEngine do
         |> List.first()
         |> case do
           nil -> "podman-machine-default"
-          name -> String.trim(name)
+          name -> name |> String.trim() |> String.trim_trailing("*")
         end
 
       _ ->
@@ -143,14 +114,10 @@ defmodule AshScylla.Test.ContainerEngine do
     end
   end
 
-  # --- Docker ---
-
-  defp docker_installed?, do: not is_nil(System.find_executable("docker"))
-
   # --- Retry loop ---
 
   defp wait_for_reachable(0) do
-    Logger.error("Container engine still not reachable after restart attempts.")
+    Logger.error("Podman still not reachable after start attempts.")
     {:error, :not_reachable_after_restart}
   end
 
@@ -159,11 +126,11 @@ defmodule AshScylla.Test.ContainerEngine do
 
     case reachable?() do
       true ->
-        Logger.info("Container engine is now reachable.")
+        Logger.info("Podman is now reachable.")
         :ok
 
       false ->
-        Logger.warning("Container engine not yet reachable, retrying... (#{retries} left)")
+        Logger.warning("Podman not yet reachable, retrying... (#{retries} left)")
         wait_for_reachable(retries - 1)
     end
   end
