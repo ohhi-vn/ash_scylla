@@ -151,11 +151,11 @@ defmodule AshScylla.Release do
 
       AshScylla.Release.create_keyspace(MyApp.Repo)
   """
-  @spec create_keyspace(module()) :: :ok | {:error, term()}
-  def create_keyspace(repo) do
+  @spec create_keyspace(module(), keyword()) :: :ok | {:error, term()}
+  def create_keyspace(repo, opts \\ []) do
     Logger.info("AshScylla.Release: Creating keyspace for #{inspect(repo)}")
 
-    case repo.create_keyspace() do
+    case repo.create_keyspace(nil, opts) do
       {:ok, _} ->
         Logger.info("AshScylla.Release: Keyspace created successfully")
         :ok

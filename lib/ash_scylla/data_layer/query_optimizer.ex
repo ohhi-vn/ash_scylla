@@ -38,6 +38,7 @@ defmodule AshScylla.DataLayer.QueryOptimizer do
   require Logger
 
   alias AshScylla.DataLayer
+  alias AshScylla.Identifier
 
   @default_page_size 50
   @max_page_size 1000
@@ -351,7 +352,7 @@ defmodule AshScylla.DataLayer.QueryOptimizer do
   defp maybe_put_timeout(opts, nil), do: opts
 
   defp maybe_put_timeout(opts, timeout) when is_integer(timeout) and timeout > 0 do
-    Keyword.put(opts, :request_timeout, timeout)
+    Keyword.put(opts, :timeout, timeout)
   end
 
   defp maybe_put_timeout(_opts, timeout) do
@@ -541,13 +542,6 @@ defmodule AshScylla.DataLayer.QueryOptimizer do
   ## token_range_query/4 helper
 
   defp sanitize_identifier(name) when is_binary(name) do
-    # Basic CQL identifier sanitization — remove any characters that
-    # could be used for CQL injection
-    name
-    |> String.replace(~r/[^a-zA-Z0-9_]/, "")
-    |> case do
-      "" -> raise ArgumentError, "Invalid identifier: #{inspect(name)}"
-      sanitized -> sanitized
-    end
+    Identifier.sanitize!(name)
   end
 end

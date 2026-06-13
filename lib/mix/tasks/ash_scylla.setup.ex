@@ -2,23 +2,9 @@ defmodule Mix.Tasks.AshScylla.Setup do
   @moduledoc """
   Sets up the ScyllaDB keyspace for AshScylla.
 
-  This task creates the keyspace configured in your repo if it doesn't exist.
-  It follows the `mix ash_scylla.setup` pattern.
-
   ## Usage
 
       mix ash_scylla.setup
-
-  ## Options
-
-  - `--repo` - The repo module to use (defaults to the first repo found in your application)
-
-  ## Examples
-
-      # Use default repo
-      mix ash_scylla.setup
-
-      # Specify a repo
       mix ash_scylla.setup --repo MyApp.Repo
   """
 
@@ -28,7 +14,17 @@ defmodule Mix.Tasks.AshScylla.Setup do
 
   @impl Mix.Task
   def run(args) do
-    {opts, _} = OptionParser.parse!(args, strict: [repo: :atom])
+    {opts, _} = OptionParser.parse!(args, strict: [repo: :string])
+
+    # Compile first so the repo module is available
+    Mix.Task.run("compile", args)
+
+    # Start the application (idempotent - safe to call multiple times)
+    otp_app = Mix.Project.config()[:app]
+
+    if otp_app do
+      Application.ensure_all_started(otp_app)
+    end
 
     repo = find_repo(opts)
 
@@ -51,27 +47,53 @@ defmodule Mix.Tasks.AshScylla.Setup do
 
       repo ->
         repo
+        |> Macro.underscore()
+        |> String.split("/")
+        |> Enum.map(&Macro.camelize/1)
+        |> Module.concat()
     end
   end
 
   defp find_default_repo do
-    apps = Mix.Project.apps_paths() || %{}
-
     repos =
-      for {_app, path} <- apps,
-          file <- Path.wildcard(Path.join(path, "lib/**/repo.ex")),
-          module = file_to_module(file),
-          module != nil,
-          function_exported?(module, :__info__, 1),
-          do: module
+      case Mix.Project.apps_paths() do
+        nil ->
+          lib_path = Mix.Project.config()[:source_paths] || "lib"
+          pattern = Path.join(lib_path, "**/repo.ex")
+          find_repos_in_files(Path.wildcard(pattern))
+
+        apps_paths ->
+          for {_app, path} <- apps_paths,
+              file <- Path.wildcard(Path.join(path, "lib/**/repo.ex")),
+              module = file_to_module(file),
+              module != nil,
+              function_exported?(module, :__info__, 1),
+              do: module
+      end
 
     case repos do
       [repo | _] ->
         repo
 
       [] ->
-        Mix.raise("No repo found. Specify one with --repo MyApp.Repo")
+        Mix.raise("""
+        No repo found. Generate one first with:
+
+            mix ash_scylla.gen.repo
+
+        Or specify one explicitly:
+
+            mix ash_scylla.setup --repo MyApp.Repo
+        """)
     end
+  end
+
+  defp find_repos_in_files(files) do
+    for file <- files,
+        module = file_to_module(file),
+        module != nil,
+        function_exported?(module, :__info__, 1),
+        do: module
   end
 
   defp file_to_module(file) do
@@ -80,7 +102,7 @@ defmodule Mix.Tasks.AshScylla.Setup do
         parts
         |> Enum.join(".")
         |> Macro.camelize()
-        |> String.to_atom()
+        |> Module.concat()
 
       _ ->
         nil

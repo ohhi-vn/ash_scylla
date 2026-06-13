@@ -40,9 +40,7 @@ defmodule AshScylla.Repo do
 
   - `:nodes` - List of ScyllaDB/Cassandra nodes to connect to
   - `:keyspace` - The keyspace to use
-  - `:pool_size` - The number of connections in the pool (default: 5)
   - `:connect_timeout` - TCP connection timeout in ms (default: 5000)
-  - `:request_timeout` - Query timeout in ms (default: 120_000)
   """
 
   defmacro __using__(opts) do
@@ -113,10 +111,12 @@ defmodule AshScylla.Repo do
 
       @doc "Creates the keyspace if it doesn't exist."
       @impl AshScylla.Repo
-      @spec create_keyspace(String.t() | nil) :: {:ok, term()} | {:error, term()}
-      def create_keyspace(keyspace_name \\ nil) do
+      @spec create_keyspace(String.t() | nil, keyword()) :: {:ok, term()} | {:error, term()}
+      def create_keyspace(keyspace_name \\ nil, opts \\ []) do
         keyspace = keyspace_name || keyspace()
         validate_keyspace!(keyspace)
+
+        replication = build_replication_clause(opts)
 
         # Start a temporary connection without keyspace to create it
         temp_name = :"#{__MODULE__}_temp_#{:erlang.unique_integer([:positive])}"
@@ -124,19 +124,38 @@ defmodule AshScylla.Repo do
 
         conn_opts = [
           name: temp_name,
-          nodes: nodes,
-          pool_size: 1
+          nodes: nodes
         ]
 
         with {:ok, _} <- AshScylla.Connection.start_link(conn_opts) do
           query = """
           CREATE KEYSPACE IF NOT EXISTS #{keyspace}
-          WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}
+          WITH REPLICATION = #{replication}
           """
 
           result = AshScylla.Connection.query(temp_name, query, [], consistency: :quorum)
           AshScylla.Connection.stop(temp_name)
           result
+        end
+      end
+
+      @doc false
+      @spec build_replication_clause(keyword()) :: String.t()
+      def build_replication_clause(opts) do
+        case Keyword.get(opts, :strategy, :simple) do
+          :simple ->
+            factor = Keyword.get(opts, :replication_factor, 1)
+            "{'class': 'SimpleStrategy', 'replication_factor': #{factor}}"
+
+          :network_topology ->
+            topologies = Keyword.get(opts, :topologies, [])
+
+            topology_str =
+              Enum.map_join(topologies, ", ", fn {dc, count} ->
+                "'#{dc}': #{count}"
+              end)
+
+            "{'class': 'NetworkTopologyStrategy', #{topology_str}}"
         end
       end
 
@@ -187,7 +206,7 @@ defmodule AshScylla.Repo do
   @callback query!(String.t(), list(), keyword()) :: term() | no_return()
   @callback prepare(String.t(), keyword()) :: {:ok, Xandra.Prepared.t()} | {:error, term()}
   @callback prepare!(String.t(), keyword()) :: Xandra.Prepared.t() | no_return()
-  @callback create_keyspace(String.t() | nil) :: {:ok, term()} | {:error, term()}
+  @callback create_keyspace(String.t() | nil, keyword()) :: {:ok, term()} | {:error, term()}
   @callback drop_keyspace(String.t() | nil) :: {:ok, term()} | {:error, term()}
   @callback child_spec(keyword()) :: Supervisor.child_spec()
 
@@ -199,9 +218,7 @@ defmodule AshScylla.Repo do
     [
       nodes: Keyword.get(config, :nodes, ["127.0.0.1:9042"]),
       keyspace: Keyword.get(config, :keyspace),
-      pool_size: Keyword.get(config, :pool_size, 5),
-      connect_timeout: Keyword.get(config, :connect_timeout, 5_000),
-      request_timeout: Keyword.get(config, :request_timeout, 120_000)
+      connect_timeout: Keyword.get(config, :connect_timeout, 5_000)
     ]
   end
 end

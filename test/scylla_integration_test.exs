@@ -175,25 +175,42 @@ defmodule AshScylla.ScyllaIntegrationTest do
   # ── Setup ──────────────────────────────────────────────────────────────────
 
   setup_all do
-    case TestcontainerEx.start_container(@scylla_container_config) do
-      {:ok, scylla_container} ->
-        port = ScyllaContainer.port(scylla_container)
-        host = TestcontainerEx.get_host(scylla_container)
+    case AshScylla.Test.ContainerEngine.ensure_running() do
+      :ok ->
+        case TestcontainerEx.start_container(@scylla_container_config) do
+          {:ok, scylla_container} ->
+            port = ScyllaContainer.port(scylla_container)
+            host = TestcontainerEx.get_host(scylla_container)
 
-        case try_connect(host, port) do
-          {:ok, conn} ->
-            schema(conn)
-            %{scylla: scylla_container}
+            case try_connect(host, port) do
+              {:ok, conn} ->
+                schema(conn)
 
-          {:error, _} ->
-            IO.puts("WARNING: Skipping integration tests — ScyllaDB not reachable")
-            {:skip, "ScyllaDB not reachable"}
+                on_exit(fn ->
+                  TestcontainerEx.stop_container(scylla_container.container_id)
+                end)
+
+                %{scylla: scylla_container}
+
+              {:error, _} ->
+                IO.puts("WARNING: Skipping integration tests — ScyllaDB not reachable")
+                TestcontainerEx.stop_container(scylla_container.container_id)
+                %{scylla: nil}
+            end
+
+          {:error, reason} ->
+            IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
+            %{scylla: nil}
         end
 
       {:error, reason} ->
         IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
-        {:skip, "Docker/Podman not available"}
+        %{scylla: nil}
     end
+  end
+
+  setup %{scylla: nil} do
+    {:skip, "Container engine not available"}
   end
 
   setup %{scylla: scylla_container} do

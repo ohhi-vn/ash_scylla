@@ -44,8 +44,7 @@ defmodule AshScylla.Benchmarks.Integration do
   def run do
     repo_config = [
       nodes: ["127.0.0.1:9042"],
-      keyspace: @keyspace,
-      pool_size: 10
+      keyspace: @keyspace
     ]
 
     start_repo(repo_config)
@@ -69,7 +68,6 @@ defmodule AshScylla.Benchmarks.Integration do
         repo_config = [
           nodes: ["#{host}:#{port}"],
           keyspace: @keyspace,
-          pool_size: 10,
           sync_connect: 60_000
         ]
 

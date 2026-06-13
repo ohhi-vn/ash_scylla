@@ -36,12 +36,9 @@ defmodule AshScylla.Connection do
   - `:name` - Register the connection under this name (required for supervised start)
   - `:nodes` - List of nodes, e.g. `["127.0.0.1:9042"]`
   - `:keyspace` - Keyspace to USE on connect
-  - `:pool_size` - Connection pool size (default: 5)
   """
 
   use GenServer
-
-  @default_pool_size 5
 
   defstruct [:conn, :keyspace, :nodes]
 
@@ -170,19 +167,17 @@ defmodule AshScylla.Connection do
   def init(opts) do
     keyspace = Keyword.get(opts, :keyspace)
     nodes = Keyword.get(opts, :nodes, ["127.0.0.1:9042"])
-    pool_size = Keyword.get(opts, :pool_size, @default_pool_size)
+    name = Keyword.get(opts, :name)
 
     xandra_opts =
       [
-        nodes: nodes,
-        keyspace: keyspace,
-        pool_size: pool_size,
-        name: nil
+        nodes: nodes
       ]
+      |> maybe_put(:name, name)
+      |> maybe_put(:keyspace, keyspace)
       |> Keyword.merge(
         Keyword.take(opts, [
           :connect_timeout,
-          :request_timeout,
           :authentication,
           :compressor,
           :encryption,
@@ -202,6 +197,9 @@ defmodule AshScylla.Connection do
         {:stop, reason}
     end
   end
+
+  defp maybe_put(opts, _key, nil), do: opts
+  defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
 
   @impl GenServer
   def handle_call(:get_conn_struct, _from, state) do

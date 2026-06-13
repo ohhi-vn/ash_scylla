@@ -39,8 +39,7 @@ defmodule AshScylla.Migrator do
 
       AshScylla.Migrator.run!(nodes, statements,
         keyspace: "my_app",
-        pool_size: 1,
-        request_timeout: 30_000
+        connect_timeout: 10_000
       )
   """
 
@@ -63,8 +62,6 @@ defmodule AshScylla.Migrator do
     conn_opts = [
       name: conn_name,
       nodes: nodes,
-      pool_size: Keyword.get(opts, :pool_size, 1),
-      request_timeout: Keyword.get(opts, :request_timeout, 30_000),
       connect_timeout: Keyword.get(opts, :connect_timeout, 10_000)
     ]
 

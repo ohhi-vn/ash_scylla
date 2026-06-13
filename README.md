@@ -47,7 +47,7 @@ Add `ash_scylla` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ash_scylla, "~> 0.6.0"}
+    {:ash_scylla, "~> 0.7.0"}
   ]
 end
 ```

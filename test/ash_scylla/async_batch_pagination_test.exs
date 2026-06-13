@@ -82,10 +82,10 @@ defmodule AshScylla.DataLayer.AsyncBatchTest do
                )
     end
 
-    test "requires :resource option" do
-      assert_raise KeyError, fn ->
-        Batch.batch_insert_async(SimpleMockRepo, [], max_concurrency: 4)
-      end
+    test "works without :resource option" do
+      # :resource is optional — batch_insert_async uses partition_key_hash/1
+      # for grouping when :resource is not provided
+      assert {:ok, :completed} == Batch.batch_insert_async(SimpleMockRepo, [], max_concurrency: 4)
     end
 
     test "uses default max_concurrency from System.schedulers_online" do

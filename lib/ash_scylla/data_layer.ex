@@ -83,9 +83,12 @@ defmodule AshScylla.DataLayer do
   alias AshScylla.DataLayer.Dsl
   alias AshScylla.DataLayer.FilterValidator
   alias AshScylla.DataLayer.QueryBuilder
+  alias AshScylla.Identifier
   alias AshScylla.Telemetry
 
   @dialyzer :no_match
+
+  @compile {:inline, sanitize_identifier: 1}
 
   @supported_features MapSet.new([
                         :create,
@@ -161,28 +164,56 @@ defmodule AshScylla.DataLayer do
     true
   end
 
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, {:atomic, :upsert}) do
     true
   end
 
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, :upsert), do: true
+
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, :keyset), do: true
+
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, {:combine, :union}), do: false
+
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, :boolean_filter), do: true
+
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, :distinct), do: true
+
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, :expression_calculation), do: false
+
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, :lateral_join), do: false
+
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, {:aggregate, :count}), do: true
+
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, {:aggregate, _}), do: false
+
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, :update_query), do: true
+
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, :destroy_query), do: true
+
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, :lock), do: false
+
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, :offset), do: false
 
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, feature) when is_atom(feature) do
     MapSet.member?(@supported_features, feature)
   end
 
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, _other) do
     false
   end
@@ -888,24 +919,19 @@ defmodule AshScylla.DataLayer do
   # Helper Functions
   # ============================================================================
 
-  @valid_identifier ~r/^[a-zA-Z_][a-zA-Z0-9_]*$/
-
   @doc false
   @spec sanitize_identifier(String.t()) :: String.t() | no_return()
   defp sanitize_identifier(name) when is_binary(name) do
-    if Regex.match?(@valid_identifier, name) do
-      name
-    else
-      raise ArgumentError,
-            "Invalid identifier: #{inspect(name)}. Identifiers must match ~r/^[a-zA-Z_][a-zA-Z0-9_]*$/"
-    end
+    Identifier.sanitize!(name)
   end
 
   @spec repo(module()) :: module()
   defp repo(resource) do
-    # Cache the repo module per resource to avoid repeated lookups.
-    case Process.get({__MODULE__, :repo, resource}) do
-      nil ->
+    case :ets.lookup(:ash_scylla_repo_cache, resource) do
+      [{^resource, repo}] ->
+        repo
+
+      [] ->
         repo =
           try do
             Module.get_attribute(resource, :repo)
@@ -942,12 +968,9 @@ defmodule AshScylla.DataLayer do
             """
 
           repo ->
-            Process.put({__MODULE__, :repo, resource}, repo)
+            :ets.insert(:ash_scylla_repo_cache, {resource, repo})
             repo
         end
-
-      cached ->
-        cached
     end
   end
 

@@ -381,7 +381,10 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
     test "caches repo per resource" do
       changeset = %Ash.Changeset{attributes: %{id: "test-id", name: "Test"}}
       DataLayer.create(DirectRepoResource, changeset)
-      assert Process.get({DataLayer, :repo, DirectRepoResource}) == FakeRepo
+
+      assert :ets.lookup(:ash_scylla_repo_cache, DirectRepoResource) == [
+               {DirectRepoResource, FakeRepo}
+             ]
     end
   end
 
@@ -390,7 +393,10 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
       assert DataLayer.source(DirectRepoResource) == "direct_repo_items"
       changeset = %Ash.Changeset{attributes: %{id: "test-id", name: "Test"}}
       DataLayer.create(DirectRepoResource, changeset)
-      assert Process.get({DataLayer, :repo, DirectRepoResource}) == FakeRepo
+
+      assert :ets.lookup(:ash_scylla_repo_cache, DirectRepoResource) == [
+               {DirectRepoResource, FakeRepo}
+             ]
     end
   end
 

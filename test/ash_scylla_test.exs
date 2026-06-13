@@ -35,6 +35,67 @@ defmodule AshScylla.Test do
     end
   end
 
+  describe "AshScylla.verify/2" do
+    test "checks repo configuration without opening a connection" do
+      assert {:ok, report} = AshScylla.verify(AshScylla.TestRepo, check_connection?: false)
+
+      assert report.repo == AshScylla.TestRepo
+      assert report.nodes == ["127.0.0.1:9042"]
+      assert report.keyspace == "ash_scylla_dev"
+      assert report.connection.checked? == false
+      assert report.connection.release_version == :skipped
+      assert report.keyspace_report == %{name: "ash_scylla_dev", checked?: false, exists?: nil}
+      assert report.resources == []
+    end
+
+    test "checks configured resource tables without opening a connection" do
+      assert {:ok, report} =
+               AshScylla.verify(AshScylla.TestRepo,
+                 check_connection?: false,
+                 resources: [AshScylla.TestResource, AshScylla.TestResourceWithIndexes]
+               )
+
+      assert [
+               %{
+                 resource: AshScylla.TestResource,
+                 keyspace: "ash_scylla_test",
+                 table: "test_resource",
+                 checked?: false,
+                 exists?: nil
+               },
+               %{
+                 resource: AshScylla.TestResourceWithIndexes,
+                 keyspace: "ash_scylla_test",
+                 table: "test_users",
+                 checked?: false,
+                 exists?: nil
+               }
+             ] = report.resources
+    end
+
+    test "verify!/2 returns the report" do
+      report = AshScylla.verify!(AshScylla.TestRepo, check_connection?: false)
+      assert report.repo == AshScylla.TestRepo
+    end
+
+    test "returns validation errors for invalid repo configuration" do
+      assert {:error, :no_nodes} =
+               AshScylla.verify(AshScylla.TestRepo, check_connection?: false, nodes: [])
+
+      assert {:error, {:invalid_keyspace, "bad-keyspace"}} =
+               AshScylla.verify(AshScylla.TestRepo,
+                 check_connection?: false,
+                 keyspace: "bad-keyspace"
+               )
+
+      assert {:error, {:invalid_resources, :not_a_list}} =
+               AshScylla.verify(AshScylla.TestRepo,
+                 check_connection?: false,
+                 resources: :not_a_list
+               )
+    end
+  end
+
   describe "CQL generation" do
     test "QueryBuilder handles complex nested filters" do
       filter = %{

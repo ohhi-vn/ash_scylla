@@ -137,44 +137,59 @@ defmodule AshScylla.DataLayer.PipelineTest do
   # ── Setup: ensure schema exists ─────────────────────────────────────────────
 
   setup_all do
-    case TestcontainerEx.start_container(@scylla_container_config) do
-      {:ok, scylla_container} ->
-        port = ScyllaContainer.port(scylla_container)
-        host = TestcontainerEx.get_host(scylla_container)
-        conn = connect_with_retry(host, port)
+    case AshScylla.Test.ContainerEngine.ensure_running() do
+      :ok ->
+        case TestcontainerEx.start_container(@scylla_container_config) do
+          {:ok, scylla_container} ->
+            port = ScyllaContainer.port(scylla_container)
+            host = TestcontainerEx.get_host(scylla_container)
+            conn = connect_with_retry(host, port)
 
-        # Create keyspace and tables if they don't exist
-        Xandra.execute!(
-          conn,
-          "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}"
-        )
+            # Create keyspace and tables if they don't exist
+            Xandra.execute!(
+              conn,
+              "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}"
+            )
 
-        Xandra.execute!(
-          conn,
-          "CREATE TABLE IF NOT EXISTS ash_scylla_test.users (id UUID PRIMARY KEY, name TEXT, email TEXT, age INT, status TEXT, created_at TIMESTAMP)"
-        )
+            Xandra.execute!(
+              conn,
+              "CREATE TABLE IF NOT EXISTS ash_scylla_test.users (id UUID PRIMARY KEY, name TEXT, email TEXT, age INT, status TEXT, created_at TIMESTAMP)"
+            )
 
-        Xandra.execute!(
-          conn,
-          "CREATE INDEX IF NOT EXISTS idx_users_email ON ash_scylla_test.users (email)"
-        )
+            Xandra.execute!(
+              conn,
+              "CREATE INDEX IF NOT EXISTS idx_users_email ON ash_scylla_test.users (email)"
+            )
 
-        Xandra.execute!(
-          conn,
-          "CREATE INDEX IF NOT EXISTS idx_users_status ON ash_scylla_test.users (status)"
-        )
+            Xandra.execute!(
+              conn,
+              "CREATE INDEX IF NOT EXISTS idx_users_status ON ash_scylla_test.users (status)"
+            )
 
-        Xandra.execute!(
-          conn,
-          "CREATE INDEX IF NOT EXISTS idx_users_age ON ash_scylla_test.users (age)"
-        )
+            Xandra.execute!(
+              conn,
+              "CREATE INDEX IF NOT EXISTS idx_users_age ON ash_scylla_test.users (age)"
+            )
 
-        %{conn: conn, scylla: scylla_container}
+            on_exit(fn ->
+              TestcontainerEx.stop_container(scylla_container.container_id)
+            end)
+
+            %{conn: conn, scylla: scylla_container}
+
+          {:error, reason} ->
+            IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
+            %{conn: nil, scylla: nil}
+        end
 
       {:error, reason} ->
         IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
-        {:skip, "Docker/Podman not available"}
+        %{conn: nil, scylla: nil}
     end
+  end
+
+  setup %{conn: nil} do
+    {:skip, "Container engine not available"}
   end
 
   setup %{conn: conn} do

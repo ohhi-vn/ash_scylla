@@ -106,7 +106,6 @@ defmodule AshScylla.DataLayer.Batch do
   @spec batch_insert_async(module(), [{String.t(), list()}], keyword()) ::
           {:ok, [term()]} | {:error, term()}
   def batch_insert_async(repo, statements, opts \\ []) do
-    _resource = Keyword.fetch!(opts, :resource)
     max_concurrency = Keyword.get(opts, :max_concurrency, @default_max_concurrency)
 
     Logger.info(
@@ -123,7 +122,7 @@ defmodule AshScylla.DataLayer.Batch do
       end)
 
     group_count = map_size(grouped)
-    Logger.debug("AshScylla: Grouped into #{count(group_count)} partition groups")
+    Logger.debug("AshScylla: Grouped into #{group_count} partition groups")
 
     # Execute each group in parallel
     results =
@@ -223,7 +222,4 @@ defmodule AshScylla.DataLayer.Batch do
       [] -> 0
     end
   end
-
-  @spec count(non_neg_integer()) :: non_neg_integer()
-  defp count(n), do: n
 end

@@ -39,7 +39,8 @@ defmodule AshScylla.MixProject do
       end
 
     [
-      extra_applications: [:logger] ++ extra
+      extra_applications: [:logger] ++ extra,
+      mod: {AshScylla.Application, []}
     ]
   end
 

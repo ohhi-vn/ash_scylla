@@ -307,21 +307,30 @@ defmodule AshScylla.DataLayer.Compression do
   end
 
   defp do_compress(value, :lz4) do
-    # NOTE: For production use with LZ4, add the `lz4` package and use
-    # `:lz4.raw_compress/1` instead. This fallback uses zlib for portability.
-    :zlib.compress(value)
+    if Code.ensure_loaded?(:lz4) and function_exported?(:lz4, :raw_compress, 1) do
+      apply(:lz4, :raw_compress, [value])
+    else
+      raise ArgumentError,
+            "LZ4 compression requires the lz4 package. Add it to your deps."
+    end
   end
 
   defp do_compress(value, :snappy) do
-    # NOTE: For production use with Snappy, add the `snappy` package and use
-    # `:snappy.compress/1` instead. This fallback uses zlib for portability.
-    :zlib.compress(value)
+    if Code.ensure_loaded?(:snappy) and function_exported?(:snappy, :compress, 1) do
+      apply(:snappy, :compress, [value])
+    else
+      raise ArgumentError,
+            "Snappy compression requires the snappy package. Add it to your deps."
+    end
   end
 
   defp do_compress(value, :zstd) do
-    # NOTE: For production use with Zstd, add the `ezstd` package and use
-    # `:ezstd.compress/1` instead. This fallback uses zlib for portability.
-    :zlib.compress(value)
+    if Code.ensure_loaded?(:ezstd) and function_exported?(:ezstd, :compress, 1) do
+      apply(:ezstd, :compress, [value])
+    else
+      raise ArgumentError,
+            "Zstd compression requires the ezstd package. Add it to your deps."
+    end
   end
 
   @doc false
@@ -330,20 +339,29 @@ defmodule AshScylla.DataLayer.Compression do
   end
 
   defp do_decompress(value, :lz4) do
-    # NOTE: For production use with LZ4, add the `lz4` package and use
-    # `:lz4.raw_uncompress/1` instead.
-    :zlib.uncompress(value)
+    if Code.ensure_loaded?(:lz4) and function_exported?(:lz4, :raw_uncompress, 1) do
+      apply(:lz4, :raw_uncompress, [value])
+    else
+      raise ArgumentError,
+            "LZ4 decompression requires the lz4 package. Add it to your deps."
+    end
   end
 
   defp do_decompress(value, :snappy) do
-    # NOTE: For production use with Snappy, add the `snappy` package and use
-    # `:snappy.decompress/1` instead.
-    :zlib.uncompress(value)
+    if Code.ensure_loaded?(:snappy) and function_exported?(:snappy, :decompress, 1) do
+      apply(:snappy, :decompress, [value])
+    else
+      raise ArgumentError,
+            "Snappy decompression requires the snappy package. Add it to your deps."
+    end
   end
 
   defp do_decompress(value, :zstd) do
-    # NOTE: For production use with Zstd, add the `ezstd` package and use
-    # `:ezstd.decompress/1` instead.
-    :zlib.uncompress(value)
+    if Code.ensure_loaded?(:ezstd) and function_exported?(:ezstd, :decompress, 1) do
+      apply(:ezstd, :decompress, [value])
+    else
+      raise ArgumentError,
+            "Zstd decompression requires the ezstd package. Add it to your deps."
+    end
   end
 end

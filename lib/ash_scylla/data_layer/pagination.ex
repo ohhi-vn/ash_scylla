@@ -221,5 +221,12 @@ defmodule AshScylla.DataLayer.Pagination do
   @spec normalize_record(term()) :: map()
   defp normalize_record(record) when is_map(record), do: record
   defp normalize_record(record) when is_list(record), do: Map.new(record)
-  defp normalize_record(_), do: %{}
+
+  defp normalize_record(unexpected) do
+    Logger.warning(
+      "AshScylla: Pagination received unexpected record format: #{inspect(unexpected)}"
+    )
+
+    %{}
+  end
 end

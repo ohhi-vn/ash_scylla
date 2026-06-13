@@ -150,38 +150,49 @@ defmodule AshScylla.ClusterIntegrationTest do
   # ── Test setup ──────────────────────────────────────────────────────────────
 
   setup_all do
-    # Start first node
-    node1 = start_node(1)
-    conn1 = connect_node(elem(node1, 1))
+    case AshScylla.Test.ContainerEngine.ensure_running() do
+      :ok ->
+        # Start first node
+        node1 = start_node(1)
+        conn1 = connect_node(elem(node1, 1))
 
-    case wait_for_node_ready(conn1) do
-      :ready ->
-        # Create keyspace and tables before adding more nodes
-        create_keyspace(conn1)
-        create_tables(conn1)
-        Xandra.stop(conn1)
+        case wait_for_node_ready(conn1) do
+          :ready ->
+            # Create keyspace and tables before adding more nodes
+            create_keyspace(conn1)
+            create_tables(conn1)
+            Xandra.stop(conn1)
 
-        # Start additional nodes
-        node2 = start_node(2)
-        node3 = start_node(3)
+            # Start additional nodes
+            node2 = start_node(2)
+            node3 = start_node(3)
 
-        # Wait for cluster to form
-        Process.sleep(5_000)
+            # Wait for cluster to form
+            Process.sleep(5_000)
 
-        # Register cleanup for after all tests complete
-        on_exit(fn ->
-          [node1, node2, node3]
-          |> Enum.each(fn {_index, container} ->
-            stop_container(container)
-          end)
-        end)
+            # Register cleanup for after all tests complete
+            on_exit(fn ->
+              [node1, node2, node3]
+              |> Enum.each(fn {_index, container} ->
+                stop_container(container)
+              end)
+            end)
 
-        %{nodes: [node1, node2, node3]}
+            %{nodes: [node1, node2, node3]}
 
-      :pending ->
-        stop_container(elem(node1, 1))
-        {:skip, "Cluster did not become ready in time"}
+          :pending ->
+            stop_container(elem(node1, 1))
+            %{nodes: nil}
+        end
+
+      {:error, reason} ->
+        IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
+        %{nodes: nil}
     end
+  end
+
+  setup %{nodes: nil} do
+    {:skip, "Container engine not available or cluster did not become ready"}
   end
 
   setup %{nodes: nodes} do
