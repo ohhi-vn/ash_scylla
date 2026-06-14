@@ -8,8 +8,8 @@ Contributions are welcome! Here's how to get started.
 # Install dependencies
 mix deps.get
 
-# Start ScyllaDB via Docker Compose
-docker compose up -d
+# Start ScyllaDB
+podman-compose -f podman-compose.yml up -d
 
 # Run tests
 mix test
@@ -17,7 +17,7 @@ mix test
 # Run unit tests only (no ScyllaDB required)
 mix test --exclude integration
 
-# Run integration tests (requires Docker)
+# Run integration tests (requires Podman)
 mix test test/scylla_integration_test.exs
 ```
 

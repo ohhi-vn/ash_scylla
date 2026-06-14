@@ -724,7 +724,7 @@ end
 ```
 ** (RuntimeError) Could not connect to ScyllaDB at 127.0.0.1:9042
 ```
-- Ensure ScyllaDB is running: `docker ps`
+- Ensure ScyllaDB is running: `podman ps`
 - Check connection settings in `config/config.exs`
 - Verify firewall/network settings
 
@@ -734,7 +734,7 @@ end
 ```
 - Check if ScyllaDB node is accessible
 - Verify `nodes` configuration
-- Check ScyllaDB logs: `docker logs <container_id>`
+- Check ScyllaDB logs: `podman logs <container_id>`
 
 **3. Invalid Query / Syntax Error**
 ```

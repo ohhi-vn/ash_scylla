@@ -467,7 +467,7 @@ For detailed documentation, see:
 Run the test suite:
 
 ```bash
-# All tests (unit + integration; requires Podman/Docker for testcontainers)
+# All tests (unit + integration; requires Podman for testcontainers)
 mix test
 
 # Unit tests only (no ScyllaDB required)
@@ -495,7 +495,7 @@ mix test.ci
 | `test/integration_test.exs` | Integration test placeholder |
 | `test/scylla_integration_test.exs` | Full integration tests with testcontainers |
 
-Integration tests use [testcontainer_ex](https://github.com/manhvu/testcontainers-elixir) to spin up a ScyllaDB instance automatically via Podman or Docker.
+Integration tests use [testcontainer_ex](https://github.com/manhvu/testcontainers-elixir) to spin up a ScyllaDB instance automatically via Podman.
 
 ---
 
@@ -519,16 +519,10 @@ Contributions are welcome! Here's how to get started:
 mix deps.get
 
 # Start ScyllaDB via Podman Compose (includes health checks)
-podman-compose up -d
+podman-compose -f podman-compose.yml up -d
 
-# Or via Docker Compose
-docker compose up -d
-
-# Or start ScyllaDB manually with Podman
-podman run -p 9042:9042 scylladb/scylla:latest
-
-# Or with Docker
-docker run -p 9042:9042 scylladb/scylla:latest
+# Or start ScyllaDB manually
+podman run -p 9042:9042 docker.io/scylladb/scylla:latest
 
 # Run tests
 mix test
@@ -537,7 +531,7 @@ mix test
 ### Dev Container
 
 A `.devcontainer/devcontainer.json` is provided for VS Code Dev Containers.
-It brings up both Elixir and ScyllaDB together via Podman Compose or Docker Compose.
+It brings up both Elixir and ScyllaDB together via Podman Compose.
 
 ---
 

@@ -44,13 +44,15 @@ defmodule AshScylla.ClusterIntegrationTest do
   defp start_node(index) do
     container_name = "ash_scylla_cluster_node_#{index}"
     # Remove leftover container from previous runs to avoid HTTP 409
-    case System.cmd("docker", ["rm", "-f", container_name], stderr_to_stdout: true) do
+    case System.cmd("podman", ["rm", "-f", container_name], stderr_to_stdout: true) do
       {_, _} -> :ok
     end
 
     container = build_container(index)
-    {:ok, started} = TestcontainerEx.start_container(container)
-    {index, started}
+    case TestcontainerEx.start_container(container) do
+      {:ok, started} -> {:ok, {index, started}}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp get_host_port(container) do
@@ -159,55 +161,61 @@ defmodule AshScylla.ClusterIntegrationTest do
     case AshScylla.Test.ContainerEngine.ensure_running() do
       :ok ->
         # Start first node
-        node1 = start_node(1)
-        conn1 = connect_node(elem(node1, 1))
+        case start_node(1) do
+          {:ok, node1} ->
+            conn1 = connect_node(elem(node1, 1))
 
-        case wait_for_node_ready(conn1) do
-          :ready ->
-            # Create keyspace and tables before adding more nodes
-            create_keyspace(conn1)
-            create_tables(conn1)
-            Xandra.stop(conn1)
+            case wait_for_node_ready(conn1) do
+              :ready ->
+                # Create keyspace and tables before adding more nodes
+                create_keyspace(conn1)
+                create_tables(conn1)
+                Xandra.stop(conn1)
 
-            # Start additional nodes
-            node2 = start_node(2)
-            node3 = start_node(3)
+                # Start additional nodes
+                {:ok, node2} = start_node(2)
+                {:ok, node3} = start_node(3)
 
-            # Wait for cluster to form
-            Process.sleep(5_000)
+                # Wait for cluster to form
+                Process.sleep(5_000)
 
-            # Register cleanup for after all tests complete
-            on_exit(fn ->
-              [node1, node2, node3]
-              |> Enum.each(fn {_index, container} ->
-                stop_container(container)
-              end)
-            end)
+                # Register cleanup for after all tests complete
+                on_exit(fn ->
+                  [node1, node2, node3]
+                  |> Enum.each(fn {_index, container} ->
+                    stop_container(container)
+                  end)
+                end)
 
-            %{nodes: [node1, node2, node3]}
+                %{nodes: [node1, node2, node3]}
 
-          :pending ->
-            stop_container(elem(node1, 1))
-            :ok
+              :pending ->
+                stop_container(elem(node1, 1))
+                %{nodes: []}
+            end
+
+          {:error, reason} ->
+            IO.puts("WARNING: Skipping integration tests — node1 failed: #{inspect(reason)}")
+            %{nodes: []}
         end
 
       {:error, reason} ->
         IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
-        :ok
+        %{nodes: []}
     end
   end
 
-  setup %{nodes: nodes} do
-    if nodes != [] do
-      {_index, container} = hd(nodes)
-      conn = connect_node(container, 5)
-      %{conn: conn}
-    else
-      :ok
+  setup context do
+    case Map.fetch(context, :nodes) do
+      {:ok, nodes} when nodes != [] ->
+        {_index, container} = hd(nodes)
+        conn = connect_node(container, 5)
+        %{conn: conn}
+
+      _ ->
+        %{conn: nil}
     end
   end
-
-  setup _, do: :ok
 
   # ── Helpers ─────────────────────────────────────────────────────────────────
 

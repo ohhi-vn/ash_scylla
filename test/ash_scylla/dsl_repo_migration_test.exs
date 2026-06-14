@@ -277,7 +277,7 @@ defmodule AshScylla.DslRepoMigrationContinuedTest do
 
       Enum.each(result, fn cql ->
         assert cql =~ "CREATE INDEX IF NOT EXISTS"
-        assert cql =~ "ON test_users"
+        assert cql =~ ~r/ON "?test_users"?/
       end)
     end
 

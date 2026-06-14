@@ -28,7 +28,7 @@ mix run benchmarks/workload_bench.exs
 mix run benchmarks/run_benchmarks.exs
 ```
 
-### Integration (with test container — Podman/Docker)
+### Integration (with test container — Podman)
 
 ```bash
 # Spawn a ScyllaDB container, run benchmarks, tear down
@@ -110,7 +110,7 @@ The integration benchmarks support an optional **test container** mode that auto
 This is ideal for local development — no manual ScyllaDB setup required.
 
 ```bash
-# Just needs Podman or Docker running
+# Just needs Podman running
 mix run benchmarks/integration_bench.exs --container
 ```
 

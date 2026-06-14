@@ -69,33 +69,70 @@ defmodule AshScylla.DataLayer.SchemaMigration do
   """
   @spec diff(module(), module()) :: [String.t()]
   def diff(resource, repo) do
-    with {:ok, live_schema} <- fetch_table_schema(resource, repo),
-         {:ok, live_indexes} <- fetch_indexes(resource, repo),
-         {:ok, live_views} <- fetch_materialized_views(resource, repo) do
-      attributes = Ash.Resource.Info.attributes(resource)
-      live_columns = Map.get(live_schema, :columns, [])
+    case fetch_table_schema(resource, repo) do
+      {:ok, live_schema} ->
+        live_indexes = safe_fetch_indexes(resource, repo)
+        live_views = safe_fetch_materialized_views(resource, repo)
 
-      column_diff = diff_columns(attributes, live_columns)
+        attributes = Ash.Resource.Info.attributes(resource)
+        live_columns = Map.get(live_schema, :columns, [])
 
-      add_column_cql =
-        if column_diff.add != [] do
-          generate_add_columns(resource, column_diff.add)
+        column_diff = diff_columns(attributes, live_columns)
+
+        add_column_cql =
+          if column_diff.add != [] do
+            generate_add_columns(resource, column_diff.add)
+          else
+            []
+          end
+
+        new_index_cql = generate_new_indexes(resource, live_indexes)
+        new_view_cql = generate_new_views(resource, live_views)
+
+        # If table doesn't exist yet, generate full DDL
+        if live_columns == [] do
+          generate(resource)
         else
-          []
+          add_column_cql ++ new_index_cql ++ new_view_cql
         end
 
-      new_index_cql = generate_new_indexes(resource, live_indexes)
-      new_view_cql = generate_new_views(resource, live_views)
-
-      # If table doesn't exist yet, generate full DDL
-      if live_columns == [] do
-        generate(resource)
-      else
-        add_column_cql ++ new_index_cql ++ new_view_cql
-      end
-    else
       {:error, reason} ->
-        Logger.error("Failed to diff schema for #{inspect(resource)}: #{inspect(reason)}")
+        # If the table doesn't exist (unconfigured table), generate full DDL
+        # instead of silently returning nothing.
+        if table_not_found_error?(reason) do
+          Logger.warning(
+            "Table doesn't exist for #{inspect(resource)}, generating full schema DDL"
+          )
+
+          generate(resource)
+        else
+          Logger.error("Failed to diff schema for #{inspect(resource)}: #{inspect(reason)}")
+          []
+        end
+    end
+  end
+
+  @doc false
+  @spec table_not_found_error?(term()) :: boolean()
+  def table_not_found_error?(%{message: msg}) when is_binary(msg),
+    do: String.contains?(msg, "unconfigured table")
+
+  def table_not_found_error?(_), do: false
+
+  defp safe_fetch_indexes(resource, repo) do
+    case fetch_indexes(resource, repo) do
+      {:ok, indexes} -> indexes
+      {:error, reason} ->
+        Logger.warning("Failed to fetch indexes for #{inspect(resource)}: #{inspect(reason)}")
+        []
+    end
+  end
+
+  defp safe_fetch_materialized_views(resource, repo) do
+    case fetch_materialized_views(resource, repo) do
+      {:ok, views} -> views
+      {:error, reason} ->
+        Logger.warning("Failed to fetch materialized views for #{inspect(resource)}: #{inspect(reason)}")
         []
     end
   end
@@ -123,7 +160,8 @@ defmodule AshScylla.DataLayer.SchemaMigration do
         {:ok, statements}
       else
         nodes = Keyword.get(opts, :nodes, repo.nodes())
-        Migrator.run(nodes, statements, opts)
+        migration_opts = Keyword.put_new(opts, :keyspace, repo.keyspace())
+        Migrator.run(nodes, statements, migration_opts)
       end
     end
   end
@@ -185,6 +223,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
     query = """
     SELECT * FROM system_schema.indexes
     WHERE keyspace_name = ? AND table_name = ?
+    ALLOW FILTERING
     """
 
     case repo.query(query, [keyspace, table_name], consistency: :quorum) do
@@ -218,6 +257,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
     query = """
     SELECT * FROM system_schema.views
     WHERE keyspace_name = ? AND base_table_name = ?
+    ALLOW FILTERING
     """
 
     case repo.query(query, [keyspace, table_name], consistency: :quorum) do
@@ -303,7 +343,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
 
         attr ->
           type_str = attr.type |> Migration.ash_type_to_cql_type(attr.constraints)
-          "ALTER TABLE #{table_name} ADD #{col_name} #{type_str}"
+          "ALTER TABLE #{quote_name(table_name)} ADD #{quote_name(col_name)} #{type_str}"
       end
     end)
     |> Enum.reject(&is_nil/1)
@@ -330,7 +370,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
     |> Enum.map(fn idx ->
       index_name = idx.name || generate_index_name(table_name, idx.columns)
       columns = idx.columns |> Enum.map_join(", ", &to_string/1)
-      "CREATE INDEX IF NOT EXISTS #{index_name} ON #{table_name} (#{columns})"
+      "CREATE INDEX IF NOT EXISTS #{index_name} ON #{quote_name(table_name)} (#{columns})"
     end)
   end
 
@@ -357,6 +397,17 @@ defmodule AshScylla.DataLayer.SchemaMigration do
       config = view_config[:config] || []
       MaterializedView.create_view_cql(view_name, table_name, config)
     end)
+  end
+
+  defp quote_name(name) when is_atom(name), do: quote_name(Atom.to_string(name))
+
+  defp quote_name(name) when is_binary(name) do
+    if String.contains?(name, "\"") do
+      escaped = String.replace(name, "\"", "\"\"")
+      "\"#{escaped}\""
+    else
+      "\"#{name}\""
+    end
   end
 
   @spec get_table_name(module()) :: String.t()

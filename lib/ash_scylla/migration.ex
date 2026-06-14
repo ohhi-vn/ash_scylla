@@ -66,29 +66,77 @@ defmodule AshScylla.Migration do
           to_string(name)
       end
 
-    attributes =
-      resource
-      |> Ash.Resource.Info.attributes()
+    all_attributes = Ash.Resource.Info.attributes(resource)
+
+    # Separate primary key columns from regular columns
+    {pk_attrs, regular_attrs} =
+      Enum.split_with(all_attributes, fn attr -> attr.primary_key? end)
+
+    # Build column definitions for PK attributes (as regular column defs with types)
+    pk_columns =
+      pk_attrs
       |> Enum.map(&attribute_to_cql/1)
 
-    primary_keys =
-      resource
-      |> Ash.Resource.Info.attributes()
-      |> Enum.filter(fn attr -> attr.primary_key? end)
-      |> Enum.map_join(", ", fn attr -> to_string(attr.name) end)
+    # Build column definitions (without PRIMARY KEY inline)
+    regular_columns =
+      regular_attrs
+      |> Enum.map(&attribute_to_cql/1)
 
-    clustering_order =
-      if primary_keys != "" do
-        "WITH CLUSTERING ORDER BY (#{primary_keys} DESC)"
+    # Build PRIMARY KEY clause
+    pk_clause = build_primary_key_clause(pk_attrs)
+
+    # Combine all column definitions with PK clause
+    all_definitions =
+      if pk_clause == "" do
+        pk_columns ++ regular_columns
       else
-        ""
+        pk_columns ++ regular_columns ++ [pk_clause]
       end
 
+    # Build CLUSTERING ORDER BY clause
+    clustering_order_clause = build_clustering_order_clause(pk_attrs)
+
     """
-    CREATE TABLE #{table_name} (
-      #{Enum.join(attributes, ",\n  ")}
-    ) #{clustering_order}
+    CREATE TABLE IF NOT EXISTS #{quote_name(table_name)} (
+      #{Enum.join(all_definitions, ",\n  ")}
+    ) #{clustering_order_clause}
     """
+  end
+
+  # Build PRIMARY KEY clause from primary key attributes
+  # Supports both simple and composite primary keys
+  @spec build_primary_key_clause([Ash.Resource.Attribute.t()]) :: String.t()
+  defp build_primary_key_clause([]), do: ""
+
+  defp build_primary_key_clause(pk_attrs) do
+    # Separate partition keys from clustering keys
+    # In Ash, the first primary key is the partition key,
+    # subsequent ones are clustering keys
+    case pk_attrs do
+      [single_pk] ->
+        # Simple primary key - just one column
+        "PRIMARY KEY (#{quote_name(single_pk.name)})"
+
+      [partition_key | clustering_keys] ->
+        # Composite primary key
+        pk_cols =
+          [quote_name(partition_key.name) | Enum.map(clustering_keys, &quote_name(&1.name))]
+
+        "PRIMARY KEY (#{Enum.join(pk_cols, ", ")})"
+    end
+  end
+
+  # Build CLUSTERING ORDER BY clause for clustering keys
+  @spec build_clustering_order_clause([Ash.Resource.Attribute.t()]) :: String.t()
+  defp build_clustering_order_clause([]), do: ""
+  defp build_clustering_order_clause([_single_pk]), do: ""
+
+  defp build_clustering_order_clause([_partition_key | clustering_keys]) do
+    order_str =
+      clustering_keys
+      |> Enum.map_join(", ", fn attr -> "#{quote_name(attr.name)} DESC" end)
+
+    "WITH CLUSTERING ORDER BY (#{order_str})"
   end
 
   @doc """
@@ -119,7 +167,7 @@ defmodule AshScylla.Migration do
           index_name = idx.name || generate_index_name(table_name, idx.columns)
           columns = idx.columns |> Enum.map_join(", ", &to_string/1)
 
-          "CREATE INDEX IF NOT EXISTS #{index_name} ON #{table_name} (#{columns})"
+            "CREATE INDEX IF NOT EXISTS #{index_name} ON #{quote_name(table_name)} (#{columns})"
         end)
     end
   end
@@ -160,6 +208,20 @@ defmodule AshScylla.Migration do
   defp generate_index_name(table_name, columns) do
     column_str = columns |> Enum.map_join("_", &to_string/1)
     "idx_#{table_name}_#{column_str}"
+  end
+
+  # Quotes an identifier for use in CQL, protecting reserved words.
+  @spec quote_name(atom() | String.t()) :: String.t()
+  defp quote_name(name) when is_atom(name), do: quote_name(Atom.to_string(name))
+
+  defp quote_name(name) when is_binary(name) do
+    if String.contains?(name, "\"") do
+      # Escape embedded double quotes by doubling them (CQL standard)
+      escaped = String.replace(name, "\"", "\"\"")
+      "\"#{escaped}\""
+    else
+      "\"#{name}\""
+    end
   end
 
   @doc """
@@ -317,22 +379,21 @@ defmodule AshScylla.Migration do
   end
 
   defp attribute_to_cql(attr_or_keyword) do
-    {name, type, opts, primary_key?, allow_nil?} =
+    {name, type, opts, allow_nil?} =
       case attr_or_keyword do
         %Ash.Resource.Attribute{} = attr ->
-          {attr.name, attr.type, attr.constraints, attr.primary_key?, attr.allow_nil?}
+          {attr.name, attr.type, attr.constraints, attr.allow_nil?}
 
         attr when is_list(attr) ->
           {Keyword.get(attr, :name), Keyword.get(attr, :type, :string),
-           Keyword.get(attr, :type_opts, []), Keyword.get(attr, :primary_key, false),
+           Keyword.get(attr, :type_opts, []),
            Keyword.get(attr, :allow_nil, true)}
       end
 
     type_str = ash_type_to_cql_type(type, opts)
-    primary_key = if primary_key?, do: " PRIMARY KEY", else: ""
     nullable = if allow_nil?, do: "", else: " NOT NULL"
 
-    "#{name} #{type_str}#{primary_key}#{nullable}"
+    "#{quote_name(name)} #{type_str}#{nullable}"
   end
 
   @doc """

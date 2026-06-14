@@ -200,7 +200,7 @@ IO.puts(formatted)
 ```
 
 **Solution:**
-- Verify ScyllaDB is running: `docker ps`
+- Verify ScyllaDB is running: `podman ps`
 - Check `nodes` configuration in `config/config.exs`
 - Ensure firewall allows connections
 

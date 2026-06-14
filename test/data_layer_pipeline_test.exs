@@ -75,7 +75,13 @@ defmodule AshScylla.DataLayer.PipelineTest do
 
   defp uid, do: generate_uuid()
 
-  defp xq(conn, query, params \\ []) do
+  defp xq(conn, query, params \\ [])
+
+  defp xq(nil, _query, _params) do
+    %{rows: [], num_rows: 0, columns: []}
+  end
+
+  defp xq(conn, query, params) do
     encoded = Enum.map(params, &encode_param/1)
 
     case Xandra.execute(conn, query, encoded) do
@@ -179,21 +185,19 @@ defmodule AshScylla.DataLayer.PipelineTest do
 
           {:error, reason} ->
             IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
-            Process.put(:pipeline_test_conn, nil)
-            :ok
+            %{conn: nil, scylla: nil}
         end
 
       {:error, reason} ->
         IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
-        Process.put(:pipeline_test_conn, nil)
-        :ok
+        %{conn: nil, scylla: nil}
     end
   end
 
-  setup do
-    case Process.get(:pipeline_test_conn) do
+  setup context do
+    case context.conn do
       nil ->
-        :ok
+        %{conn: nil}
 
       conn ->
         {:ok, _} = Xandra.execute(conn, "TRUNCATE ash_scylla_test.users")

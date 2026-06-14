@@ -9,7 +9,7 @@
 1. [Overview](#overview)
 2. [Architecture](#architecture)
 3. [Cluster Topology](#cluster-topology)
-4. [Docker Compose Cluster Setup](#docker-compose-cluster-setup)
+4. [Podman Compose Cluster Setup (Staging)](#podman-compose-cluster-setup-staging)
 5. [Kubernetes Deployment](#kubernetes-deployment)
 6. [Repo Configuration](#repo-configuration)
 7. [Connection Pool Tuning](#connection-pool-tuning)
@@ -26,7 +26,7 @@
 
 This guide covers running AshScylla in production against a ScyllaDB cluster. Topics include:
 
-- Multi-node cluster deployment (Docker Compose for staging, Kubernetes for production)
+- Multi-node cluster deployment (Podman Compose for staging, Kubernetes for production)
 - Connection pool sizing for high throughput
 - Consistency level trade-offs across failure domains
 - Multi-datacenter replication strategies
@@ -113,16 +113,16 @@ MyApp.Repo.create_keyspace("my_app_prod", replication: [
 
 ---
 
-## Docker Compose Cluster Setup
+## Podman Compose Cluster Setup (Staging)
 
 Use this for staging environments that mirror production topology:
 
 ```yaml
-# docker-compose.cluster.yml
+# podman-compose.cluster.yml
 version: "3.8"
 
 x-scylla-common: &scylla-common
-  image: scylladb/scylla:5.4
+  image: docker.io/scylladb/scylla:5.4
   command: >
     --smp 2
     --memory 4G
@@ -224,7 +224,7 @@ services:
 
   # --- Application ---
   app:
-    image: ${ELIXIR_IMAGE:-elixir:1.17-alpine}
+    image: ${ELIXIR_IMAGE:-docker.io/elixir:1.17-alpine}
     depends_on:
       scylla-seed-1:
         condition: service_healthy
@@ -255,13 +255,13 @@ volumes:
 
 ```bash
 # Start all nodes
-docker compose -f docker-compose.cluster.yml up -d
+podman-compose -f podman-compose.cluster.yml up -d
 
 # Watch the cluster form
-docker compose -f docker-compose.cluster.yml logs -f scylla-seed-1
+podman-compose -f podman-compose.cluster.yml logs -f scylla-seed-1
 
 # Verify cluster status (from inside the app container)
-docker compose -f docker-compose.cluster.yml exec app \
+podman-compose -f podman-compose.cluster.yml exec app \
   sh -c 'cqlsh scylla-seed-1 -e "SELECT peer, data_center, rack, tokens FROM system.peers"'
 ```
 
@@ -269,12 +269,12 @@ docker compose -f docker-compose.cluster.yml exec app \
 
 ```bash
 # From inside the app container
-docker compose -f docker-compose.cluster.yml exec app \
+podman-compose -f podman-compose.cluster.yml exec app \
   sh -c 'cqlsh scylla-seed-1 -e "
     CREATE KEYSPACE IF NOT EXISTS my_app_staging
     WITH REPLICATION = {
-      '\''class'\'': '\''NetworkTopologyStrategy'\'',
-      '\''dc1'\'': 3
+      'class': 'NetworkTopologyStrategy',
+      'dc1': 3
     }
     AND DURABLE_WRITES = true;
   "'

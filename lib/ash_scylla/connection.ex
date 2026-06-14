@@ -13,6 +13,8 @@
 # limitations under the License.
 
 defmodule AshScylla.Connection do
+  require Logger
+
   @moduledoc """
   Direct Xandra connection wrapper for AshScylla.
 
@@ -40,9 +42,9 @@ defmodule AshScylla.Connection do
 
   use GenServer
 
-  defstruct [:conn, :keyspace, :nodes]
+  defstruct [:conn, :keyspace, :nodes, :keyspace_used]
 
-  @type t :: %__MODULE__{conn: pid(), keyspace: String.t() | nil, nodes: [String.t()]}
+  @type t :: %__MODULE__{conn: pid(), keyspace: String.t() | nil, nodes: [String.t()], keyspace_used: boolean()}
 
   # Client API
 
@@ -69,51 +71,105 @@ defmodule AshScylla.Connection do
   @doc "Returns the connection struct by name (local or global)."
   @spec get_conn(module() | atom()) :: t() | nil
   def get_conn(name \\ __MODULE__) do
-    case name do
-      name when is_atom(name) ->
-        case Process.whereis(name) do
-          nil ->
-            case :global.whereis_name(name) do
-              :undefined -> nil
-              pid -> GenServer.call(pid, :get_conn_struct, 5_000)
-            end
+    try do
+      case name do
+        name when is_atom(name) ->
+          case Process.whereis(name) do
+            nil ->
+              case :global.whereis_name(name) do
+                :undefined -> nil
+                pid -> do_get_conn(pid)
+              end
 
-          pid ->
-            GenServer.call(pid, :get_conn_struct, 5_000)
-        end
+            pid ->
+              do_get_conn(pid)
+          end
 
-      _ ->
-        nil
+        _ ->
+          nil
+      end
+    rescue
+      _ -> nil
+    catch
+      _, _ -> nil
     end
   end
 
-  @doc "Executes a simple or prepared query."
+  defp do_get_conn(pid) do
+    case Process.alive?(pid) do
+      true -> GenServer.call(pid, :get_conn_struct, 5_000)
+      false -> nil
+    end
+  end
+
+  @doc """
+  Executes a simple or prepared query.
+
+  Automatically types simple query values for Xandra 0.19.x compatibility.
+  Xandra requires typed `{type_string, value}` tuples for simple query parameters,
+  so we wrap raw Elixir values in their appropriate CQL type annotations.
+  """
   @spec query(t() | module(), String.t(), list(), keyword()) :: {:ok, term()} | {:error, term()}
   def query(conn_or_name, query, params, opts \\ [])
 
   def query(%__MODULE__{conn: conn}, query, params, opts) do
-    Xandra.execute(conn, query, params, opts)
+    Xandra.execute(conn, query, typed_params(params), opts)
   end
 
   def query(name, query, params, opts) when is_atom(name) do
     case get_conn(name) do
       nil -> {:error, :not_connected}
-      conn -> query(conn, query, params, opts)
+      conn ->
+        ensure_keyspace!(conn, name)
+        query(conn, query, params, opts)
     end
   end
+
+  @doc """
+  Converts raw Elixir values to typed Xandra params.
+
+  Xandra 0.19.x requires simple query values to be `{type_string, value}` tuples.
+  This function infers the CQL type from the Elixir type.
+  """
+  @spec typed_params(list()) :: list()
+  def typed_params(params) when is_list(params) do
+    Enum.map(params, &type_value/1)
+  end
+
+  def typed_params(params), do: params
+
+  defp type_value({type_str, _value} = typed) when is_binary(type_str), do: typed
+  defp type_value(%_{} = struct), do: type_struct(struct)
+  defp type_value(value) when is_binary(value), do: {"text", value}
+  defp type_value(value) when is_integer(value), do: {"bigint", value}
+  defp type_value(value) when is_float(value), do: {"double", value}
+  defp type_value(true), do: {"boolean", true}
+  defp type_value(false), do: {"boolean", false}
+  defp type_value(nil), do: nil
+  defp type_value(value) when is_list(value), do: {"list", value}
+  defp type_value(value) when is_map(value), do: {"map", value}
+  defp type_value(value), do: {"text", to_string(value)}
+
+  defp type_struct(%DateTime{} = dt), do: {"timestamp", dt}
+  defp type_struct(%Date{} = d), do: {"date", d}
+  defp type_struct(%Time{} = t), do: {"time", t}
+  defp type_struct(%Decimal{} = d), do: {"decimal", d}
+  defp type_struct(other), do: {"text", to_string(other)}
 
   @doc "Executes a simple or prepared query, raising on error."
   @spec query!(t() | module(), String.t(), list(), keyword()) :: term() | no_return()
   def query!(conn_or_name, query, params, opts \\ [])
 
   def query!(%__MODULE__{conn: conn}, query, params, opts) do
-    Xandra.execute!(conn, query, params, opts)
+    Xandra.execute!(conn, query, typed_params(params), opts)
   end
 
   def query!(name, query, params, opts) when is_atom(name) do
     case get_conn(name) do
       nil -> raise "No AshScylla connection found for #{inspect(name)}"
-      conn -> query!(conn, query, params, opts)
+      conn ->
+        ensure_keyspace!(conn, name)
+        query!(conn, query, params, opts)
     end
   end
 
@@ -129,7 +185,9 @@ defmodule AshScylla.Connection do
   def prepare(name, query, opts) when is_atom(name) do
     case get_conn(name) do
       nil -> {:error, :not_connected}
-      conn -> prepare(conn, query, opts)
+      conn ->
+        ensure_keyspace!(conn, name)
+        prepare(conn, query, opts)
     end
   end
 
@@ -144,8 +202,41 @@ defmodule AshScylla.Connection do
   def prepare!(name, query, opts) when is_atom(name) do
     case get_conn(name) do
       nil -> raise "No AshScylla connection found for #{inspect(name)}"
-      conn -> prepare!(conn, query, opts)
+      conn ->
+        ensure_keyspace!(conn, name)
+        prepare!(conn, query, opts)
     end
+  end
+
+  @doc "Ensures the keyspace is selected. Retries USE if not yet applied."
+  def ensure_keyspace!(conn, name) when is_atom(name) do
+    if conn.keyspace != nil and not conn.keyspace_used do
+      GenServer.call(name, :ensure_keyspace, 5_000)
+    end
+
+    conn
+  end
+
+  def ensure_keyspace!(conn, _name) do
+    conn
+  end
+
+  @doc """
+  Sets the keyspace to use. Useful when the keyspace is created after connection start.
+  Returns `{:ok, :set}` or `{:error, reason}`.
+  """
+  @spec set_keyspace(atom(), String.t()) :: {:ok, :set} | {:error, term()}
+  def set_keyspace(name, keyspace) when is_atom(name) do
+    GenServer.call(name, {:set_keyspace, keyspace}, 5_000)
+  end
+
+  @doc """
+  Reconnects to the keyspace. Useful after the keyspace has been created.
+  Returns `{:ok, :set}` or `{:error, reason}`.
+  """
+  @spec reconnect_keyspace(atom()) :: {:ok, :set} | {:error, term()}
+  def reconnect_keyspace(name) when is_atom(name) do
+    GenServer.call(name, :ensure_keyspace, 5_000)
   end
 
   @doc "Stops the connection."
@@ -157,7 +248,14 @@ defmodule AshScylla.Connection do
   def stop(name) when is_atom(name) do
     case get_conn(name) do
       nil -> :ok
-      conn -> stop(conn)
+      _conn ->
+        try do
+          GenServer.stop(name)
+        rescue
+          _ -> :ok
+        catch
+          _, _ -> :ok
+        end
     end
   end
 
@@ -167,14 +265,11 @@ defmodule AshScylla.Connection do
   def init(opts) do
     keyspace = Keyword.get(opts, :keyspace)
     nodes = Keyword.get(opts, :nodes, ["127.0.0.1:9042"])
-    name = Keyword.get(opts, :name)
 
     xandra_opts =
       [
         nodes: nodes
       ]
-      |> maybe_put(:name, name)
-      |> maybe_put(:keyspace, keyspace)
       |> Keyword.merge(
         Keyword.take(opts, [
           :connect_timeout,
@@ -191,18 +286,71 @@ defmodule AshScylla.Connection do
 
     case Xandra.start_link(xandra_opts) do
       {:ok, conn} ->
-        {:ok, %__MODULE__{conn: conn, keyspace: keyspace, nodes: nodes}}
+        # Try to USE keyspace, but don't fail if it doesn't exist yet
+        # (e.g. during first-time setup before create_keyspace runs)
+        keyspace_used? =
+          if keyspace do
+            case Xandra.execute(conn, "USE #{keyspace}", []) do
+              {:ok, _} ->
+                Logger.info(
+                  "AshScylla: Connected to ScyllaDB at #{inspect(nodes)}, keyspace: #{keyspace}"
+                )
+
+                true
+
+              {:error, reason} ->
+                Logger.warning(
+                  "AshScylla: Connected to ScyllaDB at #{inspect(nodes)} but keyspace '#{keyspace}' not available: #{inspect(reason)}. " <>
+                    "This is expected before keyspace creation. Will retry on first query."
+                )
+
+                false
+            end
+          else
+            Logger.info("AshScylla: Connected to ScyllaDB at #{inspect(nodes)}, no keyspace configured")
+            true
+          end
+
+        {:ok, %__MODULE__{conn: conn, keyspace: keyspace, nodes: nodes, keyspace_used: keyspace_used?}}
 
       {:error, reason} ->
         {:stop, reason}
     end
   end
 
-  defp maybe_put(opts, _key, nil), do: opts
-  defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
-
   @impl GenServer
   def handle_call(:get_conn_struct, _from, state) do
     {:reply, state, state}
+  end
+
+  @impl GenServer
+  def handle_call(:ensure_keyspace, _from, %__MODULE__{keyspace: nil} = state) do
+    {:reply, {:error, :no_keyspace_configured}, state}
+  end
+
+  @impl GenServer
+  def handle_call(:ensure_keyspace, _from, %__MODULE__{conn: conn, keyspace: keyspace} = state) do
+    case Xandra.execute(conn, "USE #{keyspace}", []) do
+      {:ok, _} ->
+        Logger.info("AshScylla: Keyspace '#{keyspace}' is now active")
+        {:reply, {:ok, :set}, %{state | keyspace_used: true}}
+
+      {:error, reason} ->
+        Logger.warning("AshScylla: Failed to set keyspace '#{keyspace}': #{inspect(reason)}")
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl GenServer
+  def handle_call({:set_keyspace, new_keyspace}, _from, %__MODULE__{conn: conn} = state) do
+    case Xandra.execute(conn, "USE #{new_keyspace}", []) do
+      {:ok, _} ->
+        Logger.info("AshScylla: Keyspace set to '#{new_keyspace}'")
+        {:reply, {:ok, :set}, %{state | keyspace: new_keyspace, keyspace_used: true}}
+
+      {:error, reason} ->
+        Logger.warning("AshScylla: Failed to set keyspace '#{new_keyspace}': #{inspect(reason)}")
+        {:reply, {:error, reason}, state}
+    end
   end
 end

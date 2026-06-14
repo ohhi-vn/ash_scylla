@@ -19,11 +19,11 @@ defmodule Mix.Tasks.AshScylla.Setup do
     # Compile first so the repo module is available
     Mix.Task.run("compile", args)
 
-    # Start the application (idempotent - safe to call multiple times)
+    # Load application config without starting the supervision tree
     otp_app = Mix.Project.config()[:app]
 
     if otp_app do
-      Application.ensure_all_started(otp_app)
+      Application.load(otp_app)
     end
 
     repo = find_repo(opts)

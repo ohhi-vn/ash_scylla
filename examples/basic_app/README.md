@@ -6,7 +6,7 @@ This is a simple example application demonstrating how to use AshScylla with Scy
 
 - Elixir 1.19 or later
 - ScyllaDB running on localhost:9042 (or update the config)
-- Podman or Docker (optional, for running ScyllaDB)
+- Podman (optional, for running ScyllaDB)
 
 ## Quick Start with Podman
 
@@ -16,20 +16,14 @@ If you don't have ScyllaDB installed, you can run it with Podman:
 podman run --name scylla -p 9042:9042 -d scylladb/scylla:latest
 ```
 
-Or use the docker-compose file from the main project with Podman Compose:
+Or use the podman-compose file from the main project with Podman Compose:
 
 ```bash
 cd ../..
 podman-compose up -d
 ```
 
-Or with Docker / Docker Compose:
 
-```bash
-docker run --name scylla -p 9042:9042 -d scylladb/scylla:latest
-cd ../..
-docker compose up -d
-```
 
 ## Setup
 

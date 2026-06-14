@@ -5,7 +5,6 @@ import Config
 # (rootless: unix:///run/user/$UID/podman/podman.sock, rootful: unix:///run/podman/podman.sock).
 #
 # You can also explicitly select an engine via the :engine option or CONTAINER_ENGINE env var:
-#   CONTAINER_ENGINE=docker mix test
 #   CONTAINER_ENGINE=podman mix test
 
 # When CONTAINER_ENGINE=podman is set, detect the Podman socket and expose it

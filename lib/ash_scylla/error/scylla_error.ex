@@ -91,7 +91,8 @@ defmodule AshScylla.Error.ScyllaError do
     {:unauthorized, :unauthorized, %{}},
     {:is_bootstrapping, :consistency_error, %{}},
     {:truncate_error, :query_error, %{}},
-    {:function_failure, :query_error, %{}}
+    {:function_failure, :query_error, %{}},
+    {:invalid, :schema_error, %{}}
   ]
 
   # Maps binary reason patterns to error categories and types
@@ -346,10 +347,26 @@ defmodule AshScylla.Error.ScyllaError do
 
   @spec build_error(:schema_error, term(), atom(), map(), term()) :: t()
   defp build_error(:schema_error, reason, _category, details, error) do
+    message =
+      if is_map(error) and Map.has_key?(error, :message) and error.message != "" do
+        "Schema error: #{error.message}"
+      else
+        "Schema error: #{format_reason(reason)}"
+      end
+
+    # Try to detect table-not-found from the error message even when reason is a generic atom
+    details =
+      if is_map(error) and is_binary(error.message) and
+           String.contains?(error.message, "unconfigured table") do
+        Map.put(details, :type, :table_not_found)
+      else
+        details
+      end
+
     %ScyllaError{
       type: :schema_error,
       reason: reason,
-      message: "Schema error: #{format_reason(reason)}",
+      message: message,
       suggestion: schema_error_suggestion(details),
       original_error: error
     }

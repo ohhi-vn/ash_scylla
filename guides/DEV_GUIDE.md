@@ -23,7 +23,7 @@
 This guide walks through setting up a complete AshScylla development environment using:
 
 - **VS Code Dev Containers** — reproducible, zero-host-dependency workspace
-- **Docker Compose** — single-node ScyllaDB instance with health checks
+- **Podman Compose** — single-node ScyllaDB instance with health checks
 - **Elixir 1.17** — pre-installed in the container image
 
 The dev container mounts your local source code, so all edits happen on your host machine while compilation and tests run inside the container.
@@ -34,11 +34,11 @@ The dev container mounts your local source code, so all edits happen on your hos
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | 24.0+ | Runs the ScyllaDB container |
+| [Podman](https://podman.io/) | 4.0+ | Runs the ScyllaDB container |
 | [VS Code](https://code.visualstudio.com/) | 1.85+ | IDE with remote container support |
 | [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) | latest | VS Code → container bridge |
 
-> **Podman users:** Replace `docker` with `podman` in all commands. The `docker-compose.yml` is compatible with both.
+> The `podman-compose.yml` file is at the project root.
 
 ---
 
@@ -69,7 +69,7 @@ elixir --version
 # → Elixir 1.17.x
 
 # Verify ScyllaDB is running
-docker ps
+podman ps
 # → ash_scylla_test  ...  healthy
 
 # Test the connection
@@ -137,7 +137,7 @@ ash_scylla/
 │   ├── IMPLEMENTATION_SUMMARY.md
 │   ├── CHANGELOG.md
 │   └── CONTRIBUTING.md
-├── docker-compose.yml             # ScyllaDB + Elixir container
+├── podman-compose.yml            # ScyllaDB + Elixir container
 ├── mix.exs
 └── README.md
 ```
@@ -150,7 +150,7 @@ ash_scylla/
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│  Docker Network (default)                           │
+│  Podman Network (default)                         │
 │                                                     │
 │  ┌──────────────┐          ┌────────────────────┐  │
 │  │   scylla     │◄────────►│       app          │  │
@@ -398,22 +398,22 @@ mix dialyzer                  # Type checking
 
 ```bash
 # Check ScyllaDB logs
-docker logs ash_scylla_test
+podman logs ash_scylla_test
 
 # Common issue: port 9042 already in use
 lsof -i :9042
-# Kill the conflicting process or change the port in docker-compose.yml
+# Kill the conflicting process or change the port in podman-compose.yml
 ```
 
 ### "Connection refused" errors
 
 ```bash
 # Verify ScyllaDB is healthy
-docker ps
+podman ps
 # → ash_scylla_test  ...  healthy
 
 # If "starting", wait for health check (up to 60s)
-docker inspect --format='{{.State.Health.Status}}' ash_scylla_test
+podman inspect --format='{{.State.Health.Status}}' ash_scylla_test
 ```
 
 ### "Keyspace does not exist"
@@ -435,7 +435,7 @@ sleep 30 && mix test --exclude integration
 
 ```bash
 # Remove all containers and volumes
-docker compose down -v
+podman-compose -f podman-compose.yml down -v
 
 # Reopen in VS Code → "Reopen in Container"
 ```

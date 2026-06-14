@@ -74,7 +74,13 @@ defmodule AshScylla.ScyllaIntegrationTest do
     end)
   end
 
-  defp xq(conn, query, params \\ []) do
+  defp xq(conn, query, params \\ [])
+
+  defp xq(nil, _query, _params) do
+    %{rows: [], num_rows: 0, columns: []}
+  end
+
+  defp xq(conn, query, params) do
     encoded_params = Enum.map(params, &encode_param/1)
 
     result =
@@ -211,28 +217,38 @@ defmodule AshScylla.ScyllaIntegrationTest do
               {:error, _} ->
                 IO.puts("WARNING: Skipping integration tests — ScyllaDB not reachable")
                 ScyllaContainer.stop(scylla_container.container_id)
-                :ok
+                %{scylla: nil}
+
             end
 
           {:error, reason} ->
             IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
-            :ok
+            %{scylla: nil}
+
         end
 
       {:error, reason} ->
         IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
-        :ok
+        %{scylla: nil}
+
     end
   end
 
-  setup %{scylla: scylla_container} do
-    port = ScyllaContainer.port(scylla_container)
-    host = ScyllaContainer.host(scylla_container)
-    conn = connect_with_retry(host, port, 5)
-    %{conn: conn}
-  end
+  setup context do
+    case Map.fetch(context, :scylla) do
+      {:ok, scylla_container} when not is_nil(scylla_container) ->
+        port = ScyllaContainer.port(scylla_container)
+        host = ScyllaContainer.host(scylla_container)
+        conn = connect_with_retry(host, port, 5)
+        %{conn: conn}
 
-  setup _, do: :ok
+      {:ok, nil} ->
+        %{conn: nil}
+
+      :error ->
+        %{conn: nil}
+    end
+  end
 
   # ══════════════════════════════════════════════════════════════════════════
   # 1. Basic connectivity
@@ -609,23 +625,29 @@ defmodule AshScylla.ScyllaIntegrationTest do
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "complex queries" do
-    setup %{conn: c} do
-      Enum.each(1..20, fn i ->
-        id = uid()
+    setup context do
+      case Map.fetch(context, :conn) do
+        {:ok, c} when not is_nil(c) ->
+          Enum.each(1..20, fn i ->
+            id = uid()
 
-        status =
-          cond do
-            rem(i, 3) == 0 -> "active"
-            rem(i, 3) == 1 -> "pending"
-            true -> "inactive"
-          end
+            status =
+              cond do
+                rem(i, 3) == 0 -> "active"
+                rem(i, 3) == 1 -> "pending"
+                true -> "inactive"
+              end
 
-        xq(
-          c,
-          "INSERT INTO ash_scylla_test.users (id, name, email, status, age) VALUES (?, ?, ?, ?, ?)",
-          [id, "User#{i}", "user#{i}@test.com", status, 20 + i]
-        )
-      end)
+            xq(
+              c,
+              "INSERT INTO ash_scylla_test.users (id, name, email, status, age) VALUES (?, ?, ?, ?, ?)",
+              [id, "User#{i}", "user#{i}@test.com", status, 20 + i]
+            )
+          end)
+
+        _ ->
+          :ok
+      end
     end
 
     test "filter by email index", %{conn: c} do
@@ -769,6 +791,10 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
   describe "concurrent read/write simulation" do
     test "50 concurrent writers insert distinct records", %{scylla: scylla_container} do
+      if is_nil(scylla_container) do
+        flunk("ScyllaDB container not available")
+      end
+
       port = ScyllaContainer.port(scylla_container)
       host = TestcontainerEx.get_host(scylla_container)
 
@@ -798,6 +824,10 @@ defmodule AshScylla.ScyllaIntegrationTest do
     end
 
     test "concurrent readers and writers", %{scylla: scylla_container} do
+      if is_nil(scylla_container) do
+        flunk("ScyllaDB container not available")
+      end
+
       port = ScyllaContainer.port(scylla_container)
       host = TestcontainerEx.get_host(scylla_container)
 
@@ -827,6 +857,10 @@ defmodule AshScylla.ScyllaIntegrationTest do
     end
 
     test "concurrent reads on same secondary index query", %{scylla: scylla_container} do
+      if is_nil(scylla_container) do
+        flunk("ScyllaDB container not available")
+      end
+
       port = ScyllaContainer.port(scylla_container)
       host = TestcontainerEx.get_host(scylla_container)
       {:ok, setup_conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
@@ -860,6 +894,10 @@ defmodule AshScylla.ScyllaIntegrationTest do
     end
 
     test "concurrent event writes to same partition", %{scylla: scylla_container} do
+      if is_nil(scylla_container) do
+        flunk("ScyllaDB container not available")
+      end
+
       port = ScyllaContainer.port(scylla_container)
       host = TestcontainerEx.get_host(scylla_container)
       user_id = uid()
@@ -889,6 +927,10 @@ defmodule AshScylla.ScyllaIntegrationTest do
     end
 
     test "mixed CRUD operations under concurrent load", %{scylla: scylla_container} do
+      if is_nil(scylla_container) do
+        flunk("ScyllaDB container not available")
+      end
+
       port = ScyllaContainer.port(scylla_container)
       host = TestcontainerEx.get_host(scylla_container)
       {:ok, setup_conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
@@ -1056,6 +1098,404 @@ defmodule AshScylla.ScyllaIntegrationTest do
                  AshScylla.TestResourceWithIndexes,
                  []
                )
+    end
+  end
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # Type conversion: write each CQL type and read back, verifying Elixir types
+  # ══════════════════════════════════════════════════════════════════════════
+
+  describe "type conversion round-trip" do
+    setup %{conn: c} do
+      # Create a dedicated type-roundtrip table covering all major CQL types
+      xq(
+        c,
+        """
+        CREATE TABLE IF NOT EXISTS ash_scylla_test.type_roundtrip (
+          id UUID PRIMARY KEY,
+          text_val TEXT,
+          int_val INT,
+          bigint_val BIGINT,
+          float_val FLOAT,
+          double_val DOUBLE,
+          boolean_val BOOLEAN,
+          timestamp_val TIMESTAMP,
+          date_val DATE,
+          time_val TIME,
+          inet_val INET,
+          blob_val BLOB,
+          smallint_val SMALLINT,
+          tinyint_val TINYINT,
+          list_val LIST<TEXT>,
+          map_val MAP<TEXT, TEXT>,
+          set_val SET<INT>
+        )
+        """
+      )
+
+      xq(c, "TRUNCATE ash_scylla_test.type_roundtrip")
+
+      :ok
+    end
+
+    test "TEXT round-trip preserves string type", %{conn: c} do
+      id = uid()
+      value = "Hello, Scylla!"
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, text_val) VALUES (?, ?)", [id, value])
+      result = xq(c, "SELECT text_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+      assert is_binary(rows[0]["text_val"])
+      assert rows[0]["text_val"] == value
+    end
+
+    test "INT round-trip preserves integer type", %{conn: c} do
+      id = uid()
+      value = 42
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, int_val) VALUES (?, ?)", [id, value])
+      result = xq(c, "SELECT int_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+      assert is_integer(rows[0]["int_val"])
+      assert rows[0]["int_val"] == 42
+    end
+
+    test "BIGINT round-trip preserves large integer type", %{conn: c} do
+      id = uid()
+      value = 9_007_199_254_740_991
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, bigint_val) VALUES (?, ?)", [id, value])
+      result = xq(c, "SELECT bigint_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+      assert is_integer(rows[0]["bigint_val"])
+      assert rows[0]["bigint_val"] == 9_007_199_254_740_991
+    end
+
+    test "FLOAT round-trip preserves float type", %{conn: c} do
+      id = uid()
+      value = 3.14
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, float_val) VALUES (?, ?)", [id, value])
+      result = xq(c, "SELECT float_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+      assert is_float(rows[0]["float_val"])
+      assert abs(rows[0]["float_val"] - 3.14) < 0.001
+    end
+
+    test "DOUBLE round-trip preserves double type", %{conn: c} do
+      id = uid()
+      value = 2.718281828459045
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, double_val) VALUES (?, ?)", [id, value])
+      result = xq(c, "SELECT double_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+      assert is_float(rows[0]["double_val"])
+      assert rows[0]["double_val"] == 2.718281828459045
+    end
+
+    test "BOOLEAN round-trip preserves boolean type", %{conn: c} do
+      id = uid()
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, boolean_val) VALUES (?, ?)", [id, true])
+      result = xq(c, "SELECT boolean_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+      assert rows[0]["boolean_val"] == true
+      assert is_boolean(rows[0]["boolean_val"])
+    end
+
+    test "TIMESTAMP round-trip preserves DateTime type", %{conn: c} do
+      id = uid()
+      dt = ~U[2024-06-15 10:30:00Z]
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, timestamp_val) VALUES (?, ?)", [
+        id,
+        {:"timestamp", dt}
+      ])
+
+      result = xq(c, "SELECT timestamp_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+
+      val = rows[0]["timestamp_val"]
+      assert %DateTime{} = val
+      assert val.year == 2024
+      assert val.month == 6
+      assert val.day == 15
+    end
+
+    test "DATE round-trip preserves Date type", %{conn: c} do
+      id = uid()
+      date = ~D[2024-01-15]
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, date_val) VALUES (?, ?)", [
+        id,
+        {:"date", date}
+      ])
+
+      result = xq(c, "SELECT date_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+
+      val = rows[0]["date_val"]
+      assert %Date{} = val
+      assert val == ~D[2024-01-15]
+    end
+
+    test "TIME round-trip preserves Time type", %{conn: c} do
+      id = uid()
+      time = ~T[14:30:00]
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, time_val) VALUES (?, ?)", [
+        id,
+        {:"time", time}
+      ])
+
+      result = xq(c, "SELECT time_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+
+      val = rows[0]["time_val"]
+      assert %Time{} = val
+      assert val.hour == 14
+      assert val.minute == 30
+      assert val.second == 0
+    end
+
+    test "INET round-trip preserves tuple type", %{conn: c} do
+      id = uid()
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, inet_val) VALUES (?, ?)", [
+        id,
+        {:"inet", {192, 168, 1, 1}}
+      ])
+
+      result = xq(c, "SELECT inet_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+
+      val = rows[0]["inet_val"]
+      assert is_tuple(val)
+      assert val == {192, 168, 1, 1}
+    end
+
+    test "BLOB round-trip preserves binary type", %{conn: c} do
+      id = uid()
+      blob = <<0, 1, 2, 255, 128, 64>>
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, blob_val) VALUES (?, ?)", [
+        id,
+        {:"blob", blob}
+      ])
+
+      result = xq(c, "SELECT blob_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+
+      val = rows[0]["blob_val"]
+      assert is_binary(val)
+      assert val == <<0, 1, 2, 255, 128, 64>>
+    end
+
+    test "SMALLINT round-trip preserves integer type", %{conn: c} do
+      id = uid()
+      value = 32_767
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, smallint_val) VALUES (?, ?)", [
+        id,
+        {:"smallint", value}
+      ])
+
+      result = xq(c, "SELECT smallint_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+
+      val = rows[0]["smallint_val"]
+      assert is_integer(val)
+      assert val == 32_767
+    end
+
+    test "TINYINT round-trip preserves integer type", %{conn: c} do
+      id = uid()
+      value = 127
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, tinyint_val) VALUES (?, ?)", [
+        id,
+        {:"tinyint", value}
+      ])
+
+      result = xq(c, "SELECT tinyint_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+
+      val = rows[0]["tinyint_val"]
+      assert is_integer(val)
+      assert val == 127
+    end
+
+    test "LIST<TEXT> round-trip preserves list type", %{conn: c} do
+      id = uid()
+      value = ["a", "b", "c"]
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, list_val) VALUES (?, ?)", [
+        id,
+        {:"list", value}
+      ])
+
+      result = xq(c, "SELECT list_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+
+      val = rows[0]["list_val"]
+      assert is_list(val)
+      assert val == ["a", "b", "c"]
+    end
+
+    test "MAP<TEXT, TEXT> round-trip preserves map type", %{conn: c} do
+      id = uid()
+      value = %{"key1" => "val1", "key2" => "val2"}
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, map_val) VALUES (?, ?)", [
+        id,
+        {:"map", value}
+      ])
+
+      result = xq(c, "SELECT map_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+
+      val = rows[0]["map_val"]
+      assert is_map(val)
+      assert val["key1"] == "val1"
+      assert val["key2"] == "val2"
+    end
+
+    test "SET<INT> round-trip preserves list type", %{conn: c} do
+      id = uid()
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, set_val) VALUES (?, ?)", [
+        id,
+        {:"set", [1, 2, 3]}
+      ])
+
+      result = xq(c, "SELECT set_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+
+      val = rows[0]["set_val"]
+      assert is_list(val)
+      assert Enum.sort(val) == [1, 2, 3]
+    end
+
+    test "NULL values round-trip preserves nil type", %{conn: c} do
+      id = uid()
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, text_val) VALUES (?, ?)", [id, "non-null"])
+
+      # Insert another row with all NULLs for various types
+      id2 = uid()
+
+      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id) VALUES (?)", [id2])
+      result = xq(c, "SELECT int_val, bigint_val, float_val, double_val, boolean_val, text_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id2])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+
+      row = rows[0]
+      assert row["int_val"] == nil
+      assert row["bigint_val"] == nil
+      assert row["float_val"] == nil
+      assert row["double_val"] == nil
+      assert row["boolean_val"] == nil
+      assert row["text_val"] == nil
+    end
+
+    test "all types in a single row round-trip", %{conn: c} do
+      id = uid()
+
+      xq(
+        c,
+        """
+        INSERT INTO ash_scylla_test.type_roundtrip (
+          id, text_val, int_val, bigint_val, float_val, double_val,
+          boolean_val, timestamp_val, date_val, time_val, inet_val, blob_val
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+          id,
+          "all-types",
+          100,
+          9_007_199_254_740_991,
+          1.5,
+          3.1415926535,
+          true,
+          {:"timestamp", ~U[2024-12-25 00:00:00Z]},
+          {:"date", ~D[2024-12-25]},
+          {:"time", ~T[08:00:00]},
+          {:"inet", {10, 0, 0, 1}},
+          {:"blob", <<255, 254, 253>>}
+        ]
+      )
+
+      result = xq(c, "SELECT * FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+
+      row = rows[0]
+      assert row["text_val"] == "all-types"
+      assert is_binary(row["text_val"])
+
+      assert row["int_val"] == 100
+      assert is_integer(row["int_val"])
+
+      assert row["bigint_val"] == 9_007_199_254_740_991
+      assert is_integer(row["bigint_val"])
+
+      assert is_float(row["float_val"])
+      assert abs(row["float_val"] - 1.5) < 0.001
+
+      assert is_float(row["double_val"])
+      assert abs(row["double_val"] - 3.1415926535) < 0.000_000_000_1
+
+      assert row["boolean_val"] == true
+      assert is_boolean(row["boolean_val"])
+
+      assert %DateTime{} = row["timestamp_val"]
+      assert row["timestamp_val"].year == 2024
+
+      assert %Date{} = row["date_val"]
+      assert row["date_val"] == ~D[2024-12-25]
+
+      assert %Time{} = row["time_val"]
+      assert row["time_val"].hour == 8
+
+      assert is_tuple(row["inet_val"])
+      assert row["inet_val"] == {10, 0, 0, 1}
+
+      assert is_binary(row["blob_val"])
+      assert row["blob_val"] == <<255, 254, 253>>
     end
   end
 end

@@ -41,7 +41,11 @@ defmodule AshScylla.DataLayer.Types do
     # Ash DSL type aliases
     :string => "TEXT",
     :integer => "BIGINT",
-    :utc_datetime => "TIMESTAMP"
+    :utc_datetime => "TIMESTAMP",
+    :utc_datetime_usec => "TIMESTAMP",
+    :naive_datetime => "TIMESTAMP",
+    :naive_datetime_usec => "TIMESTAMP",
+    :decimal => "DECIMAL"
   }
 
   @doc false
@@ -109,7 +113,7 @@ defmodule AshScylla.DataLayer.Types do
   def valid_cql_types, do: Map.keys(@cql_type_mapping)
 
   @doc """
-  Converts an Ash type atom to its CQL type string representation.
+  Converts an Ash type (atom or tuple) to its CQL type string representation.
 
   Handles special collection and structured types:
 
@@ -117,6 +121,9 @@ defmodule AshScylla.DataLayer.Types do
   - `:array` — rendered as `LIST<element_type>`
   - `:set` — rendered as `SET<element_type>`
   - `:udt` — rendered as `frozen<type_name>`
+  - `{:array, element_type}` — rendered as `LIST<cql_type>`
+  - `{:map, key_type, value_type}` — rendered as `MAP<k, v>`
+  - `{:set, element_type}` — rendered as `SET<cql_type>`
 
   All other atoms are resolved via the canonical `cql_type/1` mapping.
 
@@ -143,8 +150,14 @@ defmodule AshScylla.DataLayer.Types do
 
       iex> AshScylla.DataLayer.Types.ash_type_to_cql_type(:array, element_type: "UUID")
       "LIST<UUID>"
+
+      iex> AshScylla.DataLayer.Types.ash_type_to_cql_type({:array, :string}, [])
+      "LIST<TEXT>"
+
+      iex> AshScylla.DataLayer.Types.ash_type_to_cql_type({:map, :string, :integer}, [])
+      "MAP<TEXT, BIGINT>"
   """
-  @spec ash_type_to_cql_type(atom(), keyword()) :: String.t()
+  @spec ash_type_to_cql_type(atom() | tuple(), keyword()) :: String.t()
   def ash_type_to_cql_type(type, opts) when is_atom(type) do
     base_type =
       case type do
@@ -170,5 +183,37 @@ defmodule AshScylla.DataLayer.Types do
       end
 
     if Keyword.get(opts, :frozen), do: "frozen<#{base_type}>", else: base_type
+  end
+
+  def ash_type_to_cql_type({:array, element_type}, opts) do
+    element_cql = ash_type_to_cql_type(element_type, opts)
+    "LIST<#{element_cql}>"
+  end
+
+  def ash_type_to_cql_type({:set, element_type}, opts) do
+    element_cql = ash_type_to_cql_type(element_type, opts)
+    "SET<#{element_cql}>"
+  end
+
+  def ash_type_to_cql_type({:map, key_type, value_type}, opts) do
+    key_cql = ash_type_to_cql_type(key_type, opts)
+    value_cql = ash_type_to_cql_type(value_type, opts)
+    "MAP<#{key_cql}, #{value_cql}>"
+  end
+
+  def ash_type_to_cql_type({:tuple, element_types}, opts) when is_list(element_types) do
+    inner =
+      element_types
+      |> Enum.map(&ash_type_to_cql_type(&1, opts))
+      |> Enum.join(", ")
+
+    "TUPLE<#{inner}>"
+  end
+
+  def ash_type_to_cql_type(unknown_type, _opts) do
+    # Fallback for unknown types - log warning and default to TEXT
+    require Logger
+    Logger.warning("Unknown Ash type #{inspect(unknown_type)}, defaulting to TEXT")
+    "TEXT"
   end
 end

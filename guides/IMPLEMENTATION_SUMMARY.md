@@ -344,8 +344,8 @@ mix test
 Integration tests use [testcontainers](https://github.com/testcontainers/testcontainers-elixir) to spin up a ScyllaDB instance automatically:
 
 ```bash
-# Ensure Docker is running
-docker --version
+# Ensure Podman is running
+podman --version
 
 # Run integration tests
 mix test test/scylla_integration_test.exs

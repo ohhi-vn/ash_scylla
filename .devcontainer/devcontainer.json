@@ -1,11 +1,11 @@
 {
   "name": "ash_scylla",
-  "dockerComposeFile": "../docker-compose.yml",
+  "dockerComposeFile": "../podman-compose.yml",
   "service": "app",
   "workspaceFolder": "/workspace",
   "customizations": {
     "vscode": {
-      "extensions": ["jakebecker.elixir-ls"]
-    }
-  }
+      "extensions": ["jakebecker.elixir-ls"],
+    },
+  },
 }

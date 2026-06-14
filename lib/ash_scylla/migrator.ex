@@ -62,6 +62,7 @@ defmodule AshScylla.Migrator do
     conn_opts = [
       name: conn_name,
       nodes: nodes,
+      keyspace: Keyword.get(opts, :keyspace),
       connect_timeout: Keyword.get(opts, :connect_timeout, 10_000)
     ]
 
