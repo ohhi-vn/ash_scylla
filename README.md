@@ -83,10 +83,10 @@ children = [
 ]
 ```
 
-**4. Generate a Resource:**
+**4. Generate a Resource Template:**
 
 ```bash
-mix ash_scylla.gen User name:string, email:string
+mix ash_scylla.new_template User name:string, email:string
 ```
 
 This creates `lib/my_app/resources/user.ex` with a starter template. Or define it manually:
@@ -132,12 +132,37 @@ mix ash_scylla.setup
 # Or programmatically
 MyApp.Repo.create_keyspace()
 
-# Run migrations
-AshScylla.Migrator.run!(MyApp.Repo.nodes(), [
-  AshScylla.Migration.create_table_cql(MyApp.User),
-  "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)"
-])
+# Run migrations (includes schema files from priv/migrations)
+mix ash_scylla.migrate
+
+# Or run only schema files
+mix ash_scylla.migrate --schemas-only
+
+# Or run resource migrations only (skip schema files)
+mix ash_scylla.migrate --resource MyApp.User
 ```
+
+**6a. Generate Schema Migrations from Ash DSL:**
+
+```bash
+# Auto-generate schema file from all AshScylla resources
+mix ash_scylla.gen --dev
+
+# Generate with a specific schema module name
+mix ash_scylla.gen AddUserTable
+
+# Generate for a specific resource only
+mix ash_scylla.gen --resource MyApp.User
+```
+
+This scans your project for Ash resources using `AshScylla.DataLayer` and produces
+a `priv/migrations/<timestamp>_schema.ex` file containing `CREATE TABLE` and
+`CREATE INDEX` CQL statements derived from each resource's attributes and
+secondary indexes.
+
+Schema migration files in `priv/migrations` use `AshScylla.Schema` and implement
+`change/0` to return a list of CQL statements. They are executed before
+resource-driven migrations when running `mix ash_scylla.migrate`.
 
 **7. Start Using It:**
 

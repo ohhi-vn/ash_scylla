@@ -154,6 +154,54 @@ defmodule AshScylla.ResourceGenerator do
     end)
   end
 
+  @doc """
+  Renders CQL CREATE TABLE and CREATE INDEX statements for a table.
+
+  Returns a list of CQL statement strings.
+  """
+  @spec render_create_table(String.t(), [{atom(), atom()}], module()) :: [String.t()]
+  def render_create_table(table_name, attributes, _repo_module) do
+    table_cql = render_create_table_cql(table_name, attributes)
+    index_cqls = render_index_cqls(table_name, attributes)
+    [table_cql | index_cqls]
+  end
+
+  defp render_create_table_cql(table_name, attributes) do
+    columns =
+      attributes
+      |> Enum.reject(fn {name, _type} -> name == :id end)
+      |> Enum.map_join(", ", fn {name, type} ->
+        "#{name} #{cql_type(type)}"
+      end)
+
+    "CREATE TABLE IF NOT EXISTS #{table_name} (id UUID PRIMARY KEY, #{columns})"
+  end
+
+  defp render_index_cqls(table_name, attributes) do
+    indexed_columns = [:email, :name, :status, :age]
+
+    attributes
+    |> Enum.map(fn {name, _type} -> name end)
+    |> Enum.filter(&(&1 in indexed_columns))
+    |> Enum.map(fn col ->
+      "CREATE INDEX IF NOT EXISTS idx_#{table_name}_#{col} ON #{table_name} (#{col})"
+    end)
+  end
+
+  defp cql_type(:uuid), do: "UUID"
+  defp cql_type(:string), do: "TEXT"
+  defp cql_type(:integer), do: "INT"
+  defp cql_type(:float), do: "FLOAT"
+  defp cql_type(:boolean), do: "BOOLEAN"
+  defp cql_type(:date), do: "DATE"
+  defp cql_type(:time), do: "TIME"
+  defp cql_type(:utc_datetime), do: "TIMESTAMP"
+  defp cql_type(:naive_datetime), do: "TIMESTAMP"
+  defp cql_type(:binary), do: "BLOB"
+  defp cql_type(:map), do: "MAP<TEXT, TEXT>"
+  defp cql_type(:list), do: "LIST<TEXT>"
+  defp cql_type(_other), do: "TEXT"
+
   defp default_repo_module do
     app_name()
     |> Atom.to_string()

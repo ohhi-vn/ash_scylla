@@ -4,7 +4,7 @@ defmodule AshScylla.MixProject do
   def project do
     [
       app: :ash_scylla,
-      version: "0.9.0",
+      version: "0.10.0",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -106,11 +106,11 @@ defmodule AshScylla.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ash, "~> 3.0"},
+      {:ash, "~> 3.29"},
       {:xandra, "~> 0.19"},
       {:decimal, "~> 3.1", override: true, only: [:dev, :test]},
-      {:hackney, "~> 4.2", override: true, only: [:dev, :test]},
-      {:testcontainer_ex, "~> 0.6", only: [:test]},
+      {:hackney, "~> 4.3", override: true, only: [:dev, :test]},
+      {:testcontainer_ex, "~> 0.7", only: [:test]},
       # {:testcontainer_ex, path: "../testcontainer_ex", only: [:test, :dev]},
       {:benchee, "~> 1.5", only: :dev},
       {:benchee_html, "~> 1.0", only: :dev},
@@ -129,6 +129,10 @@ defmodule AshScylla.MixProject do
       test: ["test --exclude integration"],
       "test.unit": ["test --exclude integration"],
       "test.integration": ["test --only integration"],
+      "test.integration.apple_container": [
+        "run --eval \"System.put_env(\"CONTAINER_ENGINE\", \"apple_container\")\"",
+        "test --only integration"
+      ],
       # Testing & Coverage
       coveralls: ["test --cover", "coveralls.html"],
       # Code Quality

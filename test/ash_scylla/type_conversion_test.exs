@@ -77,8 +77,14 @@ defmodule AshScylla.TypeConversionTest do
     test "encodes integer boundaries" do
       assert Connection.typed_params([0]) == [{"bigint", 0}]
       assert Connection.typed_params([-1]) == [{"bigint", -1}]
-      assert Connection.typed_params([9_007_199_254_740_991]) == [{"bigint", 9_007_199_254_740_991}]
-      assert Connection.typed_params([-9_007_199_254_740_991]) == [{"bigint", -9_007_199_254_740_991}]
+
+      assert Connection.typed_params([9_007_199_254_740_991]) == [
+               {"bigint", 9_007_199_254_740_991}
+             ]
+
+      assert Connection.typed_params([-9_007_199_254_740_991]) == [
+               {"bigint", -9_007_199_254_740_991}
+             ]
     end
 
     test "encodes empty list and map" do
@@ -282,25 +288,28 @@ defmodule AshScylla.TypeConversionTest do
           allow_nil?(false)
         end
 
-        attribute :age, :integer
-        attribute :score, :float
-        attribute :rating, :float
-        attribute :is_active, :boolean
-        attribute :bio, :string
-        attribute :count, :integer
-        attribute :small_val, :integer
-        attribute :tiny_val, :integer
-        attribute :ip_address, :string
-        attribute :birth_date, :date
-        attribute :lunch_time, :time
-        attribute :last_login, :utc_datetime
+        attribute(:age, :integer)
+        attribute(:score, :float)
+        attribute(:rating, :float)
+        attribute(:is_active, :boolean)
+        attribute(:bio, :string)
+        attribute(:count, :integer)
+        attribute(:small_val, :integer)
+        attribute(:tiny_val, :integer)
+        attribute(:ip_address, :string)
+        attribute(:birth_date, :date)
+        attribute(:lunch_time, :time)
+        attribute(:last_login, :utc_datetime)
+
         attribute :settings, :map do
           default(%{})
         end
+
         attribute :tags, {:array, :string} do
           default([])
         end
-        attribute :metadata_blob, :binary
+
+        attribute(:metadata_blob, :binary)
       end
 
       actions do

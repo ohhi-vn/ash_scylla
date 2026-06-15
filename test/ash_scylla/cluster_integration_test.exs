@@ -10,9 +10,12 @@ defmodule AshScylla.ClusterIntegrationTest do
 
   use ExUnit.Case, async: false
 
+  require Logger
+
   alias AshScylla.DataLayer
   alias AshScylla.DataLayer.QueryBuilder
   alias AshScylla.TestRepo
+  alias AshScylla.ScyllaContainer, warn: false
 
   @moduletag :integration
 
@@ -20,35 +23,25 @@ defmodule AshScylla.ClusterIntegrationTest do
   @replication_factor 3
 
   @scylla_image "scylladb/scylla:5.4"
-  @scylla_wait_timeout 300_000
-  @scylla_cmd ["--smp", "1", "--memory", "1G", "--developer-mode", "1"]
+  @scylla_wait_timeout 120_000
+  @scylla_cmd ["--smp", "1", "--memory", "512M", "--developer-mode", "1"]
 
   # ── Container helpers ───────────────────────────────────────────────────────
 
   defp build_container(index) do
-    container_name = "ash_scylla_cluster_node_#{index}"
+    suffix = :crypto.strong_rand_bytes(3) |> Base.encode16(case: :lower)
+    container_name = "scylla_cluster_#{index}_#{suffix}"
 
     AshScylla.ScyllaContainer.new()
     |> AshScylla.ScyllaContainer.with_image(@scylla_image)
     |> AshScylla.ScyllaContainer.with_cmd(@scylla_cmd)
     |> AshScylla.ScyllaContainer.with_wait_timeout(@scylla_wait_timeout)
-    |> then(fn container ->
-      # Set container name via configure if supported, otherwise use default
-      case function_exported?(AshScylla.ScyllaContainer, :with_name, 2) do
-        true -> AshScylla.ScyllaContainer.with_name(container, container_name)
-        false -> container
-      end
-    end)
+    |> AshScylla.ScyllaContainer.with_name(container_name)
   end
 
   defp start_node(index) do
-    container_name = "ash_scylla_cluster_node_#{index}"
-    # Remove leftover container from previous runs to avoid HTTP 409
-    case System.cmd("podman", ["rm", "-f", container_name], stderr_to_stdout: true) do
-      {_, _} -> :ok
-    end
-
     container = build_container(index)
+
     case TestcontainerEx.start_container(container) do
       {:ok, started} -> {:ok, {index, started}}
       {:error, reason} -> {:error, reason}
@@ -177,7 +170,7 @@ defmodule AshScylla.ClusterIntegrationTest do
                 {:ok, node3} = start_node(3)
 
                 # Wait for cluster to form
-                Process.sleep(5_000)
+                Process.sleep(10_000)
 
                 # Register cleanup for after all tests complete
                 on_exit(fn ->
@@ -191,17 +184,15 @@ defmodule AshScylla.ClusterIntegrationTest do
 
               :pending ->
                 stop_container(elem(node1, 1))
-                %{nodes: []}
+                raise "ScyllaDB node1 not ready after retries — cannot run cluster integration tests"
             end
 
           {:error, reason} ->
-            IO.puts("WARNING: Skipping integration tests — node1 failed: #{inspect(reason)}")
-            %{nodes: []}
+            raise "Failed to start ScyllaDB node1: #{inspect(reason)}"
         end
 
       {:error, reason} ->
-        IO.puts("WARNING: Skipping integration tests — #{inspect(reason)}")
-        %{nodes: []}
+        raise "Container engine not available: #{inspect(reason)}"
     end
   end
 
@@ -209,11 +200,11 @@ defmodule AshScylla.ClusterIntegrationTest do
     case Map.fetch(context, :nodes) do
       {:ok, nodes} when nodes != [] ->
         {_index, container} = hd(nodes)
-        conn = connect_node(container, 5)
+        conn = connect_node(container, 10)
         %{conn: conn}
 
       _ ->
-        %{conn: nil}
+        raise "ScyllaDB cluster nodes not available — setup_all failed"
     end
   end
 
@@ -233,9 +224,22 @@ defmodule AshScylla.ClusterIntegrationTest do
     encoded = Enum.map(params, &encode_param/1)
 
     case Xandra.execute(conn, query, encoded) do
+      {:ok, %Xandra.Void{}} ->
+        %{rows: [], num_rows: 0, columns: []}
+
       {:ok, page} ->
         rows = page.content || []
-        %{rows: rows, num_rows: length(rows)}
+        columns = page.columns || []
+        col_names = Enum.map(columns, fn {_, _, name, _} -> to_string(name) end)
+        mapped_rows = Enum.map(rows, fn
+          row when is_map(row) ->
+            IO.puts("[DEBUG] Row is map: #{inspect(row)}")
+            row
+          row when is_list(row) ->
+            IO.puts("[DEBUG] Row is list: #{inspect(row)}, col_names: #{inspect(col_names)}")
+            row |> Enum.zip(col_names) |> Map.new()
+        end)
+        %{rows: mapped_rows, num_rows: length(mapped_rows)}
 
       {:error, reason} ->
         raise "Query failed: #{inspect(reason)}\nQuery: #{query}\nParams: #{inspect(params)}"
@@ -270,7 +274,7 @@ defmodule AshScylla.ClusterIntegrationTest do
 
       assert result.num_rows == 1
       replication = List.first(result.rows) |> List.first() || %{}
-      assert replication["class"] == "SimpleStrategy"
+      assert replication["class"] in ["SimpleStrategy", "org.apache.cassandra.locator.SimpleStrategy"]
       assert replication["replication_factor"] == to_string(@replication_factor)
     end
 
@@ -312,10 +316,10 @@ defmodule AshScylla.ClusterIntegrationTest do
           [id]
         )
 
-      assert result.num_rows == 1
+      assert result.num_rows == 1, "Expected 1 row, got #{result.num_rows}. Rows: #{inspect(result.rows)}"
       [row] = result.rows
-      assert row["name"] == "Cluster User"
-      assert row["email"] == "cluster@test.com"
+      assert row["name"] == "Cluster User", "Expected name='Cluster User', got #{inspect(row["name"])}. Row: #{inspect(row)}"
+      assert row["email"] == "cluster@test.com", "Expected email='cluster@test.com', got #{inspect(row["email"])}"
     end
 
     test "update record in cluster", %{conn: conn} do

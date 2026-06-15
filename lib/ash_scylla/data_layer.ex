@@ -512,11 +512,17 @@ defmodule AshScylla.DataLayer do
 
     query =
       IO.iodata_to_binary([
-        "UPDATE ", sanitized_table, " SET ", Enum.join(set_clauses, ", "),
-        " WHERE ", where_clause
+        "UPDATE ",
+        sanitized_table,
+        " SET ",
+        Enum.join(set_clauses, ", "),
+        " WHERE ",
+        where_clause
       ])
 
-    Logger.debug("Executing bulk UPDATE: #{query} with params #{inspect(set_values ++ where_params)}")
+    Logger.debug(
+      "Executing bulk UPDATE: #{query} with params #{inspect(set_values ++ where_params)}"
+    )
 
     with {:ok, _} <- repo.query(query, set_values ++ where_params, opts) do
       run_query(data_layer_query, resource)
@@ -696,8 +702,13 @@ defmodule AshScylla.DataLayer do
 
     query =
       IO.iodata_to_binary([
-        "INSERT INTO ", table, " (", Enum.join(sanitized_fields, ", "), ") VALUES (",
-        Enum.map_join(1..length(sanitized_fields), ", ", fn _ -> "?" end), ")",
+        "INSERT INTO ",
+        table,
+        " (",
+        Enum.join(sanitized_fields, ", "),
+        ") VALUES (",
+        Enum.map_join(1..length(sanitized_fields), ", ", fn _ -> "?" end),
+        ")",
         if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
       ])
 
@@ -744,9 +755,13 @@ defmodule AshScylla.DataLayer do
 
     query =
       IO.iodata_to_binary([
-        "INSERT INTO ", sanitized_table,
-        " (", Enum.join(sanitized_fields, ", "), ") VALUES (",
-        Enum.map_join(1..field_count, ", ", fn _ -> "?" end), ")",
+        "INSERT INTO ",
+        sanitized_table,
+        " (",
+        Enum.join(sanitized_fields, ", "),
+        ") VALUES (",
+        Enum.map_join(1..field_count, ", ", fn _ -> "?" end),
+        ")",
         lwt_suffix,
         if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
       ])
@@ -795,22 +810,16 @@ defmodule AshScylla.DataLayer do
           {:ok, term()} | {:error, term()}
   defp calculate_in_memory(%{module: module, opts: opts}, record) when is_atom(module) do
     if function_exported?(module, :calculate, 2) do
-      try do
-        {:ok, module.calculate([record], opts)}
-      rescue
-        _ -> {:error, :calculation_failed}
-      end
+      result = module.calculate([record], opts)
+      {:ok, result}
     else
       {:error, :no_calculate_function}
     end
   end
 
   defp calculate_in_memory(%{expr: expr}, record) when is_function(expr) do
-    try do
-      {:ok, expr.(record)}
-    rescue
-      _ -> {:error, :calculation_failed}
-    end
+    result = expr.(record)
+    {:ok, result}
   end
 
   defp calculate_in_memory(_, _), do: {:error, :unsupported_calculation}
@@ -960,9 +969,13 @@ defmodule AshScylla.DataLayer do
 
     query =
       IO.iodata_to_binary([
-        "INSERT INTO ", sanitized_table,
-        " (", Enum.join(sanitized_fields, ", "), ") VALUES (",
-        Enum.map_join(1..length(sanitized_fields), ", ", fn _ -> "?" end), ")",
+        "INSERT INTO ",
+        sanitized_table,
+        " (",
+        Enum.join(sanitized_fields, ", "),
+        ") VALUES (",
+        Enum.map_join(1..length(sanitized_fields), ", ", fn _ -> "?" end),
+        ")",
         if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
       ])
 
@@ -1006,8 +1019,12 @@ defmodule AshScylla.DataLayer do
 
     query =
       IO.iodata_to_binary([
-        "UPDATE ", sanitized_table, " SET ", Enum.join(set_clauses, ", "),
-        " WHERE ", pk_where
+        "UPDATE ",
+        sanitized_table,
+        " SET ",
+        Enum.join(set_clauses, ", "),
+        " WHERE ",
+        pk_where
       ])
 
     Logger.debug("Executing UPDATE: #{query} with params #{inspect(values ++ pk_values)}")
@@ -1041,7 +1058,11 @@ defmodule AshScylla.DataLayer do
 
     query =
       IO.iodata_to_binary([
-        "SELECT * FROM ", sanitized_table, " WHERE ", pk_where, " LIMIT 1"
+        "SELECT * FROM ",
+        sanitized_table,
+        " WHERE ",
+        pk_where,
+        " LIMIT 1"
       ])
 
     Logger.debug("Executing SELECT: #{query} with params #{inspect(pk_values)}")

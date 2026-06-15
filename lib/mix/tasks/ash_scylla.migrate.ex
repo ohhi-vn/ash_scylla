@@ -8,7 +8,7 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT REQUIRED WARRANTIES OF ANY KIND, either express or implied.
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -19,9 +19,12 @@ defmodule Mix.Tasks.AshScylla.Migrate do
   This task compares Ash resource definitions against the live ScyllaDB schema
   and executes the necessary DDL statements to bring the schema in sync.
 
+  It also runs schema migration files from `priv/migrations` that use
+  `AshScylla.Schema`. These files are executed before resource migrations.
+
   ## Usage
 
-      # Migrate all resources
+      # Migrate all resources and schema files
       mix ash_scylla.migrate
 
       # Migrate a specific resource
@@ -36,6 +39,9 @@ defmodule Mix.Tasks.AshScylla.Migrate do
       # Create keyspace before migrating
       mix ash_scylla.migrate --create-keyspace
 
+      # Only run schema files from priv/migrations
+      mix ash_scylla.migrate --schemas-only
+
   ## Options
 
   - `--repo` - The repo module to use (defaults to auto-detected repo)
@@ -44,6 +50,7 @@ defmodule Mix.Tasks.AshScylla.Migrate do
   - `--create-keyspace` - Create the keyspace before running migrations
   - `--keyspace` - Override the keyspace name
   - `--nodes` - Override the ScyllaDB nodes (comma-separated)
+  - `--schemas-only` - Only run schema files from priv/migrations
   """
 
   use Mix.Task
@@ -55,14 +62,20 @@ defmodule Mix.Tasks.AshScylla.Migrate do
     {opts, _} =
       OptionParser.parse!(args,
         strict: [
-          repo: :atom,
-          resource: :atom,
+          repo: :string,
+          resource: :string,
           dry_run: :boolean,
           create_keyspace: :boolean,
           keyspace: :string,
-          nodes: :string
+          nodes: :string,
+          schemas_only: :boolean
         ]
       )
+
+    opts =
+      opts
+      |> AshScylla.MixHelpers.maybe_atomize(:repo)
+      |> AshScylla.MixHelpers.maybe_atomize(:resource)
 
     repo = find_repo(opts)
 
@@ -70,81 +83,164 @@ defmodule Mix.Tasks.AshScylla.Migrate do
       create_keyspace(repo, opts)
     end
 
-    resources = find_resources(opts)
+    schemas_only = Keyword.get(opts, :schemas_only, false)
 
-    if resources == [] do
-      Mix.shell().info("No resources found to migrate.")
+    {schema_count, schema_errors} = run_schema_files(repo, opts)
+
+    if schemas_only do
+      report_schema_results(schema_count, schema_errors)
     else
-      migrate_resources(resources, repo, opts)
+      resources = find_resources(opts)
+      {resource_count, resource_errors} = migrate_resources(resources, repo, opts)
+      report_results(schema_count, schema_errors, resource_count, resource_errors)
     end
   end
+
+  # ── Schema files from priv/migrations ──────────────────────────────────────
+
+  defp run_schema_files(repo, opts) do
+    dry_run = Keyword.get(opts, :dry_run, false)
+
+    schema_files =
+      ["priv/migrations"]
+      |> Enum.flat_map(fn path ->
+        path
+        |> Path.join("**/*.ex")
+        |> Path.wildcard()
+      end)
+      |> Enum.sort()
+
+    # Also scan umbrella child apps
+    child_files =
+      case Mix.Project.apps_paths() do
+        nil -> []
+        apps ->
+          for {_app, path} <- apps,
+              file <- Path.wildcard(Path.join(path, "priv/migrations/**/*.ex")),
+              do: file
+      end
+
+    schema_files = (schema_files ++ child_files) |> Enum.sort()
+
+    if schema_files == [] do
+      {0, 0}
+    else
+      Mix.shell().info("Running #{length(schema_files)} schema file(s) from priv/migrations...")
+
+      results =
+        Enum.map(schema_files, fn file ->
+          run_schema_file(file, repo, dry_run)
+        end)
+
+      count = Enum.count(results, &(&1 == :ok))
+      errors = Enum.count(results, &(&1 == :error))
+      {count, errors}
+    end
+  end
+
+  defp run_schema_file(file, repo, dry_run) do
+    Mix.shell().info("  Schema: #{file}...")
+
+    case load_schema_module(file) do
+      {:ok, module} ->
+        statements = module.change()
+
+        if statements == [] do
+          Mix.shell().info("    (no statements)")
+          :ok
+        else
+          if dry_run do
+            Enum.each(statements, &Mix.shell().info("    #{&1}"))
+            :ok
+          else
+            case AshScylla.Migrator.run(repo.nodes(), statements,
+                   keyspace: repo.keyspace(),
+                   connect_timeout: 10_000
+                 ) do
+              {:ok, _} ->
+                Mix.shell().info("    executed #{length(statements)} statement(s)")
+                :ok
+
+              {:error, reason} ->
+                Mix.shell().error("    FAILED: #{inspect(reason)}")
+                :error
+            end
+          end
+        end
+
+      {:error, reason} ->
+        Mix.shell().error("    FAILED to load: #{inspect(reason)}")
+        :error
+    end
+  end
+
+  defp load_schema_module(file) do
+    case Code.compile_file(file) do
+      [{module, _}] when is_atom(module) ->
+        if function_exported?(module, :change, 0) do
+          {:ok, module}
+        else
+          {:error, :no_change_function}
+        end
+
+      [] ->
+        {:error, :no_module_loaded}
+
+      other ->
+        {:error, other}
+    end
+  rescue
+    error -> {:error, error}
+  end
+
+  defp report_schema_results(count, errors) do
+    Mix.shell().info("""
+
+    Schema migration complete:
+      #{count} executed
+      #{errors} errors
+    """)
+
+    if errors > 0 do
+      Mix.raise("#{errors} schema migration(s) failed")
+    end
+  end
+
+  defp report_results(schema_count, schema_errors, resource_count, resource_errors) do
+    total_ok = schema_count + resource_count
+    total_errors = schema_errors + resource_errors
+
+    Mix.shell().info("""
+
+    Migration complete:
+      #{total_ok} succeeded (#{schema_count} schemas, #{resource_count} resources)
+      #{total_errors} errors
+    """)
+
+    if total_errors > 0 do
+      Mix.raise("#{total_errors} migration(s) failed")
+    end
+  end
+
+  # ── Repo discovery ─────────────────────────────────────────────────────────
 
   defp find_repo(opts) do
     case Keyword.get(opts, :repo) do
-      nil ->
-        find_default_repo()
-
-      repo ->
-        repo
+      nil -> AshScylla.MixHelpers.find_default_repo()
+      repo -> repo
     end
   end
 
-  defp find_default_repo do
-    apps = Mix.Project.apps_paths() || %{}
-
-    repos =
-      for {_app, path} <- apps,
-          file <- Path.wildcard(Path.join(path, "lib/**/repo.ex")),
-          module = file_to_module(file),
-          module != nil,
-          function_exported?(module, :__info__, 1),
-          do: module
-
-    case repos do
-      [repo | _] ->
-        repo
-
-      [] ->
-        Mix.raise("No repo found. Specify one with --repo MyApp.Repo")
-    end
-  end
-
-  defp file_to_module(file) do
-    case file |> Path.rootname() |> Path.split() do
-      ["lib" | parts] ->
-        parts
-        |> Enum.join(".")
-        |> Macro.camelize()
-        |> String.to_atom()
-
-      _ ->
-        nil
-    end
-  rescue
-    _ -> nil
-  end
+  # ── Resource discovery ─────────────────────────────────────────────────────
 
   defp find_resources(opts) do
     case Keyword.get(opts, :resource) do
-      nil ->
-        find_all_resources()
-
-      resource ->
-        [resource]
+      nil -> AshScylla.MixHelpers.find_all_resources()
+      resource -> [resource]
     end
   end
 
-  defp find_all_resources do
-    apps = Mix.Project.apps_paths() || %{}
-
-    for {_app, path} <- apps,
-        file <- Path.wildcard(Path.join(path, "lib/**/resources/**/*.ex")),
-        module = file_to_module(file),
-        module != nil,
-        function_exported?(module, :__info__, 1),
-        function_exported?(module, :__ash_scylla__, 1),
-        do: module
-  end
+  # ── Keyspace creation ──────────────────────────────────────────────────────
 
   defp create_keyspace(repo, opts) do
     keyspace = Keyword.get(opts, :keyspace) || repo.keyspace()
@@ -161,6 +257,8 @@ defmodule Mix.Tasks.AshScylla.Migrate do
     end
   end
 
+  # ── Resource migration ─────────────────────────────────────────────────────
+
   defp migrate_resources(resources, repo, opts) do
     dry_run = Keyword.get(opts, :dry_run, false)
 
@@ -168,25 +266,18 @@ defmodule Mix.Tasks.AshScylla.Migrate do
       Mix.shell().info("=== DRY RUN ===")
     end
 
-    results =
-      Enum.map(resources, fn resource ->
-        migrate_resource(resource, repo, dry_run)
-      end)
+    if resources == [] do
+      Mix.shell().info("No resources found to migrate.")
+      {0, 0}
+    else
+      results =
+        Enum.map(resources, fn resource ->
+          migrate_resource(resource, repo, dry_run)
+        end)
 
-    success_count = Enum.count(results, &(&1 == :ok))
-    error_count = Enum.count(results, &(&1 == :error))
-    skipped_count = Enum.count(results, &(&1 == :skipped))
-
-    Mix.shell().info("""
-
-    Migration complete:
-      #{success_count} migrated
-      #{skipped_count} skipped (no changes)
-      #{error_count} errors
-    """)
-
-    if error_count > 0 do
-      Mix.raise("#{error_count} migration(s) failed")
+      count = Enum.count(results, &(&1 == :ok))
+      errors = Enum.count(results, &(&1 == :error))
+      {count, errors}
     end
   end
 

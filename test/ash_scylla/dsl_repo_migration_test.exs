@@ -392,9 +392,9 @@ defmodule AshScylla.DslRepoMigrationContinuedTest do
       assert result =~ "name TEXT"
     end
 
-    test "creates a UDT with decimal field (defaults to TEXT for unknown types)" do
+    test "creates a UDT with decimal field (maps to DECIMAL)" do
       result = Migration.create_type("my_type", do: [price: {:decimal, []}])
-      assert result =~ "price TEXT"
+      assert result =~ "price DECIMAL"
     end
 
     test "creates a UDT with frozen map" do

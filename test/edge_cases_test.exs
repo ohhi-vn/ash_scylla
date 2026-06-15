@@ -142,7 +142,10 @@ defmodule AshScylla.EdgeCasesTest do
 
     test "bang version raises on unknown" do
       assert_raise ArgumentError, fn ->
-        QueryBuilder.filter_to_cql!(:bad)
+        :bad
+        |> :erlang.term_to_binary()
+        |> :erlang.binary_to_term()
+        |> then(&QueryBuilder.filter_to_cql!/1)
       end
     end
 
@@ -484,7 +487,7 @@ defmodule AshScylla.EdgeCasesTest do
   describe "MaterializedView edge cases" do
     test "single partition key" do
       cql = MaterializedView.create_view_cql("v", "t", primary_key: [:id], include_columns: [:n])
-      assert String.contains?(cql, "PRIMARY KEY (id)")
+      assert String.contains?(cql, "PRIMARY KEY (\"id\")")
       refute String.contains?(cql, "CLUSTERING ORDER")
     end
 
@@ -495,12 +498,12 @@ defmodule AshScylla.EdgeCasesTest do
           include_columns: [:d]
         )
 
-      assert String.contains?(cql, "PRIMARY KEY (pk, c1, c2, c3)")
+      assert String.contains?(cql, "PRIMARY KEY ((\"pk\"), \"c1\", \"c2\", \"c3\")")
     end
 
     test "empty include_columns" do
       cql = MaterializedView.create_view_cql("v", "t", primary_key: [:e, :id])
-      assert String.contains?(cql, "SELECT e, id")
+      assert String.contains?(cql, "SELECT \"e\", \"id\"")
     end
 
     test "multiple clustering order" do
@@ -510,7 +513,7 @@ defmodule AshScylla.EdgeCasesTest do
           clustering_order: [c1: :asc, c2: :desc]
         )
 
-      assert String.contains?(cql, "CLUSTERING ORDER BY (c1 asc, c2 desc)")
+      assert String.contains?(cql, "CLUSTERING ORDER BY (\"c1\" asc, \"c2\" desc)")
     end
 
     test "deduplicates columns" do
@@ -607,7 +610,7 @@ defmodule AshScylla.EdgeCasesTest do
 
       result = Migration.create_secondary_indexes_cql(SIR2)
       assert length(result) == 1
-      assert String.contains?(hd(result), "ON u")
+      assert String.contains?(hd(result), "ON \"u\"")
     end
 
     test "create_secondary_indexes_cql with named index" do

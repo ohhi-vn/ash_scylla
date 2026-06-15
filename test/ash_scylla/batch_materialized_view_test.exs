@@ -152,10 +152,10 @@ defmodule AshScylla.DataLayer.MaterializedViewTest do
         )
 
       assert String.contains?(cql, "CREATE MATERIALIZED VIEW IF NOT EXISTS users_by_email")
-      assert String.contains?(cql, "AS SELECT email, id, name, age")
-      assert String.contains?(cql, "FROM users")
-      assert String.contains?(cql, "WHERE email IS NOT NULL AND id IS NOT NULL")
-      assert String.contains?(cql, "PRIMARY KEY (email, id)")
+      assert String.contains?(cql, "AS SELECT \"email\", \"id\", \"name\", \"age\"")
+      assert String.contains?(cql, "FROM \"users\"")
+      assert String.contains?(cql, "WHERE \"email\" IS NOT NULL AND \"id\" IS NOT NULL")
+      assert String.contains?(cql, "PRIMARY KEY ((\"email\"), \"id\")")
     end
 
     test "single partition key with no clustering keys" do
@@ -165,7 +165,7 @@ defmodule AshScylla.DataLayer.MaterializedViewTest do
           include_columns: [:name]
         )
 
-      assert String.contains?(cql, "PRIMARY KEY (id)")
+      assert String.contains?(cql, "PRIMARY KEY (\"id\")")
     end
 
     test "with clustering order" do
@@ -176,7 +176,7 @@ defmodule AshScylla.DataLayer.MaterializedViewTest do
           clustering_order: [id: :desc]
         )
 
-      assert String.contains?(cql, "WITH CLUSTERING ORDER BY (id desc)")
+      assert String.contains?(cql, "WITH CLUSTERING ORDER BY (\"id\" desc)")
     end
 
     test "with custom WHERE clause" do
@@ -194,7 +194,7 @@ defmodule AshScylla.DataLayer.MaterializedViewTest do
       cql =
         MaterializedView.create_view_cql(:users_by_id, "users", primary_key: [:id])
 
-      assert String.contains?(cql, "AS SELECT id")
+      assert String.contains?(cql, "AS SELECT \"id\"")
     end
 
     test "multiple clustering keys" do
@@ -204,7 +204,7 @@ defmodule AshScylla.DataLayer.MaterializedViewTest do
           include_columns: [:d]
         )
 
-      assert String.contains?(cql, "PRIMARY KEY (a, b, c)")
+      assert String.contains?(cql, "PRIMARY KEY ((\"a\"), \"b\", \"c\")")
     end
 
     test "deduplication when include_columns overlap with primary_key" do
@@ -215,8 +215,8 @@ defmodule AshScylla.DataLayer.MaterializedViewTest do
         )
 
       # id should appear only once in SELECT
-      assert String.contains?(cql, "AS SELECT id, name")
-      refute String.contains?(cql, "id, id")
+      assert String.contains?(cql, "AS SELECT \"id\", \"name\"")
+      refute String.contains?(cql, "\"id\", \"id\"")
     end
   end
 

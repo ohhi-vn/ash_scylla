@@ -256,7 +256,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert record.id == id
       assert record.name == "Ada"
 
-      assert_receive {:ash_scylla_query, update_query, update_params, opts}
+      assert_receive {:ash_scylla_query, update_query, _update_params, opts}
       assert update_query =~ "UPDATE crud_items SET"
       assert update_query =~ "WHERE id = ?"
       assert opts[:consistency] == :one

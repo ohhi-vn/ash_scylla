@@ -167,7 +167,7 @@ defmodule AshScylla.Migration do
           index_name = idx.name || generate_index_name(table_name, idx.columns)
           columns = idx.columns |> Enum.map_join(", ", &to_string/1)
 
-            "CREATE INDEX IF NOT EXISTS #{index_name} ON #{quote_name(table_name)} (#{columns})"
+          "CREATE INDEX IF NOT EXISTS #{index_name} ON #{quote_name(table_name)} (#{columns})"
         end)
     end
   end
@@ -386,8 +386,7 @@ defmodule AshScylla.Migration do
 
         attr when is_list(attr) ->
           {Keyword.get(attr, :name), Keyword.get(attr, :type, :string),
-           Keyword.get(attr, :type_opts, []),
-           Keyword.get(attr, :allow_nil, true)}
+           Keyword.get(attr, :type_opts, []), Keyword.get(attr, :allow_nil, true)}
       end
 
     type_str = ash_type_to_cql_type(type, opts)

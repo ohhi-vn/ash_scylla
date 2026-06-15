@@ -121,9 +121,13 @@ ash_scylla/
 │       ├── prepared_statement_cache.ex
 │       ├── repo.ex                # Repo helpers (keyspace management)
 │       ├── resource_generator.ex   # Resource template generator
+│       ├── schema.ex               # AshScylla.Schema behaviour for priv/migrations
+│       ├── schema_loader.ex        # Schema file discovery and loading
 │       └── telemetry.ex
 ├── lib/mix/tasks/
-│   ├── ash_scylla.gen.ex          # mix ash_scylla.gen task
+│   ├── ash_scylla.gen.ex          # mix ash_scylla.gen task (schema migrations from Ash DSL)
+│   ├── ash_scylla.new_template.ex # mix ash_scylla.new_template task (resource templates)
+│   ├── ash_scylla.migrate.ex      # mix ash_scylla.migrate task (schema + resource migrations)
 │   └── ash_scylla.setup.ex        # mix ash_scylla.setup task
 ├── test/
 │   ├── support/                   # Test resources and repos

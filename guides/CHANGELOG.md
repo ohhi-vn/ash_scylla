@@ -7,8 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Credo checks updated to use new module names (Credo.Check.Refactor.*, Credo.Check.Warning.Dbg, etc.)
+- Unit tests no longer require Docker/container runtime (lazy-loaded container support)
+- Prepared statement cache now uses `{repo, cql, keyspace, opts}` key instead of `phash2(cql)` for safer cross-keyspace isolation
+- `mix ash_scylla.migrate` now discovers and executes schema files from `priv/migrations` before resource migrations
+- **`mix ash_scylla.gen` repurposed** — now generates schema migration files from Ash DSL resource definitions (was resource template generator). Scans project for `AshScylla.DataLayer` resources and produces `priv/migrations/` files with `CREATE TABLE`/`CREATE INDEX` CQL
+- **`mix ash_scylla.new_template`** — new name for the old `mix ash_scylla.gen` resource template generation (`mix ash_scylla.new_template User name:string`)
+
+### Fixed
+- MaterializedView tests now match quoted identifier output
+- `schema_migration.ex` formatting fixes
+- `offset/3` now raises with clear error instead of silently dropping
+- Fixed `AshScylla.Test.ContainerEngine.ensure_running/0` being undefined when running integration tests (removed env guard on `container_engine.ex` loading)
+- Fixed duplicate function clauses and unused default args in `data_layer_pipeline_test.exs`
+- Fixed dialyzer type warnings on `rows[0]` access after `length(rows)` check in `scylla_integration_test.exs`
+- Fixed unused variable warning in `data_layer_crud_test.exs`
+- Fixed dialyzer type mismatch in `edge_cases_test.exs` for `filter_to_cql!(:bad)`
+
 ### Added
-- `Mix.Tasks.AshScylla.Gen.Repo` — new `mix ash_scylla.gen.repo` task that generates a repo module template for applications using AshScylla as a dependency. Supports `--repo`, `--otp-app`, `--keyspace`, and `--nodes` options with sensible defaults.
+- `invalidate/4` with repo/opts context for targeted cache invalidation
+- `cache_key/4` helper for repo+keyspace-scoped statement caching
+- **`AshScylla.Schema`** — behaviour for schema migration modules in `priv/migrations`. Schema files implement `change/0` returning CQL statement lists
+- **`AshScylla.SchemaLoader`** — discovers and loads schema migration files from `priv/migrations`
+- **`mix ash_scylla.gen --dev`** — auto-generates schema migration from all AshScylla resources with timestamp-based name
+- **`mix ash_scylla.gen AddUserTable`** — generates schema migration with a specific module name
+- **`mix ash_scylla.gen --resource MyApp.User`** — generates schema for a specific resource only
+- **`mix ash_scylla.new_template`** — generates Ash resource templates (old `mix ash_scylla.gen` behavior)
+- **`mix ash_scylla.migrate --schemas-only`** — runs only schema files from `priv/migrations` without resource migrations
+- `ResourceGenerator.render_create_table/3` — generates `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` CQL from attribute lists
+- Test coverage for `AshScylla.Schema` behaviour, `AshScylla.SchemaLoader`, `ResourceGenerator.render_create_table/3`, `Mix.Tasks.AshScylla.Gen`, and `Mix.Tasks.AshScylla.NewTemplate`
+
+## [0.10.0]
 - Comprehensive test suite (`data_layer_comprehensive_test.exs`) covering 65+ test cases for gaps in existing coverage:
   - `run_query/2` edge cases (empty results, multiple rows, select, distinct, keyset pagination, AND/OR filters, sort+limit, nil content)
   - `filter/3` OR rewriting edge cases (triple OR, different columns, nested AND/OR, single filter)

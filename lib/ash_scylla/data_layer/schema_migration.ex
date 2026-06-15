@@ -121,7 +121,9 @@ defmodule AshScylla.DataLayer.SchemaMigration do
 
   defp safe_fetch_indexes(resource, repo) do
     case fetch_indexes(resource, repo) do
-      {:ok, indexes} -> indexes
+      {:ok, indexes} ->
+        indexes
+
       {:error, reason} ->
         Logger.warning("Failed to fetch indexes for #{inspect(resource)}: #{inspect(reason)}")
         []
@@ -130,9 +132,14 @@ defmodule AshScylla.DataLayer.SchemaMigration do
 
   defp safe_fetch_materialized_views(resource, repo) do
     case fetch_materialized_views(resource, repo) do
-      {:ok, views} -> views
+      {:ok, views} ->
+        views
+
       {:error, reason} ->
-        Logger.warning("Failed to fetch materialized views for #{inspect(resource)}: #{inspect(reason)}")
+        Logger.warning(
+          "Failed to fetch materialized views for #{inspect(resource)}: #{inspect(reason)}"
+        )
+
         []
     end
   end

@@ -44,7 +44,12 @@ defmodule AshScylla.Connection do
 
   defstruct [:conn, :keyspace, :nodes, :keyspace_used]
 
-  @type t :: %__MODULE__{conn: pid(), keyspace: String.t() | nil, nodes: [String.t()], keyspace_used: boolean()}
+  @type t :: %__MODULE__{
+          conn: pid(),
+          keyspace: String.t() | nil,
+          nodes: [String.t()],
+          keyspace_used: boolean()
+        }
 
   # Client API
 
@@ -118,7 +123,9 @@ defmodule AshScylla.Connection do
 
   def query(name, query, params, opts) when is_atom(name) do
     case get_conn(name) do
-      nil -> {:error, :not_connected}
+      nil ->
+        {:error, :not_connected}
+
       conn ->
         ensure_keyspace!(conn, name)
         query(conn, query, params, opts)
@@ -166,7 +173,9 @@ defmodule AshScylla.Connection do
 
   def query!(name, query, params, opts) when is_atom(name) do
     case get_conn(name) do
-      nil -> raise "No AshScylla connection found for #{inspect(name)}"
+      nil ->
+        raise "No AshScylla connection found for #{inspect(name)}"
+
       conn ->
         ensure_keyspace!(conn, name)
         query!(conn, query, params, opts)
@@ -184,7 +193,9 @@ defmodule AshScylla.Connection do
 
   def prepare(name, query, opts) when is_atom(name) do
     case get_conn(name) do
-      nil -> {:error, :not_connected}
+      nil ->
+        {:error, :not_connected}
+
       conn ->
         ensure_keyspace!(conn, name)
         prepare(conn, query, opts)
@@ -201,7 +212,9 @@ defmodule AshScylla.Connection do
 
   def prepare!(name, query, opts) when is_atom(name) do
     case get_conn(name) do
-      nil -> raise "No AshScylla connection found for #{inspect(name)}"
+      nil ->
+        raise "No AshScylla connection found for #{inspect(name)}"
+
       conn ->
         ensure_keyspace!(conn, name)
         prepare!(conn, query, opts)
@@ -247,7 +260,9 @@ defmodule AshScylla.Connection do
 
   def stop(name) when is_atom(name) do
     case get_conn(name) do
-      nil -> :ok
+      nil ->
+        :ok
+
       _conn ->
         try do
           GenServer.stop(name)
@@ -307,11 +322,15 @@ defmodule AshScylla.Connection do
                 false
             end
           else
-            Logger.info("AshScylla: Connected to ScyllaDB at #{inspect(nodes)}, no keyspace configured")
+            Logger.info(
+              "AshScylla: Connected to ScyllaDB at #{inspect(nodes)}, no keyspace configured"
+            )
+
             true
           end
 
-        {:ok, %__MODULE__{conn: conn, keyspace: keyspace, nodes: nodes, keyspace_used: keyspace_used?}}
+        {:ok,
+         %__MODULE__{conn: conn, keyspace: keyspace, nodes: nodes, keyspace_used: keyspace_used?}}
 
       {:error, reason} ->
         {:stop, reason}

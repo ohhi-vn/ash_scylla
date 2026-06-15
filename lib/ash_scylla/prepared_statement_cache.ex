@@ -66,15 +66,37 @@ defmodule AshScylla.PreparedStatementCache do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
+  @type cache_entry :: {term(), term()}
+  @type cache_key :: {module(), String.t(), String.t(), keyword()}
+
   @doc """
   Returns the ETS table tid for inspection/testing.
   """
   @spec table() :: :ets.tid() | nil
   def table do
-    try do
-      GenServer.call(server_name(), :get_table, 5_000)
-    catch
-      :exit, _ -> nil
+    case :global.whereis_name(__MODULE__) do
+      :undefined ->
+        case Process.whereis(__MODULE__) do
+          nil -> nil
+          pid -> get_table_from_pid(pid)
+        end
+
+      pid ->
+        get_table_from_pid(pid)
+    end
+  end
+
+  defp get_table_from_pid(pid) do
+    case Process.alive?(pid) do
+      true ->
+        try do
+          GenServer.call(pid, :get_table, 5_000)
+        catch
+          :exit, _ -> nil
+        end
+
+      false ->
+        nil
     end
   end
 
@@ -142,7 +164,7 @@ defmodule AshScylla.PreparedStatementCache do
   end
 
   def handle_call({:prepare, repo, cql, opts}, _from, %{table: tid} = state) do
-    key = :erlang.phash2(cql)
+    key = cache_key(repo, cql, opts)
 
     result =
       case :ets.lookup(tid, key) do
@@ -163,9 +185,18 @@ defmodule AshScylla.PreparedStatementCache do
     {:reply, result, state}
   end
 
+  def handle_call({:invalidate, repo, cql, opts}, _from, %{table: tid} = state) do
+    :ets.delete(tid, cache_key(repo, cql, opts))
+    {:reply, :ok, state}
+  end
+
   def handle_call({:invalidate, cql}, _from, %{table: tid} = state) do
-    key = :erlang.phash2(cql)
-    :ets.delete(tid, key)
+    # Delete all entries matching this CQL string (regardless of repo/keyspace/opts)
+    # Iterate all entries and delete matching ones
+    :ets.tab2list(tid)
+    |> Enum.filter(fn {{_repo, entry_cql, _keyspace, _opts}, _value} -> entry_cql == cql end)
+    |> Enum.each(fn {key, _value} -> :ets.delete(tid, key) end)
+
     {:reply, :ok, state}
   end
 
@@ -200,6 +231,20 @@ defmodule AshScylla.PreparedStatementCache do
       )
 
       {:error, :prepare_not_supported}
+    end
+  end
+
+  defp cache_key(repo, cql, opts) do
+    keyspace = Keyword.get(opts, :keyspace) || repo_keyspace(repo)
+
+    {repo, cql, keyspace, Keyword.take(opts, [:consistency, :default_consistency, :compressor])}
+  end
+
+  defp repo_keyspace(repo) do
+    if function_exported?(repo, :keyspace, 0) do
+      repo.keyspace()
+    else
+      nil
     end
   end
 end

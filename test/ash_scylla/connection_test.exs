@@ -26,6 +26,7 @@ defmodule AshScylla.ConnectionTest do
   describe "start_link/1" do
     test "starts with nodes and keyspace options" do
       name = start_conn(nodes: ["127.0.0.1:9042"], keyspace: "test_keyspace")
+
       assert %Connection{conn: conn, keyspace: "test_keyspace", nodes: ["127.0.0.1:9042"]} =
                Connection.get_conn(name)
 
@@ -42,6 +43,7 @@ defmodule AshScylla.ConnectionTest do
     test "child_spec produces valid spec" do
       spec = Connection.child_spec(name: MyTestConn, nodes: ["127.0.0.1:9042"])
       assert spec.id == MyTestConn
+
       assert spec.start ==
                {Connection, :start_link, [[name: MyTestConn, nodes: ["127.0.0.1:9042"]]]}
 
