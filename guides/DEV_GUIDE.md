@@ -227,7 +227,7 @@ config :my_app, MyApp.Repo,
 Use the built-in generator to scaffold a resource template:
 
 ```bash
-mix ash_scylla.gen User name:string, email:string, age:int
+mix ash_scylla.new_template User name:string, email:string, age:int
 ```
 
 This creates `lib/my_app/resources/user.ex` with a starter template. Then customize it with ScyllaDB-specific options:

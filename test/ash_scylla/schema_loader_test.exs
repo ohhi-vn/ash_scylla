@@ -80,5 +80,80 @@ defmodule AshScylla.SchemaLoaderTest do
 
       File.rm_rf!(tmp_dir)
     end
+
+    test "loads a struct-based schema module and flattens it" do
+      tmp_dir = Path.join(System.tmp_dir!(), "ash_scylla_test_#{:erlang.unique_integer([:positive])}")
+      tmp_file = Path.join(tmp_dir, "struct_schema.ex")
+
+      File.mkdir_p!(tmp_dir)
+
+      File.write!(tmp_file, """
+      defmodule AshScylla.SchemaLoaderTest.StructSchema do
+        use AshScylla.Schema
+
+        @impl AshScylla.Schema
+        def change do
+          [
+            %AshScylla.Schema{
+              domain: MyApp.Domain,
+              resources: [
+                %AshScylla.Schema.Resource{
+                  name: :users,
+                  statements: [
+                    "CREATE TABLE IF NOT EXISTS users (id UUID PRIMARY KEY, name TEXT)",
+                    "CREATE INDEX IF NOT EXISTS idx_users_name ON users (name)"
+                  ]
+                }
+              ]
+            }
+          ]
+        end
+      end
+      """)
+
+      assert {:ok, statements} = AshScylla.SchemaLoader.load(tmp_file)
+      assert is_list(statements)
+      assert length(statements) == 2
+      assert Enum.at(statements, 0) =~ "CREATE TABLE IF NOT EXISTS users"
+      assert Enum.at(statements, 1) =~ "CREATE INDEX IF NOT EXISTS idx_users_name"
+
+      File.rm_rf!(tmp_dir)
+    end
+
+    test "loads a mixed schema with both strings and structs" do
+      tmp_dir = Path.join(System.tmp_dir!(), "ash_scylla_test_#{:erlang.unique_integer([:positive])}")
+      tmp_file = Path.join(tmp_dir, "mixed_schema.ex")
+
+      File.mkdir_p!(tmp_dir)
+
+      File.write!(tmp_file, """
+      defmodule AshScylla.SchemaLoaderTest.MixedSchema do
+        use AshScylla.Schema
+
+        @impl AshScylla.Schema
+        def change do
+          [
+            "CREATE TABLE IF NOT EXISTS legacy (id UUID PRIMARY KEY)",
+            %AshScylla.Schema{
+              resources: [
+                %AshScylla.Schema.Resource{
+                  name: :users,
+                  statements: ["CREATE TABLE IF NOT EXISTS users (id UUID PRIMARY KEY)"]
+                }
+              ]
+            }
+          ]
+        end
+      end
+      """)
+
+      assert {:ok, statements} = AshScylla.SchemaLoader.load(tmp_file)
+      assert is_list(statements)
+      assert length(statements) == 2
+      assert hd(statements) =~ "legacy"
+      assert Enum.at(statements, 1) =~ "users"
+
+      File.rm_rf!(tmp_dir)
+    end
   end
 end

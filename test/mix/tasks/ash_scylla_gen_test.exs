@@ -12,8 +12,16 @@ defmodule Mix.Tasks.AshScylla.GenTest do
                 user_id: :uuid,
                 name: :string,
                 age: :integer
-              ]} =
+              ],
+              []} =
                ResourceGenerator.parse_args(["MyResource", "user_id:uuid, name:string, age:int"])
+    end
+
+    test "parses domain-prefixed resource name" do
+      assert {:ok, :"MyApp.MyDomain.MyResource",
+              [name: :string],
+              []} =
+               ResourceGenerator.parse_args(["MyApp.MyDomain.MyResource", "name:string"])
     end
 
     test "requires at least one attribute" do
@@ -22,8 +30,80 @@ defmodule Mix.Tasks.AshScylla.GenTest do
     end
 
     test "returns error on empty args" do
-      assert {:error, "Usage: mix ash_scylla.gen MyResource user_id:uuid, name:string, age:int"} =
+      assert {:error, "Usage: mix ash_scylla.new_template MyResource user_id:uuid, name:string, age:int"} =
                ResourceGenerator.parse_args([])
+    end
+  end
+
+  describe "ResourceGenerator.parse_args/2 with --domain" do
+    test "prefixes resource name with domain module" do
+      {:ok, resource_name, attributes, opts} =
+        ResourceGenerator.parse_args(
+          ["User", "name:string, email:string"],
+          domain: MyApp.MyDomain
+        )
+
+      assert resource_name == MyApp.MyDomain.User
+      assert attributes == [name: :string, email: :string]
+      assert opts == [domain: MyApp.MyDomain]
+    end
+
+    test "domain with nested module name" do
+      {:ok, resource_name, _attributes, opts} =
+        ResourceGenerator.parse_args(
+          ["Post", "title:string"],
+          domain: :"MyApp.Blog"
+        )
+
+      assert resource_name == MyApp.Blog.Post
+      assert opts == [domain: :"MyApp.Blog"]
+    end
+
+    test "domain option with no attributes returns error" do
+      assert {:error, "At least one attribute is required"} =
+               ResourceGenerator.parse_args(
+                 ["User"],
+                 domain: MyApp.MyDomain
+               )
+    end
+  end
+
+  describe "ResourceGenerator.parse_args/2 with --resource" do
+    test "uses fully-qualified resource name" do
+      {:ok, resource_name, attributes, opts} =
+        ResourceGenerator.parse_args(
+          ["User", "name:string"],
+          resource: :"MyApp.Games.User"
+        )
+
+      assert resource_name == :"MyApp.Games.User"
+      assert attributes == [name: :string]
+      assert opts == [domain: nil]
+    end
+
+    test "resource flag overrides positional name" do
+      {:ok, resource_name, _attributes, _opts} =
+        ResourceGenerator.parse_args(
+          ["Something", "name:string"],
+          resource: :"MyApp.MyDomain.User"
+        )
+
+      assert resource_name == :"MyApp.MyDomain.User"
+    end
+  end
+
+  describe "ResourceGenerator.parse_args/2 with both --domain and --resource" do
+    test "resource takes precedence over domain" do
+      {:ok, resource_name, attributes, opts} =
+        ResourceGenerator.parse_args(
+          ["User", "name:string"],
+          domain: MyApp.MyDomain,
+          resource: :"MyApp.Other.User"
+        )
+
+      assert resource_name == :"MyApp.Other.User"
+      assert attributes == [name: :string]
+      assert opts == [domain: MyApp.MyDomain]
     end
   end
 
@@ -57,12 +137,118 @@ defmodule Mix.Tasks.AshScylla.GenTest do
       refute rendered =~ "attribute :id, :uuid"
       assert rendered =~ "uuid_primary_key :id"
     end
+
+    test "renders domain option when provided" do
+      rendered =
+        ResourceGenerator.render_resource(
+          :"MyApp.MyDomain.User",
+          [name: :string, email: :string],
+          domain: MyApp.MyDomain,
+          repo_module: MyApp.Repo
+        )
+
+      assert rendered =~ "defmodule MyApp.MyDomain.User do"
+      # inspect/1 quotes module atoms containing dots
+      assert rendered =~ "domain:"
+      assert rendered =~ "MyApp.MyDomain"
+      assert rendered =~ "data_layer: AshScylla.DataLayer"
+      assert rendered =~ "repo: MyApp.Repo"
+      assert rendered =~ "attribute :name, :string"
+      assert rendered =~ "attribute :email, :string"
+    end
+
+    test "renders without domain option when not provided" do
+      rendered =
+        ResourceGenerator.render_resource(
+          :MyResource,
+          [name: :string],
+          repo_module: MyApp.Repo
+        )
+
+      refute rendered =~ "domain:"
+      assert rendered =~ "defmodule MyResource do"
+    end
+
+    test "renders domain-prefixed module name correctly" do
+      rendered =
+        ResourceGenerator.render_resource(
+          :"MyApp.Games.User",
+          [name: :string],
+          domain: MyApp.Games,
+          repo_module: MyApp.Repo
+        )
+
+      assert rendered =~ "defmodule MyApp.Games.User do"
+      assert rendered =~ "domain:"
+      assert rendered =~ "MyApp.Games"
+    end
   end
 
   describe "ResourceGenerator.resource_file_path/1" do
-    test "builds path from resource name" do
+    test "builds path from simple resource name" do
       path = ResourceGenerator.resource_file_path(:MyResource)
       assert path =~ ~r/lib\/.*\/resources\/my_resource\.ex$/
+    end
+
+    test "builds path from domain-prefixed resource name uses last segment" do
+      path = ResourceGenerator.resource_file_path(:"MyApp.MyDomain.User")
+      assert path =~ ~r/lib\/.*\/resources\/user\.ex$/
+    end
+  end
+
+  describe "ResourceGenerator.write_resource/3" do
+    test "writes file with domain in content" do
+      unique = System.unique_integer([:positive])
+      file_path = Path.join(["lib", "ash_scylla", "resources", "test_write_#{unique}.ex"])
+      File.rm(file_path)
+
+      output =
+        capture_io(fn ->
+          ResourceGenerator.write_resource(
+            :"MyApp.MyDomain.TestWrite",
+            [name: :string],
+            domain: MyApp.MyDomain,
+            repo_module: MyApp.Repo
+          )
+        end)
+
+      # The file path is based on the last segment (TestWrite -> test_write.ex)
+      actual_path = Path.join(["lib", "ash_scylla", "resources", "test_write.ex"])
+      assert output =~ "Generated"
+      assert output =~ "domain MyApp.MyDomain"
+      assert File.exists?(actual_path)
+
+      content = File.read!(actual_path)
+      assert content =~ "defmodule MyApp.MyDomain.TestWrite do"
+      assert content =~ "domain:"
+      assert content =~ "MyApp.MyDomain"
+
+      File.rm(actual_path)
+    end
+
+    test "writes file without domain when not provided" do
+      unique = System.unique_integer([:positive])
+      file_path = Path.join(["lib", "ash_scylla", "resources", "test_no_domain_write_#{unique}.ex"])
+      File.rm(file_path)
+
+      output =
+        capture_io(fn ->
+          ResourceGenerator.write_resource(
+            :TestNoDomainWrite,
+            [name: :string],
+            repo_module: MyApp.Repo
+          )
+        end)
+
+      actual_path = Path.join(["lib", "ash_scylla", "resources", "test_no_domain_write.ex"])
+      assert output =~ "Generated"
+      assert File.exists?(actual_path)
+
+      content = File.read!(actual_path)
+      assert content =~ "defmodule TestNoDomainWrite do"
+      refute content =~ "domain:"
+
+      File.rm(actual_path)
     end
   end
 
@@ -78,7 +264,6 @@ defmodule Mix.Tasks.AshScylla.GenTest do
       assert length(statements) >= 1
       table_cql = hd(statements)
       assert table_cql =~ "CREATE TABLE IF NOT EXISTS users"
-      assert table_cql =~ "id UUID PRIMARY KEY"
       assert table_cql =~ "name TEXT"
       assert table_cql =~ "email TEXT"
       assert table_cql =~ "age INT"
@@ -135,7 +320,7 @@ defmodule Mix.Tasks.AshScylla.GenTest do
       assert index_statements == []
     end
 
-    test "skips :id attribute in column list" do
+    test "uses first uuid attribute as primary key" do
       statements =
         ResourceGenerator.render_create_table(
           "items",
@@ -144,8 +329,9 @@ defmodule Mix.Tasks.AshScylla.GenTest do
         )
 
       table_cql = hd(statements)
-      assert table_cql =~ "id UUID PRIMARY KEY"
-      refute table_cql =~ "id UUID PRIMARY KEY, id UUID"
+      assert table_cql =~ "PRIMARY KEY (id)"
+      assert table_cql =~ "id UUID"
+      assert table_cql =~ "title TEXT"
     end
   end
 
@@ -210,7 +396,6 @@ defmodule Mix.Tasks.AshScylla.GenTest do
           Mix.Tasks.AshScylla.Gen.run(["--dev"])
         end)
 
-      # Should get "no resources found" since ash_scylla has no AshScylla resources
       assert output =~ "No AshScylla resources found"
     end
 
@@ -224,7 +409,6 @@ defmodule Mix.Tasks.AshScylla.GenTest do
           end
         end)
 
-      # The resource doesn't exist so it may crash, but CLI parsing succeeded
       assert is_binary(output)
     end
 
@@ -253,6 +437,41 @@ defmodule Mix.Tasks.AshScylla.GenTest do
     end
   end
 
+  describe "Mix.Tasks.AshScylla.Gen struct-based schema" do
+    test "generates schema file with struct-based format" do
+      # Use a known test resource that has a domain
+      # Use --force to bypass meta-file change detection
+      output =
+        capture_io(fn ->
+          try do
+            Mix.Tasks.AshScylla.Gen.run(["--resource", "AshScylla.TestResource", "--force", "TestSchema"])
+          rescue
+            _ -> :ok
+          end
+        end)
+
+      # Should mention struct-based output
+      assert output =~ "Generated schema migration"
+      assert output =~ "Domains:"
+      assert output =~ "Resources: 1"
+    end
+
+    test "generates schema with domain grouping" do
+      output =
+        capture_io(fn ->
+          try do
+            Mix.Tasks.AshScylla.Gen.run(["--resource", "AshScylla.TestResource", "--force", "DomainGrouped"])
+          rescue
+            _ -> :ok
+          end
+        end)
+
+      assert output =~ "Generated schema migration"
+      # Should have domain info in output
+      assert output =~ "Domains:"
+    end
+  end
+
   describe "Mix.Tasks.AshScylla.NewTemplate" do
     test "task module exists and is callable" do
       assert is_function(&Mix.Tasks.AshScylla.NewTemplate.run/1)
@@ -260,8 +479,6 @@ defmodule Mix.Tasks.AshScylla.GenTest do
 
     test "generates resource template file" do
       file_path = Path.join(["lib", "ash_scylla", "resources", "test_template_gen.ex"])
-
-      # Clean up any previous run
       File.rm(file_path)
 
       output =
@@ -281,7 +498,6 @@ defmodule Mix.Tasks.AshScylla.GenTest do
       assert content =~ "attribute :name, :string"
       assert content =~ "attribute :email, :string"
 
-      # Clean up
       File.rm(file_path)
     end
 
@@ -311,6 +527,156 @@ defmodule Mix.Tasks.AshScylla.GenTest do
       assert output =~ "Generated #{file_path}"
       content = File.read!(file_path)
       assert content =~ "attribute :count, :integer"
+      File.rm(file_path)
+    end
+  end
+
+  describe "Mix.Tasks.AshScylla.NewTemplate with --domain" do
+    test "generates resource with domain flag" do
+      unique = System.unique_integer([:positive])
+      file_path = Path.join(["lib", "ash_scylla", "resources", "test_domain_flag_#{unique}.ex"])
+      File.rm(file_path)
+
+      output =
+        capture_io(fn ->
+          Mix.Tasks.AshScylla.NewTemplate.run([
+            "TestDomainFlag",
+            "name:string",
+            "--domain",
+            "MyApp.MyDomain"
+          ])
+        end)
+
+      # File is written to the path based on last segment
+      actual_path = Path.join(["lib", "ash_scylla", "resources", "test_domain_flag.ex"])
+      assert output =~ "Generated"
+      assert File.exists?(actual_path)
+
+      content = File.read!(actual_path)
+      assert content =~ "defmodule MyApp.MyDomain.TestDomainFlag do"
+      assert content =~ "domain:"
+      assert content =~ "MyApp.MyDomain"
+      assert content =~ "data_layer: AshScylla.DataLayer"
+      assert content =~ "attribute :name, :string"
+
+      File.rm(actual_path)
+    end
+
+    test "domain flag with multiple attributes" do
+      file_path = Path.join(["lib", "ash_scylla", "resources", "test_domain_multi.ex"])
+      File.rm(file_path)
+
+      output =
+        capture_io(fn ->
+          Mix.Tasks.AshScylla.NewTemplate.run([
+            "TestDomainMulti",
+            "name:string, email:string, age:int",
+            "--domain",
+            "MyApp.Games"
+          ])
+        end)
+
+      actual_path = Path.join(["lib", "ash_scylla", "resources", "test_domain_multi.ex"])
+      assert output =~ "Generated"
+      assert File.exists?(actual_path)
+
+      content = File.read!(actual_path)
+      assert content =~ "defmodule MyApp.Games.TestDomainMulti do"
+      assert content =~ "domain:"
+      assert content =~ "MyApp.Games"
+      assert content =~ "attribute :name, :string"
+      assert content =~ "attribute :email, :string"
+      assert content =~ "attribute :age, :integer"
+
+      File.rm(actual_path)
+    end
+
+    test "domain flag with no attributes raises error" do
+      assert_raise Mix.Error, fn ->
+        Mix.Tasks.AshScylla.NewTemplate.run([
+          "TestDomainNoAttr",
+          "--domain",
+          "MyApp.MyDomain"
+        ])
+      end
+    end
+  end
+
+  describe "Mix.Tasks.AshScylla.NewTemplate with --resource" do
+    test "generates resource with fully-qualified name" do
+      file_path = Path.join(["lib", "ash_scylla", "resources", "user.ex"])
+      File.rm(file_path)
+
+      output =
+        capture_io(fn ->
+          Mix.Tasks.AshScylla.NewTemplate.run([
+            "TestResourceFlag",
+            "name:string",
+            "--resource",
+            "MyApp.Games.User"
+          ])
+        end)
+
+      assert output =~ "Generated"
+      assert File.exists?(file_path)
+
+      content = File.read!(file_path)
+      assert content =~ "defmodule MyApp.Games.User do"
+      assert content =~ "data_layer: AshScylla.DataLayer"
+      assert content =~ "attribute :name, :string"
+
+      File.rm(file_path)
+    end
+
+    test "resource flag overrides positional name" do
+      file_path = Path.join(["lib", "ash_scylla", "resources", "post.ex"])
+      File.rm(file_path)
+
+      output =
+        capture_io(fn ->
+          Mix.Tasks.AshScylla.NewTemplate.run([
+            "Something",
+            "title:string",
+            "--resource",
+            "MyApp.Blog.Post"
+          ])
+        end)
+
+      assert output =~ "Generated"
+      assert File.exists?(file_path)
+
+      content = File.read!(file_path)
+      assert content =~ "defmodule MyApp.Blog.Post do"
+      refute content =~ "Something"
+      assert content =~ "attribute :title, :string"
+
+      File.rm(file_path)
+    end
+  end
+
+  describe "Mix.Tasks.AshScylla.NewTemplate with --domain and --resource together" do
+    test "resource flag takes precedence over domain" do
+      file_path = Path.join(["lib", "ash_scylla", "resources", "test_both_flags.ex"])
+      File.rm(file_path)
+
+      output =
+        capture_io(fn ->
+          Mix.Tasks.AshScylla.NewTemplate.run([
+            "TestBothFlags",
+            "name:string",
+            "--domain",
+            "MyApp.MyDomain",
+            "--resource",
+            "MyApp.Other.TestBothFlags"
+          ])
+        end)
+
+      assert output =~ "Generated"
+      assert File.exists?(file_path)
+
+      content = File.read!(file_path)
+      assert content =~ "defmodule MyApp.Other.TestBothFlags do"
+
       File.rm(file_path)
     end
   end

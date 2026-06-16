@@ -83,6 +83,7 @@ defmodule AshScylla.DataLayer do
   alias AshScylla.DataLayer.Dsl
   alias AshScylla.DataLayer.FilterValidator
   alias AshScylla.DataLayer.QueryBuilder
+  alias AshScylla.DataLayer.Types
   alias AshScylla.Identifier
   alias AshScylla.Telemetry
 
@@ -275,6 +276,9 @@ defmodule AshScylla.DataLayer do
     # Build the optimized query with filters, sorts, limit, offset
     {query, params} = QueryBuilder.build_optimized_query(data_layer_query)
 
+    # Convert UUID string params to binary for Xandra
+    params = convert_uuid_params(params, resource)
+
     opts = build_query_opts(resource, tenant)
 
     Logger.debug(
@@ -283,7 +287,13 @@ defmodule AshScylla.DataLayer do
 
     Telemetry.span(resource, :read, query, fn ->
       case repo.query(query, params, opts) do
-        {:ok, %Xandra.Page{content: content}} ->
+        {:ok, %Xandra.Page{content: content, columns: columns}} when columns != nil ->
+            rows = content || []
+            records = Enum.map(rows, &to_ash_record(&1, resource, columns))
+            %__MODULE__{context: context} = data_layer_query
+            {:ok, apply_calculations(records, context)}
+
+          {:ok, %Xandra.Page{content: content}} ->
           rows = content || []
           records = Enum.map(rows, &to_ash_record(&1, resource))
           %__MODULE__{context: context} = data_layer_query
@@ -393,7 +403,7 @@ defmodule AshScylla.DataLayer do
       changesets
       |> Enum.map(fn changeset ->
         attrs = changeset_to_insert_attrs(changeset, resource)
-        build_insert_statement(sanitized_table, attrs, ttl)
+        build_insert_statement(sanitized_table, attrs, ttl, resource)
       end)
 
     opts =
@@ -450,31 +460,7 @@ defmodule AshScylla.DataLayer do
     # This function is called multiple times per request (create, update, delete, fetch).
     case Process.get({__MODULE__, :source, resource}) do
       nil ->
-        # Check DSL-configured table first, then fall back to @table attribute
-        resolved =
-          case Dsl.table(resource) do
-            nil ->
-              resource
-              |> Module.get_attribute(:table)
-              |> to_string()
-
-            dsl_table ->
-              dsl_table
-          end
-
-        resolved =
-          case resolved do
-            "" ->
-              resource
-              |> Module.split()
-              |> List.last()
-              |> Macro.underscore()
-
-            _ ->
-              resolved
-          end
-
-        resolved = sanitize_identifier(resolved)
+        resolved = resolve_table_name(resource)
         Process.put({__MODULE__, :source, resource}, resolved)
         resolved
 
@@ -483,13 +469,53 @@ defmodule AshScylla.DataLayer do
     end
   rescue
     _ ->
-      name =
-        resource
-        |> Module.split()
-        |> List.last()
-        |> Macro.underscore()
+      resolve_table_name(resource)
+  end
 
-      sanitize_identifier(name)
+  # Resolves the table name for a resource, using domain-prefixed names to avoid
+  # collisions when multiple domains have resources with the same name.
+  # e.g. Games.Stats -> "games_stats", OfflineGame.Stats -> "offline_game_stats"
+  @doc false
+  @spec resolve_table_name(module()) :: String.t()
+  def resolve_table_name(resource) do
+    case Dsl.table(resource) do
+      nil ->
+        segments = Module.split(resource)
+
+        # Check if resource has a domain (real app resource vs test resource)
+        name =
+          if Ash.Resource.Info.domain(resource) do
+            # Use last two segments (domain_resource) to avoid collisions
+            # e.g. Games.Stats -> "games_stats", OfflineGame.Stats -> "offline_game_stats"
+            segments
+            |> Enum.take(-2)
+            |> Enum.map(&Macro.underscore/1)
+            |> Enum.join("_")
+          else
+            # No domain (test resources, etc.) — use just the last segment
+            segments
+            |> List.last()
+            |> Macro.underscore()
+          end
+
+        # Fall back to @table attribute if it exists (safe for compiled modules)
+        table_attr =
+          try do
+            Module.get_attribute(resource, :table)
+          rescue
+            ArgumentError -> nil
+          end
+
+        case table_attr do
+          nil -> name
+          "" -> name
+          table -> to_string(table)
+        end
+
+      dsl_table ->
+        to_string(dsl_table)
+    end
+    |> sanitize_identifier()
   end
 
   # ============================================================================
@@ -505,10 +531,11 @@ defmodule AshScylla.DataLayer do
     sanitized_table = sanitize_identifier(source(resource))
     attrs = changeset_to_update_attrs(changeset, resource)
 
-    {set_clauses, set_values} = build_set_clauses(attrs)
+    {set_clauses, set_values} = build_set_clauses(attrs, resource)
 
     %__MODULE__{filters: filters} = data_layer_query
     {where_clause, where_params} = QueryBuilder.build_where_clause(filters)
+    where_params = convert_uuid_params(where_params, resource)
 
     query =
       IO.iodata_to_binary([
@@ -539,6 +566,7 @@ defmodule AshScylla.DataLayer do
 
     %__MODULE__{filters: filters} = data_layer_query
     {where_clause, where_params} = QueryBuilder.build_where_clause(filters)
+    where_params = convert_uuid_params(where_params, resource)
 
     query =
       IO.iodata_to_binary(["DELETE FROM ", sanitized_table, " WHERE ", where_clause])
@@ -627,6 +655,7 @@ defmodule AshScylla.DataLayer do
     %__MODULE__{filters: filters} = data_layer_query
 
     {where_clause, where_params} = QueryBuilder.build_where_clause(filters)
+    where_params = convert_uuid_params(where_params, resource)
 
     # Build COUNT queries for each aggregate
     results =
@@ -696,9 +725,9 @@ defmodule AshScylla.DataLayer do
      "Aggregate kind #{kind} is not supported in ScyllaDB/Cassandra. Use :count or materialized views."}
   end
 
-  @spec build_insert_statement(String.t(), map(), pos_integer() | nil) :: {String.t(), list()}
-  defp build_insert_statement(table, attrs, ttl) do
-    {sanitized_fields, values} = build_field_value_pairs(attrs)
+  @spec build_insert_statement(String.t(), map(), pos_integer() | nil, module()) :: {String.t(), list()}
+  defp build_insert_statement(table, attrs, ttl, resource) do
+    {sanitized_fields, values} = build_field_value_pairs(attrs, resource)
 
     query =
       IO.iodata_to_binary([
@@ -747,7 +776,7 @@ defmodule AshScylla.DataLayer do
 
     sanitized_table = sanitize_identifier(source(resource))
 
-    {sanitized_fields, values} = build_field_value_pairs(attrs)
+    {sanitized_fields, values} = build_field_value_pairs(attrs, resource)
     field_count = length(sanitized_fields)
 
     # Use INSERT ... IF NOT EXISTS for LWT upsert semantics
@@ -965,7 +994,7 @@ defmodule AshScylla.DataLayer do
     ttl = Dsl.ttl(resource)
 
     sanitized_table = sanitize_identifier(source(resource))
-    {sanitized_fields, values} = build_field_value_pairs(attrs)
+    {sanitized_fields, values} = build_field_value_pairs(attrs, resource)
 
     query =
       IO.iodata_to_binary([
@@ -1013,7 +1042,7 @@ defmodule AshScylla.DataLayer do
     opts = build_opts(resource)
     sanitized_table = sanitize_identifier(source(resource))
 
-    {set_clauses, values} = build_set_clauses(attrs)
+    {set_clauses, values} = build_set_clauses(attrs, resource)
 
     {pk_where, pk_values} = build_pk_where_clause(changeset, resource)
 
@@ -1054,7 +1083,7 @@ defmodule AshScylla.DataLayer do
   @spec fetch_by_primary_key(map(), module(), module()) :: {:ok, term()} | {:error, term()}
   defp fetch_by_primary_key(pk, resource, repo) do
     sanitized_table = sanitize_identifier(source(resource))
-    {pk_where, pk_values} = build_where_from_map(pk)
+    {pk_where, pk_values} = build_where_from_map(pk, resource)
 
     query =
       IO.iodata_to_binary([
@@ -1068,7 +1097,12 @@ defmodule AshScylla.DataLayer do
     Logger.debug("Executing SELECT: #{query} with params #{inspect(pk_values)}")
 
     case repo.query(query, pk_values) do
-      {:ok, %Xandra.Page{content: [row | _]}} -> {:ok, row}
+      {:ok, %Xandra.Page{content: [row | _], columns: columns}} when columns != nil ->
+        {:ok, {row, columns}}
+
+      {:ok, %Xandra.Page{content: [row | _]}} ->
+        {:ok, row}
+
       {:ok, %Xandra.Page{content: []}} -> not_found_error(sanitized_table, pk)
       {:ok, %Xandra.Page{content: nil}} -> not_found_error(sanitized_table, pk)
       {:error, error} -> handle_scylla_result({:error, error})
@@ -1098,14 +1132,59 @@ defmodule AshScylla.DataLayer do
     end)
   end
 
-  @spec to_ash_record(map(), module()) :: struct()
-  defp to_ash_record(record, resource) do
+  @spec to_ash_record(term(), module(), list() | nil) :: struct()
+  defp to_ash_record(record, resource, columns \\ nil)
+
+  defp to_ash_record({row, columns}, resource, _) do
+    to_ash_record(row, resource, columns)
+  end
+
+  defp to_ash_record(record, resource, columns) when is_list(record) and is_list(columns) do
+    # Convert positional list from Xandra to a map using column metadata names
+    record_map =
+      record
+      |> Enum.zip(columns)
+      |> Enum.reduce(%{}, fn {value, col_name}, acc -> Map.put(acc, col_name, value) end)
+
+    to_ash_record(record_map, resource)
+  end
+
+  defp to_ash_record(record, resource, _columns) when is_list(record) do
+    # Fallback: use attribute order (may not match column order from Scylla)
+    attr_names = resource |> Info.attributes() |> Enum.map(& &1.name)
+
+    record_map =
+      record
+      |> Enum.zip(attr_names)
+      |> Enum.reduce(%{}, fn {value, key}, acc -> Map.put(acc, key, value) end)
+
+    to_ash_record(record_map, resource)
+  end
+
+  defp to_ash_record(record, resource, _columns) when is_tuple(record) do
+    record |> Tuple.to_list() |> to_ash_record(resource)
+  end
+
+  defp to_ash_record(record, resource, _columns) when is_map(record) do
+    uuid_fields = uuid_attribute_names(resource)
+
     attrs =
       resource
       |> Info.attributes()
       |> Enum.reduce(%{}, fn attr, acc ->
         value = Map.get(record, attr.name)
-        Map.put(acc, attr.name, value)
+
+        decoded_value =
+          if attr.name in uuid_fields and is_binary(value) and byte_size(value) == 16 do
+            case Types.uuid_binary_to_string(value) do
+              {:ok, str} -> str
+              _ -> value
+            end
+          else
+            value
+          end
+
+        Map.put(acc, attr.name, decoded_value)
       end)
 
     struct(resource, attrs)
@@ -1188,22 +1267,47 @@ defmodule AshScylla.DataLayer do
     {:error, AshScylla.Error.wrap_xandra_error(error)}
   end
 
-  @spec build_field_value_pairs(map()) :: {[String.t()], [term()]}
-  defp build_field_value_pairs(attrs) do
+  @spec build_field_value_pairs(map(), module()) :: {[String.t()], [term()]}
+  defp build_field_value_pairs(attrs, resource) do
+    uuid_fields = uuid_attribute_names(resource)
+
     {fields, values} =
       Enum.reduce(attrs, {[], []}, fn {k, v}, {fs, vs} ->
-        {[sanitize_identifier(to_string(k)) | fs], [v | vs]}
+        value =
+          if k in uuid_fields and is_binary(v) do
+            case Types.uuid_string_to_binary(v) do
+              {:ok, bin} -> bin
+              _ -> v
+            end
+          else
+            v
+          end
+
+        {[sanitize_identifier(to_string(k)) | fs], [value | vs]}
       end)
 
     {Enum.reverse(fields), :lists.reverse(values)}
   end
 
-  @spec build_set_clauses(map()) :: {[String.t()], [term()]}
-  defp build_set_clauses(attrs) do
+  @spec build_set_clauses(map(), module()) :: {[String.t()], [term()]}
+  defp build_set_clauses(attrs, resource) do
+    uuid_fields = uuid_attribute_names(resource)
+
     {clauses, values} =
       Enum.reduce(attrs, {[], []}, fn {k, v}, {cs, vs} ->
         sanitized = sanitize_identifier(to_string(k))
-        {["#{sanitized} = ?" | cs], [v | vs]}
+
+        value =
+          if k in uuid_fields and is_binary(v) do
+            case Types.uuid_string_to_binary(v) do
+              {:ok, bin} -> bin
+              _ -> v
+            end
+          else
+            v
+          end
+
+        {["#{sanitized} = ?" | cs], [value | vs]}
       end)
 
     {Enum.reverse(clauses), :lists.reverse(values)}
@@ -1212,17 +1316,68 @@ defmodule AshScylla.DataLayer do
   @spec build_pk_where_clause(term(), module()) :: {String.t(), [term()]}
   defp build_pk_where_clause(changeset, resource) do
     pk = get_primary_key(changeset, resource)
-    build_where_from_map(pk)
+    build_where_from_map(pk, resource)
   end
 
-  @spec build_where_from_map(map()) :: {String.t(), [term()]}
-  defp build_where_from_map(pk_map) do
+  @spec build_where_from_map(map(), module()) :: {String.t(), [term()]}
+  defp build_where_from_map(pk_map, resource) do
+    uuid_fields = uuid_attribute_names(resource)
+
     {clauses, values} =
       Enum.reduce(pk_map, {[], []}, fn {k, v}, {cs, vs} ->
         sanitized = sanitize_identifier(to_string(k))
-        {["#{sanitized} = ?" | cs], [v | vs]}
+
+        value =
+          if k in uuid_fields and is_binary(v) do
+            case Types.uuid_string_to_binary(v) do
+              {:ok, bin} -> bin
+              _ -> v
+            end
+          else
+            v
+          end
+
+        {["#{sanitized} = ?" | cs], [value | vs]}
       end)
 
     {Enum.reverse(clauses) |> Enum.join(" AND "), :lists.reverse(values)}
+  end
+
+  @spec uuid_attribute_names(module()) :: MapSet.t(atom())
+  defp uuid_attribute_names(resource) do
+    resource
+    |> Info.attributes()
+    |> Enum.filter(fn attr ->
+      case attr.type do
+        Ash.Type.UUID -> true
+        :uuid -> true
+        _ -> false
+      end
+    end)
+    |> Enum.map(& &1.name)
+    |> MapSet.new()
+  end
+
+  # Converts UUID string params to 16-byte binaries for Xandra.
+  # This handles filter params where we don't have attribute name context -
+  # we check if the param looks like a UUID string (36 chars, 4 hyphens).
+  @spec convert_uuid_params(list(), module()) :: list()
+  defp convert_uuid_params(params, _resource) do
+    Enum.map(params, fn
+      value when is_binary(value) and byte_size(value) == 36 ->
+        bin_count = value |> String.graphemes() |> Enum.count(&(&1 == "-"))
+
+        if bin_count == 4 do
+          case Types.uuid_string_to_binary(value) do
+            {:ok, bin} -> bin
+            _ -> value
+          end
+        else
+          value
+        end
+
+      value ->
+        value
+    end)
   end
 end

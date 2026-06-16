@@ -7,13 +7,16 @@ defmodule AshScylla.MixHelpers do
   """
 
   @doc """
-  Converts a string CLI option value to an atom, if present.
+  Converts a string CLI option value to a module atom, if present.
+
+  Uses `Module.concat/1` to produce a proper module reference (e.g.
+  `"MyApp.User"` becomes `MyApp.User`, not `:"MyApp.User"`).
   """
   @spec maybe_atomize(keyword(), atom()) :: keyword()
   def maybe_atomize(opts, key) do
     case Keyword.get(opts, key) do
       nil -> opts
-      value -> Keyword.put(opts, key, String.to_atom(value))
+      value -> Keyword.put(opts, key, Module.concat([value]))
     end
   end
 
@@ -40,7 +43,8 @@ defmodule AshScylla.MixHelpers do
   @doc """
   Discovers Ash domains from the project's app configuration.
 
-  Checks each app for `:ash_domains` config and ensures modules are compiled.
+  Checks each app for `:ash_domains` config, ensures modules are compiled,
+  and validates they are actual Ash domains (Spark DSL modules).
   """
   @spec project_domains() :: [module()]
   def project_domains do
@@ -51,11 +55,37 @@ defmodule AshScylla.MixHelpers do
         Application.get_env(app, :ash_domains, [])
       end)
 
-    Enum.each(domains, fn domain ->
-      Code.ensure_compiled(domain)
-    end)
-
     domains
+    |> Enum.filter(fn domain ->
+      try do
+        Code.ensure_compiled(domain)
+
+        if ash_domain?(domain) do
+          true
+        else
+          Mix.shell().info("  Skipping #{inspect(domain)}: not an Ash domain")
+          false
+        end
+      rescue
+        _ ->
+          Mix.shell().info("  Skipping #{inspect(domain)}: could not compile module")
+          false
+      end
+    end)
+  end
+
+  @doc """
+  Checks if a module is a valid Ash domain.
+
+  Verifies the module is compiled and exports `domain?/0` (added by
+  `use Ash.Domain`), which distinguishes domains from plain modules.
+  """
+  @spec ash_domain?(module()) :: boolean()
+  def ash_domain?(module) do
+    Code.ensure_compiled(module)
+    function_exported?(module, :domain?, 0)
+  rescue
+    _ -> false
   end
 
   @doc """
@@ -87,9 +117,15 @@ defmodule AshScylla.MixHelpers do
 
     resources =
       Enum.flat_map(domains, fn domain ->
-        domain
-        |> Ash.Domain.Info.resources()
-        |> Enum.filter(&ash_scylla_resource?/1)
+        try do
+          domain
+          |> Ash.Domain.Info.resources()
+          |> Enum.filter(&ash_scylla_resource?/1)
+        rescue
+          error in [ArgumentError] ->
+            Mix.shell().info("  Skipping domain #{inspect(domain)}: #{Exception.message(error)}")
+            []
+        end
       end)
 
     if resources != [] do

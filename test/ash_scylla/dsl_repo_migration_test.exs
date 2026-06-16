@@ -269,7 +269,7 @@ defmodule AshScylla.DslRepoMigrationContinuedTest do
     test "returns CQL for creating secondary indexes for TestResourceWithIndexes" do
       result = Migration.create_secondary_indexes_cql(TestResourceWithIndexes)
       assert is_list(result)
-      assert length(result) == 3
+      assert length(result) == 4
     end
 
     test "each CQL statement is a CREATE INDEX statement" do

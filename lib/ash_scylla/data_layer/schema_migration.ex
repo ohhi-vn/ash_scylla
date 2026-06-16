@@ -371,13 +371,26 @@ defmodule AshScylla.DataLayer.SchemaMigration do
 
     resource_indexes
     |> Enum.filter(fn idx ->
-      index_name = idx.name || generate_index_name(table_name, idx.columns)
-      not MapSet.member?(existing_index_names, index_name)
+      idx.columns
+      |> Enum.all?(fn col ->
+        index_name = if idx.name, do: "#{idx.name}_#{col}", else: "idx_#{table_name}_#{col}"
+        not MapSet.member?(existing_index_names, index_name)
+      end)
     end)
-    |> Enum.map(fn idx ->
-      index_name = idx.name || generate_index_name(table_name, idx.columns)
-      columns = idx.columns |> Enum.map_join(", ", &to_string/1)
-      "CREATE INDEX IF NOT EXISTS #{index_name} ON #{quote_name(table_name)} (#{columns})"
+    |> Enum.flat_map(fn idx ->
+      # ScyllaDB OSS doesn't support multi-column secondary indexes.
+      # Generate a separate single-column index per column.
+      idx.columns
+      |> Enum.map(fn col ->
+        index_name =
+          if idx.name do
+            "#{idx.name}_#{col}"
+          else
+            "idx_#{table_name}_#{col}"
+          end
+
+        "CREATE INDEX IF NOT EXISTS #{index_name} ON #{quote_name(table_name)} (#{col})"
+      end)
     end)
   end
 
@@ -421,20 +434,36 @@ defmodule AshScylla.DataLayer.SchemaMigration do
   defp get_table_name(resource) do
     case Dsl.table(resource) do
       nil ->
-        resource
-        |> Module.split()
-        |> List.last()
-        |> Macro.underscore()
+        segments = Module.split(resource)
+
+        name =
+          if Ash.Resource.Info.domain(resource) do
+            segments
+            |> Enum.take(-2)
+            |> Enum.map(&Macro.underscore/1)
+            |> Enum.join("_")
+          else
+            segments
+            |> List.last()
+            |> Macro.underscore()
+          end
+
+        table_attr =
+          try do
+            Module.get_attribute(resource, :table)
+          rescue
+            ArgumentError -> nil
+          end
+
+        case table_attr do
+          nil -> name
+          "" -> name
+          table -> to_string(table)
+        end
 
       name ->
         to_string(name)
     end
-  end
-
-  @spec generate_index_name(String.t(), [atom()]) :: String.t()
-  defp generate_index_name(table_name, columns) do
-    column_str = columns |> Enum.map_join("_", &to_string/1)
-    "idx_#{table_name}_#{column_str}"
   end
 
   @spec generate_views(module()) :: [String.t()]

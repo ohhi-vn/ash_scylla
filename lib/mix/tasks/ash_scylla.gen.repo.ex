@@ -150,7 +150,7 @@ defmodule Mix.Tasks.AshScylla.Gen.Repo do
   end
 
   defp render_repo(repo_module, otp_app, _keyspace, _nodes) do
-    module_name = repo_module |> Module.split() |> Enum.join()
+    module_name = repo_module |> Module.split() |> Enum.join(".")
 
     """
     defmodule #{module_name} do

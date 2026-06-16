@@ -59,7 +59,7 @@ end
 4. Generate a Resource Template:
 
 ```bash
-mix ash_scylla.gen User user_id:uuid, name:string, age:int
+mix ash_scylla.new_template User user_id:uuid, name:string, age:int
 ```
 
 This creates `lib/my_app/resources/user.ex` with a starter template. Then customize it:
@@ -165,7 +165,7 @@ end
 AshScylla includes a Mix task to quickly scaffold a new resource:
 
 ```bash
-mix ash_scylla.gen MyResource user_id:uuid, name:string, age:int
+mix ash_scylla.new_template MyResource user_id:uuid, name:string, age:int
 ```
 
 This generates a file at `lib/<app>/resources/my_resource.ex` containing:
@@ -174,7 +174,7 @@ This generates a file at `lib/<app>/resources/my_resource.ex` containing:
 defmodule MyApp.User do
   use Ash.Resource,
     data_layer: AshScylla.DataLayer,
-    domain: MyApp.Domain
+    repo: MyApp.Repo
 
   attributes do
     uuid_primary_key :id
@@ -192,11 +192,18 @@ end
 ### Command Format
 
 ```bash
-mix ash_scylla.gen <ResourceName> <attr1>:<type1>, <attr2>:<type2>, ...
+mix ash_scylla.new_template <ResourceName> <attr1>:<type1>, <attr2>:<type2>, ...
 ```
 
 - **ResourceName** — an Elixir module alias (e.g. `User`, `Blog.Post`)
 - **Attributes** — comma-separated `name:type` pairs
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--domain <Module>` | Domain module to include. Auto-prefixes the resource name (e.g. `--domain MyApp.Domain` with name `User` produces `MyApp.Domain.User`). |
+| `--resource <Module>` | Fully-qualified resource module name. Overrides the positional name argument entirely. |
 
 ### Supported Types
 
@@ -216,48 +223,53 @@ Any valid Ash type is accepted. Common choices:
 ### Examples
 
 ```bash
-# Simple resource
-mix ash_scylla.gen User email:string, name:string, age:int
+# Simple resource (no domain)
+mix ash_scylla.new_template User email:string, name:string, age:int
+
+# Resource with domain — module becomes MyApp.Domain.User
+mix ash_scylla.new_template User name:string --domain MyApp.Domain
+
+# Resource with fully-qualified name — module becomes MyApp.Games.User
+mix ash_scylla.new_template User name:string --resource MyApp.Games.User
 
 # With module nesting
-mix ash_scylla.gen Blog.Post title:string, body:string, published:boolean
+mix ash_scylla.new_template Blog.Post title:string, body:string, published:boolean
 
 # Many attributes
-mix ash_scylla.gen Sensor sensor_id:uuid, temperature:float, location:string, recorded_at:utc_datetime
+mix ash_scylla.new_template Sensor sensor_id:uuid, temperature:float, location:string, recorded_at:utc_datetime
 ```
 
-After generating, add the resource to your domain and customize with primary keys, actions, and ScyllaDB-specific options:
+### Generated Output with `--domain`
+
+When `--domain` is provided, the generated resource includes the `domain` option:
 
 ```elixir
-defmodule MyApp.User do
+defmodule MyApp.Domain.User do
   use Ash.Resource,
     data_layer: AshScylla.DataLayer,
+    repo: MyApp.Repo,
     domain: MyApp.Domain
-
-  ash_scylla do
-    table "users"
-    consistency :quorum
-    secondary_index :email
-  end
 
   attributes do
     uuid_primary_key :id
-    attribute :email, :string
     attribute :name, :string
-    attribute :age, :integer
   end
 
   actions do
     defaults [:create, :read, :update, :destroy]
   end
 end
+```
 
-# Add to domain:
+After generating, add the resource to your domain and customize with primary keys, actions, and ScyllaDB-specific options:
+
+```elixir
+# Already configured with domain when using --domain flag:
 defmodule MyApp.Domain do
   use Ash.Domain
 
   resources do
-    resource MyApp.User
+    resource MyApp.Domain.User
   end
 end
 ```

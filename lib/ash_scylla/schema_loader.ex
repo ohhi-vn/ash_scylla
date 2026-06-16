@@ -34,13 +34,17 @@ defmodule AshScylla.SchemaLoader do
 
   @doc """
   Loads a schema module from a file path and returns its `change/0` statements.
+
+  Supports both flat CQL string lists and struct-based `%AshScylla.Schema{}`
+  entries. Struct-based entries are automatically flattened via
+  `AshScylla.Schema.flatten/1`.
   """
   @spec load(String.t()) :: {:ok, [String.t()]} | {:error, term()}
   def load(path) when is_binary(path) do
     case Code.require_file(path) do
       [{module, _}] when is_atom(module) ->
         if function_exported?(module, :change, 0) do
-          {:ok, module.change()}
+          {:ok, module.change() |> AshScylla.Schema.flatten()}
         else
           {:error, :no_change_function}
         end

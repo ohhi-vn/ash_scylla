@@ -54,23 +54,27 @@ defmodule AshScylla.Migration do
 
   @spec create_table_cql(module(), keyword()) :: String.t()
   def create_table_cql(resource, _opts) do
-    table_name =
-      case Dsl.table(resource) do
-        nil ->
-          resource
-          |> Module.split()
-          |> List.last()
-          |> Macro.underscore()
-
-        name ->
-          to_string(name)
-      end
+    table_name = get_table_name(resource)
 
     all_attributes = Ash.Resource.Info.attributes(resource)
 
     # Separate primary key columns from regular columns
     {pk_attrs, regular_attrs} =
       Enum.split_with(all_attributes, fn attr -> attr.primary_key? end)
+
+    # If no primary key found, default to :id as partition key
+    {pk_attrs, regular_attrs} =
+      if pk_attrs == [] do
+        {id_attr, rest} =
+          Enum.split_with(regular_attrs, fn attr -> attr.name == :id end)
+
+        case id_attr do
+          [id] -> {[id], rest}
+          [] -> {[], regular_attrs}
+        end
+      else
+        {pk_attrs, regular_attrs}
+      end
 
     # Build column definitions for PK attributes (as regular column defs with types)
     pk_columns =
@@ -96,10 +100,18 @@ defmodule AshScylla.Migration do
     # Build CLUSTERING ORDER BY clause
     clustering_order_clause = build_clustering_order_clause(pk_attrs)
 
+    # Build the full CQL, handling empty clustering clause
+    suffix =
+      if clustering_order_clause == "" do
+        ""
+      else
+        " #{clustering_order_clause}"
+      end
+
     """
     CREATE TABLE IF NOT EXISTS #{quote_name(table_name)} (
       #{Enum.join(all_definitions, ",\n  ")}
-    ) #{clustering_order_clause}
+    )#{suffix}
     """
   end
 
@@ -163,11 +175,20 @@ defmodule AshScylla.Migration do
         table_name = get_table_name(resource)
 
         indexes
-        |> Enum.map(fn idx ->
-          index_name = idx.name || generate_index_name(table_name, idx.columns)
-          columns = idx.columns |> Enum.map_join(", ", &to_string/1)
+        |> Enum.flat_map(fn idx ->
+          # ScyllaDB OSS doesn't support multi-column secondary indexes.
+          # Generate a separate single-column index per column.
+          idx.columns
+          |> Enum.map(fn col ->
+            index_name =
+              if idx.name do
+                "#{idx.name}_#{col}"
+              else
+                "idx_#{table_name}_#{col}"
+              end
 
-          "CREATE INDEX IF NOT EXISTS #{index_name} ON #{quote_name(table_name)} (#{columns})"
+            "CREATE INDEX IF NOT EXISTS #{index_name} ON #{quote_name(table_name)} (#{col})"
+          end)
         end)
     end
   end
@@ -194,20 +215,40 @@ defmodule AshScylla.Migration do
     # Try DSL getter first (works at runtime), then fall back to compile-time attribute
     case Dsl.table(resource) do
       nil ->
-        resource
-        |> Module.split()
-        |> List.last()
-        |> Macro.underscore()
+        segments = Module.split(resource)
+
+        name =
+          if Ash.Resource.Info.domain(resource) do
+            # Use last two segments (domain_resource) to avoid collisions
+            # e.g. Games.Stats -> games_stats, OfflineGame.Stats -> offline_game_stats
+            segments
+            |> Enum.take(-2)
+            |> Enum.map(&Macro.underscore/1)
+            |> Enum.join("_")
+          else
+            # No domain (test resources, etc.) — use just the last segment
+            segments
+            |> List.last()
+            |> Macro.underscore()
+          end
+
+        # Fall back to @table attribute if it exists (safe for compiled modules)
+        table_attr =
+          try do
+            Module.get_attribute(resource, :table)
+          rescue
+            ArgumentError -> nil
+          end
+
+        case table_attr do
+          nil -> name
+          "" -> name
+          table -> to_string(table)
+        end
 
       name ->
         to_string(name)
     end
-  end
-
-  @spec generate_index_name(String.t(), [atom()]) :: String.t()
-  defp generate_index_name(table_name, columns) do
-    column_str = columns |> Enum.map_join("_", &to_string/1)
-    "idx_#{table_name}_#{column_str}"
   end
 
   # Quotes an identifier for use in CQL, protecting reserved words.
@@ -379,7 +420,7 @@ defmodule AshScylla.Migration do
   end
 
   defp attribute_to_cql(attr_or_keyword) do
-    {name, type, opts, allow_nil?} =
+    {name, type, opts, _allow_nil?} =
       case attr_or_keyword do
         %Ash.Resource.Attribute{} = attr ->
           {attr.name, attr.type, attr.constraints, attr.allow_nil?}
@@ -390,9 +431,8 @@ defmodule AshScylla.Migration do
       end
 
     type_str = ash_type_to_cql_type(type, opts)
-    nullable = if allow_nil?, do: "", else: " NOT NULL"
 
-    "#{quote_name(name)} #{type_str}#{nullable}"
+    "#{quote_name(name)} #{type_str}"
   end
 
   @doc """

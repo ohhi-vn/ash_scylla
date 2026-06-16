@@ -31,4 +31,120 @@ defmodule AshScylla.SchemaTest do
     callbacks = AshScylla.Schema.behaviour_info(:callbacks)
     assert {:change, 0} in callbacks
   end
+
+  describe "struct" do
+    test "defines domain and resources fields" do
+      schema = %AshScylla.Schema{
+        domain: MyApp.Domain,
+        resources: [
+          %AshScylla.Schema.Resource{
+            name: :users,
+            statements: ["CREATE TABLE IF NOT EXISTS users (id UUID PRIMARY KEY)"]
+          }
+        ]
+      }
+
+      assert schema.domain == MyApp.Domain
+      assert length(schema.resources) == 1
+      [resource] = schema.resources
+      assert resource.name == :users
+      assert hd(resource.statements) =~ "CREATE TABLE"
+    end
+
+    test "defaults resources to empty list" do
+      schema = %AshScylla.Schema{domain: MyApp.Domain}
+      assert schema.resources == []
+    end
+  end
+
+  describe "flatten/1" do
+    test "passes through flat CQL strings" do
+      input = ["CREATE TABLE IF NOT EXISTS t (id UUID PRIMARY KEY)"]
+      assert AshScylla.Schema.flatten(input) == input
+    end
+
+    test "flattens struct-based schema to CQL strings" do
+      input = [
+        %AshScylla.Schema{
+          domain: MyApp.Domain,
+          resources: [
+            %AshScylla.Schema.Resource{
+              name: :users,
+              statements: [
+                "CREATE TABLE IF NOT EXISTS users (id UUID PRIMARY KEY, name TEXT)",
+                "CREATE INDEX IF NOT EXISTS idx_users_name ON users (name)"
+              ]
+            },
+            %AshScylla.Schema.Resource{
+              name: :posts,
+              statements: [
+                "CREATE TABLE IF NOT EXISTS posts (id UUID PRIMARY KEY, title TEXT)"
+              ]
+            }
+          ]
+        }
+      ]
+
+      result = AshScylla.Schema.flatten(input)
+      assert length(result) == 3
+      assert Enum.at(result, 0) =~ "CREATE TABLE IF NOT EXISTS users"
+      assert Enum.at(result, 1) =~ "CREATE INDEX IF NOT EXISTS idx_users_name"
+      assert Enum.at(result, 2) =~ "CREATE TABLE IF NOT EXISTS posts"
+    end
+
+    test "flattens mixed strings and structs" do
+      input = [
+        "CREATE TABLE IF NOT EXISTS legacy (id UUID PRIMARY KEY)",
+        %AshScylla.Schema{
+          domain: MyApp.Domain,
+          resources: [
+            %AshScylla.Schema.Resource{
+              name: :users,
+              statements: ["CREATE TABLE IF NOT EXISTS users (id UUID PRIMARY KEY)"]
+            }
+          ]
+        }
+      ]
+
+      result = AshScylla.Schema.flatten(input)
+      assert length(result) == 2
+      assert hd(result) =~ "legacy"
+      assert Enum.at(result, 1) =~ "users"
+    end
+
+    test "handles multiple domain schemas" do
+      input = [
+        %AshScylla.Schema{
+          domain: MyApp.DomainA,
+          resources: [
+            %AshScylla.Schema.Resource{
+              name: :users,
+              statements: ["CREATE TABLE IF NOT EXISTS users (id UUID PRIMARY KEY)"]
+            }
+          ]
+        },
+        %AshScylla.Schema{
+          domain: MyApp.DomainB,
+          resources: [
+            %AshScylla.Schema.Resource{
+              name: :posts,
+              statements: ["CREATE TABLE IF NOT EXISTS posts (id UUID PRIMARY KEY)"]
+            }
+          ]
+        }
+      ]
+
+      result = AshScylla.Schema.flatten(input)
+      assert length(result) == 2
+    end
+
+    test "handles empty list" do
+      assert AshScylla.Schema.flatten([]) == []
+    end
+
+    test "handles schema with empty resources" do
+      input = [%AshScylla.Schema{domain: MyApp.Domain, resources: []}]
+      assert AshScylla.Schema.flatten(input) == []
+    end
+  end
 end

@@ -8,39 +8,106 @@ defmodule AshScylla.ResourceGenerator do
   @doc """
   Parses generator command arguments.
 
-  ## Example
+  Accepts a resource name (optionally domain-prefixed) and a comma-separated
+  list of `name:type` attribute pairs.
+
+  ## Examples
 
       AshScylla.ResourceGenerator.parse_args([
         "MyResource",
         "user_id:uuid, name:string, age:int"
       ])
+
+      AshScylla.ResourceGenerator.parse_args([
+        "MyApp.MyDomain.MyResource",
+        "user_id:uuid, name:string"
+      ])
+
+  Options (as keyword list, passed from the Mix task):
+
+    * `:domain` - Domain module to include in the generated resource
+    * `:resource` - Fully-qualified resource module name (overrides the
+      positional name argument)
   """
-  @spec parse_args([String.t()]) :: {:ok, module(), [{atom(), atom()}]} | {:error, String.t()}
+  @spec parse_args([String.t()]) ::
+          {:ok, module(), [{atom(), atom()}], keyword()} | {:error, String.t()}
   def parse_args(args) do
     [resource_name | attribute_args] = args
 
     with {:ok, resource_name} <- validate_resource_name(resource_name),
          {:ok, attributes} <- parse_attributes(attribute_args) do
-      {:ok, resource_name, attributes}
+      {:ok, resource_name, attributes, []}
     end
   rescue
     MatchError ->
-      {:error, "Usage: mix ash_scylla.gen MyResource user_id:uuid, name:string, age:int"}
+      {:error, "Usage: mix ash_scylla.new_template MyResource user_id:uuid, name:string, age:int"}
+  end
+
+  @doc """
+  Same as `parse_args/1` but also accepts options from CLI flags.
+
+  ## Options
+
+    * `:domain` - Domain module to include in the generated resource
+    * `:resource` - Fully-qualified resource module name (overrides positional arg)
+  """
+  @spec parse_args([String.t()], keyword()) ::
+          {:ok, module(), [{atom(), atom()}], keyword()} | {:error, String.t()}
+  def parse_args(args, opts) do
+    case parse_args(args) do
+      {:ok, _resource_name, attributes, _extra_opts} ->
+        resource_name = Keyword.get(opts, :resource)
+        domain = Keyword.get(opts, :domain)
+
+        resolved_name =
+          cond do
+            resource_name != nil ->
+              {:ok, _} = validate_resource_name(Atom.to_string(resource_name))
+              resource_name
+
+            domain != nil ->
+              base_name = args |> hd() |> String.to_atom()
+              Module.concat(domain, base_name)
+
+            true ->
+              args |> hd() |> String.to_atom()
+          end
+
+        {:ok, resolved_name, attributes, [domain: domain]}
+
+      {:error, _} = err ->
+        err
+    end
   end
 
   @doc """
   Writes a generated resource file to `lib/<app>/resources/<resource>.ex`.
+
+  ## Options
+
+    * `:domain` - Domain module to include in the generated resource
+    * `:repo_module` - The repo module to reference
   """
-  @spec write_resource(module() | String.t(), [{atom(), atom()}]) :: :ok
-  def write_resource(resource_name, attributes) do
+  @spec write_resource(module() | String.t(), [{atom(), atom()}], keyword()) :: :ok
+  def write_resource(resource_name, attributes, opts \\ []) do
     file_path = resource_file_path(resource_name)
-    content = render_resource(resource_name, attributes, repo_module: default_repo_module())
+    content = render_resource(resource_name, attributes, opts)
 
     File.mkdir_p!(Path.dirname(file_path))
     File.write!(file_path, content)
 
     Mix.shell().info("Generated #{file_path}")
-    Mix.shell().info("Next: add the resource to your domain and adjust the repo/table if needed.")
+
+    domain = Keyword.get(opts, :domain)
+
+    next_step =
+      if domain do
+        "Next: the resource is already configured with domain #{inspect(domain)}."
+      else
+        "Next: add the resource to your domain and adjust the repo/table if needed."
+      end
+
+    Mix.shell().info(next_step)
 
     :ok
   end
@@ -64,6 +131,7 @@ defmodule AshScylla.ResourceGenerator do
   ## Options
 
     * `:repo_module` - The repo module to reference (defaults to `<AppName>.Repo`)
+    * `:domain` - Domain module to include via `domain` option in the resource
 
   ## Example
 
@@ -72,19 +140,31 @@ defmodule AshScylla.ResourceGenerator do
         [user_id: :uuid, name: :string, age: :integer],
         repo_module: MyApp.Repo
       )
+
+      AshScylla.ResourceGenerator.render_resource(
+        MyApp.MyDomain.User,
+        [user_id: :uuid, name: :string],
+        domain: MyApp.MyDomain,
+        repo_module: MyApp.Repo
+      )
   """
   @spec render_resource(module() | String.t(), [{atom(), atom()}], keyword()) :: String.t()
   def render_resource(resource_name, attributes, opts \\ []) do
     repo_module = Keyword.get(opts, :repo_module) || default_repo_module()
+    domain = Keyword.get(opts, :domain)
     module_name = to_module_name(resource_name)
     attributes_block = render_attributes(attributes)
 
+    use_options =
+      if domain do
+        "  use Ash.Resource,\n    data_layer: AshScylla.DataLayer,\n    repo: #{inspect(repo_module)},\n    domain: #{inspect(domain)}\n"
+      else
+        "  use Ash.Resource,\n    data_layer: AshScylla.DataLayer,\n    repo: #{inspect(repo_module)}\n"
+      end
+
     """
     defmodule #{module_name} do
-      use Ash.Resource,
-        data_layer: AshScylla.DataLayer,
-        repo: #{inspect(repo_module)}
-
+    #{use_options}
       attributes do
         uuid_primary_key :id
     #{attributes_block}
@@ -167,14 +247,46 @@ defmodule AshScylla.ResourceGenerator do
   end
 
   defp render_create_table_cql(table_name, attributes) do
-    columns =
-      attributes
-      |> Enum.reject(fn {name, _type} -> name == :id end)
-      |> Enum.map_join(", ", fn {name, type} ->
+    {pk_attrs, regular_attrs} =
+      Enum.split_with(attributes, fn {_name, type} -> type == :uuid end)
+
+    # Take the first uuid as PK if no explicit PK; otherwise use all non-pk attrs
+    {pk_attrs, regular_attrs} =
+      case pk_attrs do
+        [] ->
+          {[], attributes}
+        [pk | rest] ->
+          {[pk], rest ++ regular_attrs}
+      end
+
+    pk_columns =
+      pk_attrs
+      |> Enum.map(fn {name, type} ->
         "#{name} #{cql_type(type)}"
       end)
 
-    "CREATE TABLE IF NOT EXISTS #{table_name} (id UUID PRIMARY KEY, #{columns})"
+    regular_columns =
+      regular_attrs
+      |> Enum.map(fn {name, type} ->
+        "#{name} #{cql_type(type)}"
+      end)
+
+    pk_clause =
+      case pk_attrs do
+        [{name, _type}] ->
+          "PRIMARY KEY (#{name})"
+        [] ->
+          ""
+      end
+
+    all_definitions =
+      if pk_clause == "" do
+        pk_columns ++ regular_columns
+      else
+        pk_columns ++ regular_columns ++ [pk_clause]
+      end
+
+    "CREATE TABLE IF NOT EXISTS #{table_name} (#{Enum.join(all_definitions, ", ")})"
   end
 
   defp render_index_cqls(table_name, attributes) do
@@ -224,6 +336,7 @@ defmodule AshScylla.ResourceGenerator do
     resource_name
     |> Atom.to_string()
     |> case do
+      "Elixir." <> rest -> rest
       name -> name
     end
   end

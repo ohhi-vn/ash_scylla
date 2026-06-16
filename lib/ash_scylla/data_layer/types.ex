@@ -32,6 +32,7 @@ defmodule AshScylla.DataLayer.Types do
     :float => "FLOAT",
     :double => "DOUBLE",
     :blob => "BLOB",
+    :binary => "BLOB",
     :inet => "INET",
     :date => "DATE",
     :time => "TIME",
@@ -159,6 +160,8 @@ defmodule AshScylla.DataLayer.Types do
   """
   @spec ash_type_to_cql_type(atom() | tuple(), keyword()) :: String.t()
   def ash_type_to_cql_type(type, opts) when is_atom(type) do
+    type = resolve_type(type)
+
     base_type =
       case type do
         :map ->
@@ -211,9 +214,98 @@ defmodule AshScylla.DataLayer.Types do
   end
 
   def ash_type_to_cql_type(unknown_type, _opts) do
-    # Fallback for unknown types - log warning and default to TEXT
     require Logger
     Logger.warning("Unknown Ash type #{inspect(unknown_type)}, defaulting to TEXT")
     "TEXT"
+  end
+
+  # Resolves Ash type modules (e.g. Ash.Type.UUID) to their short atom names
+  # (e.g. :uuid) for CQL type mapping. Uses storage_type/1 when available,
+  # otherwise falls back to Ash.Type.Registry lookup. Plain atoms pass through.
+  @spec resolve_type(atom()) :: atom()
+  defp resolve_type(type) when is_atom(type) do
+    cond do
+      # Already a plain atom (e.g. :uuid, :string) — pass through
+      not match?("Elixir." <> _, Atom.to_string(type)) ->
+        type
+
+      # Ash type module with storage_type/1 (e.g. Ash.Type.UUID → :uuid)
+      module_loaded?(type) and function_exported?(type, :storage_type, 1) ->
+        case type.storage_type([]) do
+          storage_type when is_atom(storage_type) ->
+            storage_type
+
+          _ ->
+            type
+        end
+
+      # Fallback: try to find in Ash.Type.Registry by module
+      true ->
+        find_short_name_by_module(type)
+    end
+  end
+
+  defp module_loaded?(module) do
+    match?({:module, _}, Code.ensure_loaded(module))
+  rescue
+    _ -> false
+  end
+
+  # Looks up a type module in Ash.Type.Registry.short_names() to find its
+  # short atom name (e.g. Ash.Type.UUID → :uuid).
+  defp find_short_name_by_module(module) do
+    Ash.Type.Registry.short_names()
+    |> List.keyfind(module, 1)
+    |> case do
+      {short_name, _module} -> short_name
+      nil -> module
+    end
+  end
+
+  @doc """
+  Converts a UUID string (36 chars, e.g. "550e8400-e29b-41d4-a716-446655440000")
+  to a 16-byte binary for Xandra/ScyllaDB.
+
+  Returns `{:ok, binary}` on success, `:error` if the string is not a valid UUID.
+  """
+  @spec uuid_string_to_binary(String.t()) :: {:ok, binary()} | :error
+  def uuid_string_to_binary(uuid) when is_binary(uuid) do
+    case String.split(uuid, "-") do
+      [a, b, c, d, e] when byte_size(uuid) == 36 ->
+        hex = a <> b <> c <> d <> e
+
+        case Base.decode16(hex, case: :mixed) do
+          {:ok, <<_::16-binary>> = bin} -> {:ok, bin}
+          _ -> :error
+        end
+
+      _ ->
+        :error
+    end
+  end
+
+  def uuid_string_to_binary(_), do: :error
+
+  @doc """
+  Converts a 16-byte UUID binary from Xandra/ScyllaDB back to a
+  36-character UUID string (e.g. "550e8400-e29b-41d4-a716-446655440000").
+
+  Returns `{:ok, String.t()}` on success, `:error` if the binary is not 16 bytes.
+  """
+  @spec uuid_binary_to_string(binary()) :: {:ok, String.t()} | :error
+  def uuid_binary_to_string(<<a::32, b::16, c::16, d::16, e::48>>) do
+    h1 = format_hex(a, 8)
+    h2 = format_hex(b, 4)
+    h3 = format_hex(c, 4)
+    h4 = format_hex(d, 4)
+    h5 = format_hex(e, 12)
+
+    {:ok, "#{h1}-#{h2}-#{h3}-#{h4}-#{h5}"}
+  end
+
+  def uuid_binary_to_string(_), do: :error
+
+  defp format_hex(value, len) do
+    value |> Integer.to_string(16) |> String.pad_leading(len, "0")
   end
 end

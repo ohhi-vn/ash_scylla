@@ -18,16 +18,35 @@ defmodule Mix.Tasks.AshScylla.NewTemplate do
 
   ## Usage
 
-      mix ash_scylla.new_template AddTableUser name:string, email:string
+      mix ash_scylla.new_template User name:string, email:string
+      mix ash_scylla.new_template User name:string --domain MyApp.MyDomain
+      mix ash_scylla.new_template User name:string --resource MyApp.MyDomain.User
 
   The task writes a resource file under `lib/<app>/resources/<resource>.ex`.
   It creates a starter template that you can customize with primary keys,
-  actions, repo, and ScyllaDB-specific options.
+  actions, repo, domain, and ScyllaDB-specific options.
+
+  ## Options
+
+  - `--domain` - Domain module to include in the generated resource.
+    The resource name is automatically prefixed with the domain module.
+    For example: `--domain MyApp.MyDomain` with name `User` produces
+    `MyApp.MyDomain.User`.
+
+  - `--resource` - Fully-qualified resource module name. Overrides the
+    positional name argument entirely.
+    For example: `--resource MyApp.MyDomain.User`.
 
   ## Examples
 
+      # Simple resource (no domain)
       mix ash_scylla.new_template User user_id:uuid, name:string, age:int
-      mix ash_scylla.new_template AddTableUser name:string, email:string
+
+      # Resource with domain (auto-prefixes name)
+      mix ash_scylla.new_template User name:string --domain MyApp.MyDomain
+
+      # Resource with fully-qualified name
+      mix ash_scylla.new_template User name:string --resource MyApp.Games.User
   """
 
   @shortdoc "Generates an AshScylla resource template"
@@ -38,12 +57,30 @@ defmodule Mix.Tasks.AshScylla.NewTemplate do
 
   @impl Mix.Task
   def run(args) do
-    case AshScylla.ResourceGenerator.parse_args(args) do
-      {:ok, resource_name, attributes} ->
-        AshScylla.ResourceGenerator.write_resource(resource_name, attributes)
+    {opts, remaining} = parse_cli_opts(args)
+
+    case AshScylla.ResourceGenerator.parse_args(remaining, opts) do
+      {:ok, resource_name, attributes, extra_opts} ->
+        merged_opts = Keyword.merge(opts, extra_opts)
+        AshScylla.ResourceGenerator.write_resource(resource_name, attributes, merged_opts)
 
       {:error, message} ->
         Mix.raise(message)
     end
+  end
+
+  defp parse_cli_opts(args) do
+    {opts, remaining} =
+      OptionParser.parse!(args,
+        strict: [domain: :string, resource: :string],
+        aliases: []
+      )
+
+    opts =
+      opts
+      |> AshScylla.MixHelpers.maybe_atomize(:domain)
+      |> AshScylla.MixHelpers.maybe_atomize(:resource)
+
+    {opts, remaining}
   end
 end

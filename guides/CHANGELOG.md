@@ -34,7 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`mix ash_scylla.gen AddUserTable`** — generates schema migration with a specific module name
 - **`mix ash_scylla.gen --resource MyApp.User`** — generates schema for a specific resource only
 - **`mix ash_scylla.new_template`** — generates Ash resource templates (old `mix ash_scylla.gen` behavior)
+- **`mix ash_scylla.new_template --domain MyApp.Domain`** — auto-prefixes resource name with domain module (e.g. `User` → `MyApp.Domain.User`)
+- **`mix ash_scylla.new_template --resource MyApp.Domain.User`** — uses a fully-qualified resource module name, overriding the positional name
 - **`mix ash_scylla.migrate --schemas-only`** — runs only schema files from `priv/migrations` without resource migrations
+- **Multi-domain support** — `project_domains/0` and `find_all_resources/0` now gracefully skip invalid/non-DSL domain modules instead of crashing, enabling umbrella apps with mixed domain configurations
 - `ResourceGenerator.render_create_table/3` — generates `CREATE TABLE IF NOT EXISTS` and `CREATE INDEX IF NOT EXISTS` CQL from attribute lists
 - Test coverage for `AshScylla.Schema` behaviour, `AshScylla.SchemaLoader`, `ResourceGenerator.render_create_table/3`, `Mix.Tasks.AshScylla.Gen`, and `Mix.Tasks.AshScylla.NewTemplate`
 

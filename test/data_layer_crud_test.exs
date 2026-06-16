@@ -9,6 +9,10 @@ defmodule AshScylla.DataLayer.CrudTest do
   alias AshScylla.DataLayer
   alias AshScylla.Error.ScyllaError
 
+  import AshScylla.DataLayer.Types, only: [uuid_string_to_binary: 1]
+
+  defp uuid_bin(id), do: elem(uuid_string_to_binary(id), 1)
+
   # ---------------------------------------------------------------------------
   # Fake repo – pattern-matches on the exact CQL strings the DataLayer emits
   # ---------------------------------------------------------------------------
@@ -224,10 +228,12 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert insert_query =~ "INSERT INTO crud_items"
       assert insert_query =~ "USING TTL 60"
       assert opts[:consistency] == :one
-      assert Enum.sort(insert_params) == Enum.sort([record_id, "Ada", 42, "active"])
+      assert Enum.sort(insert_params) == Enum.sort([uuid_bin(record_id), "Ada", 42, "active"])
+
+      id_bin = uuid_bin(record_id)
 
       # fetch-by-PK
-      assert_receive {:ash_scylla_query, fetch_query, [^record_id], []}
+      assert_receive {:ash_scylla_query, fetch_query, [^id_bin], []}
       assert fetch_query == "SELECT * FROM crud_items WHERE id = ? LIMIT 1"
     end
 
@@ -261,8 +267,10 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert update_query =~ "WHERE id = ?"
       assert opts[:consistency] == :one
 
-      assert_receive {:ash_scylla_query, "SELECT * FROM crud_items WHERE id = ? LIMIT 1", [^id],
-                      []}
+      id_bin = uuid_bin(id)
+
+      assert_receive {:ash_scylla_query, "SELECT * FROM crud_items WHERE id = ? LIMIT 1",
+                      [^id_bin], []}
     end
   end
 
@@ -274,9 +282,11 @@ defmodule AshScylla.DataLayer.CrudTest do
     test "deletes by primary key" do
       id = generate_uuid()
 
+      id_bin = uuid_bin(id)
+
       assert DataLayer.destroy(Resource, changeset(%{id: id})) == :ok
 
-      assert_receive {:ash_scylla_query, delete_query, [^id], opts}
+      assert_receive {:ash_scylla_query, delete_query, [^id_bin], opts}
       assert delete_query == "DELETE FROM crud_items WHERE id = ?"
       assert opts[:consistency] == :one
     end
@@ -293,7 +303,9 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert {:ok, record} = DataLayer.upsert(Resource, changeset(%{id: id, name: "Upsert"}))
       assert record.name == "Upsert"
 
-      assert_receive {:ash_scylla_query, upsert_query, [^id, "Upsert"], opts}
+      id_bin = uuid_bin(id)
+
+      assert_receive {:ash_scylla_query, upsert_query, [^id_bin, "Upsert"], opts}
       assert upsert_query =~ "INSERT INTO crud_items"
       assert upsert_query =~ "USING TTL 60"
       refute upsert_query =~ "IF NOT EXISTS"
@@ -306,8 +318,10 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert {:ok, record} = DataLayer.upsert(LwtResource, changeset(%{id: id, name: "Grace"}))
       assert record.name == "Grace"
 
+      id_bin = uuid_bin(id)
+
       # LWT insert returns [[false]] → conflict → falls back to update
-      assert_receive {:ash_scylla_query, upsert_query, [^id, "Grace"], opts}
+      assert_receive {:ash_scylla_query, upsert_query, [^id_bin, "Grace"], opts}
       assert upsert_query =~ "INSERT INTO lwt_items"
       assert upsert_query =~ "IF NOT EXISTS"
       assert opts[:consistency] == :one
@@ -316,8 +330,8 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert update_query =~ "UPDATE lwt_items SET"
       assert update_query =~ "WHERE id = ?"
 
-      assert_receive {:ash_scylla_query, "SELECT * FROM lwt_items WHERE id = ? LIMIT 1", [^id],
-                      []}
+      assert_receive {:ash_scylla_query, "SELECT * FROM lwt_items WHERE id = ? LIMIT 1",
+                      [^id_bin], []}
     end
 
     test "returns the record when LWT insert succeeds" do
@@ -328,7 +342,9 @@ defmodule AshScylla.DataLayer.CrudTest do
 
       assert record.name == "LWT"
 
-      assert_receive {:ash_scylla_query, upsert_query, [^id, "LWT"], opts}
+      id_bin = uuid_bin(id)
+
+      assert_receive {:ash_scylla_query, upsert_query, [^id_bin, "LWT"], opts}
       assert upsert_query =~ "INSERT INTO lwt_success_items"
       assert upsert_query =~ "IF NOT EXISTS"
       assert opts[:consistency] == :one
@@ -359,7 +375,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert opts[:consistency] == :one
 
       assert Enum.sort(batch_params) ==
-               Enum.sort([id1, "Ada", "active", id2, "Grace", "inactive"])
+               Enum.sort([uuid_bin(id1), "Ada", "active", uuid_bin(id2), "Grace", "inactive"])
     end
   end
 

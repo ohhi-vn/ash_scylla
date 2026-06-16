@@ -4,10 +4,16 @@ defmodule AshScylla.MixHelpersTest do
   alias AshScylla.MixHelpers
 
   describe "maybe_atomize/2" do
-    test "converts string value to atom" do
+    test "converts string value to module atom" do
       opts = [resource: "MyApp.MyResource"]
       result = MixHelpers.maybe_atomize(opts, :resource)
-      assert result[:resource] == :"MyApp.MyResource"
+      assert result[:resource] == MyApp.MyResource
+    end
+
+    test "converts dotted string to nested module atom" do
+      opts = [domain: "MyApp.MyDomain"]
+      result = MixHelpers.maybe_atomize(opts, :domain)
+      assert result[:domain] == MyApp.MyDomain
     end
 
     test "leaves nil values as nil" do
@@ -74,6 +80,28 @@ defmodule AshScylla.MixHelpersTest do
     test "returns an empty list when no domains configured" do
       domains = MixHelpers.project_domains()
       assert is_list(domains)
+    end
+  end
+
+  describe "ash_domain?/1" do
+    test "returns true for a valid Ash domain" do
+      assert MixHelpers.ash_domain?(AshScylla.TestDomain)
+    end
+
+    test "returns false for a regular module" do
+      refute MixHelpers.ash_domain?(Mix)
+    end
+
+    test "returns false for a non-existent module" do
+      refute MixHelpers.ash_domain?(NonExistent.Module)
+    end
+
+    test "returns false for a resource module (not a domain)" do
+      refute MixHelpers.ash_domain?(AshScylla.TestResource)
+    end
+
+    test "returns false for an app module (not a domain)" do
+      refute MixHelpers.ash_domain?(AshScylla.TestRepo)
     end
   end
 

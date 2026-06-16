@@ -613,6 +613,46 @@ defmodule AshScylla.TypeConversionTest do
       assert Types.cql_type(:string) == "TEXT"
       assert Types.cql_type(:integer) == "BIGINT"
       assert Types.cql_type(:utc_datetime) == "TIMESTAMP"
+      assert Types.cql_type(:utc_datetime_usec) == "TIMESTAMP"
+      assert Types.cql_type(:naive_datetime) == "TIMESTAMP"
+      assert Types.cql_type(:naive_datetime_usec) == "TIMESTAMP"
+      assert Types.cql_type(:decimal) == "DECIMAL"
+      assert Types.cql_type(:binary) == "BLOB"
+    end
+
+    test "ash_type_to_cql_type/2 resolves Ash type modules to CQL types" do
+      assert Types.ash_type_to_cql_type(Ash.Type.UUID, []) == "UUID"
+      assert Types.ash_type_to_cql_type(Ash.Type.String, []) == "TEXT"
+      assert Types.ash_type_to_cql_type(Ash.Type.Integer, []) == "BIGINT"
+      assert Types.ash_type_to_cql_type(Ash.Type.Float, []) == "FLOAT"
+      assert Types.ash_type_to_cql_type(Ash.Type.Boolean, []) == "BOOLEAN"
+      assert Types.ash_type_to_cql_type(Ash.Type.Date, []) == "DATE"
+      assert Types.ash_type_to_cql_type(Ash.Type.Time, []) == "TIME"
+      assert Types.ash_type_to_cql_type(Ash.Type.UtcDatetime, []) == "TIMESTAMP"
+      assert Types.ash_type_to_cql_type(Ash.Type.UtcDatetimeUsec, []) == "TIMESTAMP"
+      assert Types.ash_type_to_cql_type(Ash.Type.NaiveDatetime, []) == "TIMESTAMP"
+      assert Types.ash_type_to_cql_type(Ash.Type.Decimal, []) == "DECIMAL"
+      assert Types.ash_type_to_cql_type(Ash.Type.Binary, []) == "BLOB"
+      assert Types.ash_type_to_cql_type(Ash.Type.Atom, []) == "TEXT"
+      assert Types.ash_type_to_cql_type(Ash.Type.Duration, []) == "DURATION"
+    end
+
+    test "ash_type_to_cql_type/2 resolves tuple types" do
+      assert Types.ash_type_to_cql_type({:array, Ash.Type.String}, []) == "LIST<TEXT>"
+      assert Types.ash_type_to_cql_type({:array, Ash.Type.Integer}, []) == "LIST<BIGINT>"
+      assert Types.ash_type_to_cql_type({:set, Ash.Type.String}, []) == "SET<TEXT>"
+      assert Types.ash_type_to_cql_type({:map, Ash.Type.String, Ash.Type.Integer}, []) == "MAP<TEXT, BIGINT>"
+      assert Types.ash_type_to_cql_type({:map, Ash.Type.UUID, Ash.Type.Float}, []) == "MAP<UUID, FLOAT>"
+    end
+
+    test "resolve_type/1 passes plain atoms through unchanged" do
+      assert Types.ash_type_to_cql_type(:uuid, []) == "UUID"
+      assert Types.ash_type_to_cql_type(:string, []) == "TEXT"
+      assert Types.ash_type_to_cql_type(:custom_type, []) == "TEXT"
+    end
+
+    test "resolve_type/1 handles unknown Ash type module" do
+      assert Types.ash_type_to_cql_type(SomeMadeUp.Module, []) == "TEXT"
     end
 
     test "cql_type/1 falls back to TEXT for unknown types" do
@@ -651,8 +691,7 @@ defmodule AshScylla.TypeConversionTest do
       utc_datetime: "TIMESTAMP",
       date: "DATE",
       time: "TIME",
-      inet: "INET",
-      blob: "BLOB"
+      binary: "BLOB"
     }
 
     test "all Ash types have a corresponding CQL type mapping" do
@@ -661,6 +700,17 @@ defmodule AshScylla.TypeConversionTest do
 
         assert actual == expected_cql,
                "Expected #{ash_type} → #{expected_cql}, got #{actual}"
+      end)
+    end
+
+    test "all Ash type modules resolve to corresponding CQL type mappings" do
+      Enum.each(@ash_scylla_type_pairs, fn {ash_type, expected_cql} ->
+        short_names = Ash.Type.Registry.short_names()
+        {^ash_type, type_module} = List.keyfind(short_names, ash_type, 0)
+        actual = Types.ash_type_to_cql_type(type_module, [])
+
+        assert actual == expected_cql,
+               "Expected #{inspect(type_module)} → #{expected_cql}, got #{actual}"
       end)
     end
 

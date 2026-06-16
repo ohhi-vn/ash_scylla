@@ -143,7 +143,9 @@ defmodule Mix.Tasks.AshScylla.Migrate do
 
     case load_schema_module(file) do
       {:ok, module} ->
-        statements = module.change()
+        statements =
+          module.change()
+          |> AshScylla.Schema.flatten()
 
         if statements == [] do
           Mix.shell().info("    (no statements)")
@@ -227,7 +229,204 @@ defmodule Mix.Tasks.AshScylla.Migrate do
   defp find_repo(opts) do
     case Keyword.get(opts, :repo) do
       nil -> AshScylla.MixHelpers.find_default_repo()
-      repo -> repo
+      repo -> validate_repo!(repo)
+    end
+  end
+
+  defp validate_repo!(repo) do
+    # Compile first so child app modules are available (umbrella projects)
+    Mix.Task.run("compile", [])
+
+    # Try multiple strategies to find the repo module
+    repo = ensure_repo_available(repo)
+
+    has_nodes = function_exported?(repo, :nodes, 0)
+    has_keyspace = function_exported?(repo, :keyspace, 0)
+
+    if has_nodes and has_keyspace do
+      repo
+    else
+      app = AshScylla.MixHelpers.app_name()
+      missing = [(!has_nodes && "nodes/0") || nil, (!has_keyspace && "keyspace/0") || nil] |> Enum.reject(&is_nil/1)
+      behaviours = repo.__info__(:attributes)[:behaviour] || []
+      exported = repo.__info__(:functions) |> Enum.map_join(", ", &"#{elem(&1, 0)}/#{elem(&1, 1)}")
+
+      Mix.raise("""
+      Repo module #{inspect(repo)} is missing required functions: #{Enum.join(missing, ", ")}.
+
+      Detected behaviours: #{inspect(behaviours)}
+      Exported functions: #{exported}
+
+      Make sure your repo uses AshScylla.Repo:
+
+          defmodule #{inspect(repo)} do
+            use AshScylla.Repo,
+              otp_app: :#{app}
+          end
+
+      And configure it in config/config.exs:
+
+          config :#{app}, #{inspect(repo)},
+            nodes: ["127.0.0.1:9042"],
+            keyspace: "#{app}_dev"
+
+      Or generate it with:
+          mix ash_scylla.gen.repo --repo #{inspect(repo)}
+      """)
+    end
+  rescue
+    _error in [UndefinedFunctionError] ->
+      app = AshScylla.MixHelpers.app_name()
+
+      Mix.raise("""
+      Repo module #{inspect(repo)} is not available.
+
+      To fix this, create a repo module that uses AshScylla.Repo:
+
+          defmodule #{inspect(repo)} do
+            use AshScylla.Repo,
+              otp_app: :#{app}
+          end
+
+      And configure it in config/config.exs:
+
+          config :#{app}, #{inspect(repo)},
+            nodes: ["127.0.0.1:9042"],
+            keyspace: "#{app}_dev"
+
+      Or generate it with:
+          mix ash_scylla.gen.repo --repo #{inspect(repo)}
+      """)
+  end
+
+  # Tries multiple strategies to make the repo module available.
+  # In umbrella projects, child app .beam files may not be on the code path
+  # when a dependency's mix task runs.
+  defp ensure_repo_available(repo) do
+    # Strategy 1: Module already loaded in the VM
+    case Code.ensure_loaded(repo) do
+      {:module, _} -> return_repo(repo)
+      {:error, _} -> :ok
+    end
+
+    # Strategy 2: Standard code path search
+    case Code.ensure_compiled(repo) do
+      {:module, _} -> return_repo(repo)
+      {:error, _} -> :ok
+    end
+
+    # Strategy 3: In umbrella projects, manually add child app ebin dirs
+    add_child_app_paths()
+
+    case Code.ensure_compiled(repo) do
+      {:module, _} -> return_repo(repo)
+      {:error, _} -> :ok
+    end
+
+    # Strategy 4: Try loading from all known lib paths
+    load_from_lib_paths(repo)
+
+    case Code.ensure_compiled(repo) do
+      {:module, _} -> return_repo(repo)
+      {:error, :nofile} ->
+        app = AshScylla.MixHelpers.app_name()
+
+        Mix.raise("""
+        Repo module #{inspect(repo)} does not exist.
+
+        Generate it with:
+            mix ash_scylla.gen.repo --repo #{inspect(repo)}
+
+        Or create it manually at lib/#{Macro.underscore(inspect(repo))}.ex:
+
+            defmodule #{inspect(repo)} do
+              @moduledoc "AshScylla Repo for #{app}."
+
+              use AshScylla.Repo,
+                otp_app: :#{app}
+            end
+
+        Then add to config/config.exs:
+            config :#{app}, #{inspect(repo)},
+              nodes: ["127.0.0.1:9042"],
+              keyspace: "#{app}_dev"
+        """)
+
+      {:error, reason} ->
+        Mix.raise("""
+        Repo module #{inspect(repo)} could not be loaded: #{inspect(reason)}.
+
+        Make sure the module is compiled and on the code path.
+        """)
+    end
+  end
+
+  defp return_repo(repo), do: repo
+
+  # In umbrella projects, add child app ebin directories to the code path.
+  defp add_child_app_paths do
+    build_path = Mix.Project.build_path() |> Path.expand()
+
+    paths =
+      case Mix.Project.apps_paths() do
+        nil -> []
+        apps_paths ->
+          apps_paths
+          |> Map.keys()
+          |> Enum.map(fn app -> Path.join(build_path, "lib/#{app}/ebin") end)
+      end
+
+    # Also try the default _build location
+    default_ebin = Path.join(build_path, "lib/ebin")
+    paths = if File.dir?(default_ebin), do: [default_ebin | paths], else: paths
+
+    paths
+    |> Enum.filter(&File.dir?/1)
+    |> Enum.each(fn ebin ->
+      :code.add_pathsa([ebin])
+    end)
+  end
+
+  # Last resort: try to find and compile the .ex file directly.
+  # In umbrella projects, child apps may be in apps/<app>/lib/ or <app>/lib/.
+  defp load_from_lib_paths(repo) do
+    # Convert module name to file path: StorageService.Repo -> storage_service/repo
+    segments = Module.split(repo)
+    file_name = segments |> List.last() |> Macro.underscore()
+    dir_path = segments |> Enum.drop(-1) |> Enum.join("/") |> Macro.underscore()
+    module_path = Path.join(dir_path, file_name)
+
+    # Build search paths: project lib dirs + umbrella child app lib dirs
+    project_paths = AshScylla.MixHelpers.project_lib_paths()
+
+    child_paths =
+      case Mix.Project.apps_paths() do
+        nil -> []
+        apps_paths ->
+          apps_paths
+          |> Map.values()
+          |> Enum.map(fn path -> Path.join(path, "lib") end)
+      end
+
+    all_paths = project_paths ++ child_paths
+
+    found =
+      Enum.find_value(all_paths, fn lib_path ->
+        ex_file = Path.join(lib_path, "#{module_path}.ex")
+        if File.exists?(ex_file) do
+          Mix.shell().info("  Loading repo from: #{ex_file}")
+          Code.compile_file(ex_file)
+          true
+        else
+          false
+        end
+      end)
+
+    if found do
+      :ok
+    else
+      Mix.shell().info("  Searched paths: #{inspect(all_paths)}")
+      Mix.shell().info("  Module path: #{module_path}")
     end
   end
 
@@ -270,10 +469,20 @@ defmodule Mix.Tasks.AshScylla.Migrate do
       Mix.shell().info("No resources found to migrate.")
       {0, 0}
     else
+      # Start the repo connection so resources can query live schema
+      {:ok, _} = AshScylla.Connection.start_link(
+        name: repo,
+        nodes: repo.nodes(),
+        keyspace: repo.keyspace(),
+        connect_timeout: 10_000
+      )
+
       results =
         Enum.map(resources, fn resource ->
           migrate_resource(resource, repo, dry_run)
         end)
+
+      AshScylla.Connection.stop(repo)
 
       count = Enum.count(results, &(&1 == :ok))
       errors = Enum.count(results, &(&1 == :error))

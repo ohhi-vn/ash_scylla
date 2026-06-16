@@ -86,7 +86,14 @@ children = [
 **4. Generate a Resource Template:**
 
 ```bash
+# Simple resource
 mix ash_scylla.new_template User name:string, email:string
+
+# Resource with domain (auto-prefixes module name)
+mix ash_scylla.new_template User name:string --domain MyApp.Domain
+
+# Resource with fully-qualified module name
+mix ash_scylla.new_template User name:string --resource MyApp.Domain.User
 ```
 
 This creates `lib/my_app/resources/user.ex` with a starter template. Or define it manually:
@@ -469,7 +476,8 @@ children = [
 
 For detailed documentation, see:
 
-- **[Usage Guide](guides/USAGE_GUIDE.md)** - Comprehensive guide with examples
+- **[Usage Guide](guides/USAGE_GUIDE.md)** - Comprehensive guide with examples (resource generation, domain flags, CRUD, querying, migrations)
+- **[Changelog](guides/CHANGELOG.md)** - Version history and release notes
 - **[Development Guide](guides/DEV_GUIDE.md)** - Dev container setup and development workflow
 - **[Production Guide](guides/PRODUCTION_GUIDE.md)** - Multi-node cluster deployment and operations
 - **[Implementation Summary](guides/IMPLEMENTATION_SUMMARY.md)** - Technical details
