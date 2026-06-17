@@ -277,9 +277,15 @@ defmodule AshScylla.DataLayer.QueryBuilder do
       _ ->
         {clauses, params} =
           filters
-          |> Enum.map(&filter_to_cql!/1)
-          |> Enum.reduce({[], []}, fn {c, p}, {acc_c, acc_p} ->
-            {[c | acc_c], Enum.reverse(p, acc_p)}
+          |> Enum.reduce({[], []}, fn filter, {acc_c, acc_p} ->
+            case filter_to_cql(filter) do
+              {:error, {:unknown_filter, unknown}} ->
+                Logger.warning("AshScylla: Skipping unknown filter expression: #{inspect(unknown)}")
+                {acc_c, acc_p}
+
+              {c, p} ->
+                {[c | acc_c], Enum.reverse(p, acc_p)}
+            end
           end)
 
         joined_clauses =

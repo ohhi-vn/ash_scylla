@@ -118,7 +118,15 @@ defmodule AshScylla.Connection do
   def query(conn_or_name, query, params, opts \\ [])
 
   def query(%__MODULE__{conn: conn}, query, params, opts) do
-    Xandra.execute(conn, query, typed_params(params), opts)
+    case Keyword.pop(opts, :keyspace) do
+      {nil, opts} ->
+        Xandra.execute(conn, query, typed_params(params), opts)
+
+      {keyspace, opts} ->
+        with {:ok, _} <- Xandra.execute(conn, "USE #{keyspace}", []) do
+          Xandra.execute(conn, query, typed_params(params), opts)
+        end
+    end
   end
 
   def query(name, query, params, opts) when is_atom(name) do
@@ -126,9 +134,19 @@ defmodule AshScylla.Connection do
       nil ->
         {:error, :not_connected}
 
-      conn ->
-        ensure_keyspace!(conn, name)
-        query(conn, query, params, opts)
+      %__MODULE__{} = conn ->
+        # Set keyspace from opts if provided and different from current
+        request_keyspace = Keyword.get(opts, :keyspace)
+
+        if request_keyspace && request_keyspace != conn.keyspace do
+          GenServer.call(name, {:set_keyspace, request_keyspace}, 5_000)
+          opts = Keyword.delete(opts, :keyspace)
+          query(%__MODULE__{conn | keyspace: request_keyspace, keyspace_used: true}, query, params, opts)
+        else
+          ensure_keyspace!(conn, name)
+          opts = Keyword.delete(opts, :keyspace)
+          query(conn, query, params, opts)
+        end
     end
   end
 
@@ -168,7 +186,15 @@ defmodule AshScylla.Connection do
   def query!(conn_or_name, query, params, opts \\ [])
 
   def query!(%__MODULE__{conn: conn}, query, params, opts) do
-    Xandra.execute!(conn, query, typed_params(params), opts)
+    case Keyword.pop(opts, :keyspace) do
+      {nil, opts} ->
+        Xandra.execute!(conn, query, typed_params(params), opts)
+
+      {keyspace, opts} ->
+        with {:ok, _} <- Xandra.execute(conn, "USE #{keyspace}", []) do
+          Xandra.execute!(conn, query, typed_params(params), opts)
+        end
+    end
   end
 
   def query!(name, query, params, opts) when is_atom(name) do
@@ -176,9 +202,18 @@ defmodule AshScylla.Connection do
       nil ->
         raise "No AshScylla connection found for #{inspect(name)}"
 
-      conn ->
-        ensure_keyspace!(conn, name)
-        query!(conn, query, params, opts)
+      %__MODULE__{} = conn ->
+        request_keyspace = Keyword.get(opts, :keyspace)
+
+        if request_keyspace && request_keyspace != conn.keyspace do
+          GenServer.call(name, {:set_keyspace, request_keyspace}, 5_000)
+          opts = Keyword.delete(opts, :keyspace)
+          query!(%__MODULE__{conn | keyspace: request_keyspace, keyspace_used: true}, query, params, opts)
+        else
+          ensure_keyspace!(conn, name)
+          opts = Keyword.delete(opts, :keyspace)
+          query!(conn, query, params, opts)
+        end
     end
   end
 

@@ -745,14 +745,11 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
   describe "can?/2 - unsupported features return false" do
     test "returns false for every unsupported feature" do
       unsupported = [
-        :transact,
         :aggregate,
         :join,
         :lateral_join,
         :lock,
-        :calculate,
         :combine,
-        :sort,
         :offset,
         :expression_calculation
       ]
@@ -790,6 +787,156 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
       assert DataLayer.can?(nil, {:unknown, :value}) == false
       assert DataLayer.can?(nil, {:calculate, :foo}) == false
       assert DataLayer.can?(nil, {:combine, :bar}) == false
+    end
+  end
+
+  # ===========================================================================
+  # 15. to_ash_record — Xandra column tuple mapping
+  # ===========================================================================
+
+  defmodule ColumnTupleRepo do
+    @moduledoc """
+    Fake repo that returns Xandra.Page structs with real column tuples
+    (4-tuples of {keyspace, table, name, type}) as ScyllaDB actually returns.
+    This exercises the to_ash_record clause that maps positional row values
+    to attribute maps using column metadata.
+    """
+
+    @column_tuples [
+      {"test_ks", "column_tuple_items", "id", :uuid},
+      {"test_ks", "column_tuple_items", "name", :text},
+      {"test_ks", "column_tuple_items", "status", :text},
+      {"test_ks", "column_tuple_items", "age", :int}
+    ]
+
+    @row_values ["abc-123", "Test Record", "active", 42]
+
+    def query(query, params, opts \\ []) do
+      send(self(), {:column_tuple_query, query, params, opts})
+
+      cond do
+        String.contains?(query, "INSERT INTO") ->
+          {:ok, %Xandra.Page{content: []}}
+
+        String.contains?(query, "SELECT") ->
+          # Return rows as lists (positional values) with columns as 4-tuples
+          # matching Xandra's real format: {keyspace, table, column_name, type}
+          {:ok, %Xandra.Page{content: [@row_values], columns: @column_tuples}}
+
+        true ->
+          {:ok, %Xandra.Page{content: [], columns: []}}
+      end
+    end
+  end
+
+  defmodule ColumnTupleResource do
+    @moduledoc false
+
+    use Ash.Resource,
+      domain: nil,
+      data_layer: AshScylla.DataLayer
+
+    import AshScylla.DataLayer.Dsl
+
+    ash_scylla do
+      repo(ColumnTupleRepo)
+      table("column_tuple_items")
+      keyspace("test_ks")
+      consistency(:one)
+    end
+
+    attributes do
+      uuid_primary_key(:id)
+      attribute(:name, :string)
+      attribute(:status, :string)
+      attribute(:age, :integer)
+    end
+
+    actions do
+      defaults([:create, :read, :update, :destroy])
+    end
+  end
+
+  describe "to_ash_record — Xandra column tuple mapping" do
+    test "create/2 maps positional row values to struct attributes via column tuples" do
+      attrs = %{
+        id: "abc-123",
+        name: "Test Record",
+        status: "active",
+        age: 42
+      }
+
+      changeset = %Ash.Changeset{attributes: attrs}
+      assert {:ok, record} = DataLayer.create(ColumnTupleResource, changeset)
+
+      # These would all be nil before the fix because the column 4-tuple
+      # was used as the map key instead of extracting the column name
+      assert record.id == "abc-123"
+      assert record.name == "Test Record"
+      assert record.status == "active"
+      assert record.age == 42
+    end
+
+    test "run_query/2 maps column-tuple rows to struct attributes" do
+      query = %DataLayer{
+        resource: ColumnTupleResource,
+        repo: ColumnTupleRepo,
+        table: "column_tuple_items",
+        filters: [],
+        sorts: [],
+        limit: nil,
+        offset: nil,
+        select: nil,
+        distinct: nil,
+        tenant: nil,
+        context: %{},
+        atomic: nil,
+        upsert?: false,
+        upsert_fields: [],
+        upsert_identity: nil,
+        keyset: nil,
+        aggregates: [],
+        group_by: nil
+      }
+
+      assert {:ok, records} = DataLayer.run_query(query, ColumnTupleResource)
+      assert length(records) == 1
+
+      [record] = records
+      assert record.id == "abc-123"
+      assert record.name == "Test Record"
+      assert record.status == "active"
+      assert record.age == 42
+    end
+
+    test "run_query/2 with select maps only requested columns" do
+      query = %DataLayer{
+        resource: ColumnTupleResource,
+        repo: ColumnTupleRepo,
+        table: "column_tuple_items",
+        filters: [],
+        sorts: [],
+        limit: nil,
+        offset: nil,
+        select: [:name, :age],
+        distinct: nil,
+        tenant: nil,
+        context: %{},
+        atomic: nil,
+        upsert?: false,
+        upsert_fields: [],
+        upsert_identity: nil,
+        keyset: nil,
+        aggregates: [],
+        group_by: nil
+      }
+
+      assert {:ok, records} = DataLayer.run_query(query, ColumnTupleResource)
+      assert length(records) == 1
+
+      [record] = records
+      assert record.name == "Test Record"
+      assert record.age == 42
     end
   end
 end

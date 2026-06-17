@@ -93,19 +93,19 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
   describe "set_tenant/3" do
     test "sets the tenant on the data layer query" do
       query = base_query()
-      {:ok, updated} = DataLayer.set_tenant(query, "tenant_1", nil)
+      {:ok, updated} = DataLayer.set_tenant(nil, query, "tenant_1")
       assert updated.tenant == "tenant_1"
     end
 
     test "overwrites a previously set tenant" do
       query = %{base_query() | tenant: "old_tenant"}
-      {:ok, updated} = DataLayer.set_tenant(query, "new_tenant", nil)
+      {:ok, updated} = DataLayer.set_tenant(nil, query, "new_tenant")
       assert updated.tenant == "new_tenant"
     end
 
     test "other fields are preserved" do
       query = %{base_query() | limit: 10, filters: [:some_filter]}
-      {:ok, updated} = DataLayer.set_tenant(query, "t1", nil)
+      {:ok, updated} = DataLayer.set_tenant(nil, query, "t1")
       assert updated.limit == 10
       assert updated.filters == [:some_filter]
       assert updated.tenant == "t1"
@@ -113,7 +113,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
 
     test "returns {:ok, updated_query} tuple" do
       query = base_query()
-      result = DataLayer.set_tenant(query, "t1", nil)
+      result = DataLayer.set_tenant(nil, query, "t1")
       assert match?({:ok, %DataLayer{}}, result)
     end
   end
@@ -125,31 +125,31 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
   describe "set_context/3" do
     test "sets context on a fresh query" do
       query = base_query()
-      {:ok, updated} = DataLayer.set_context(query, %{foo: "bar"}, nil)
+      {:ok, updated} = DataLayer.set_context(nil, query, %{foo: "bar"})
       assert updated.context == %{foo: "bar"}
     end
 
     test "merges with existing context" do
       query = %{base_query() | context: %{existing: "value"}}
-      {:ok, updated} = DataLayer.set_context(query, %{new: "data"}, nil)
+      {:ok, updated} = DataLayer.set_context(nil, query, %{new: "data"})
       assert updated.context == %{existing: "value", new: "data"}
     end
 
     test "new values override existing keys" do
       query = %{base_query() | context: %{key: "old"}}
-      {:ok, updated} = DataLayer.set_context(query, %{key: "new"}, nil)
+      {:ok, updated} = DataLayer.set_context(nil, query, %{key: "new"})
       assert updated.context == %{key: "new"}
     end
 
     test "handles nil existing context" do
       query = %{base_query() | context: nil}
-      {:ok, updated} = DataLayer.set_context(query, %{key: "val"}, nil)
+      {:ok, updated} = DataLayer.set_context(nil, query, %{key: "val"})
       assert updated.context == %{key: "val"}
     end
 
     test "preserves other query fields" do
       query = %{base_query() | limit: 5, tenant: "t1"}
-      {:ok, updated} = DataLayer.set_context(query, %{a: 1}, nil)
+      {:ok, updated} = DataLayer.set_context(nil, query, %{a: 1})
       assert updated.limit == 5
       assert updated.tenant == "t1"
     end
@@ -588,7 +588,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
     end
 
     test "returns false for :sort (not in supported features)" do
-      assert DataLayer.can?(nil, :sort) == false
+      assert DataLayer.can?(nil, :sort) == true
     end
 
     test "returns false for :offset (not in supported features)" do
@@ -655,6 +655,86 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
       assert dl.upsert_fields == []
       assert dl.upsert_identity == nil
       assert dl.keyset == nil
+    end
+  end
+end
+
+# ---------------------------------------------------------------------------
+# return_query/2 — additional tests in separate module to avoid conflicts
+# ---------------------------------------------------------------------------
+
+defmodule AshScylla.DataLayer.ReturnQueryTest do
+  @moduledoc """
+  Tests for AshScylla.DataLayer.return_query/2 callback.
+  Covers the fix for the Ash.Error.Framework issue where return_query/2
+  was returning a plain string instead of {:ok, data_layer_query()} tuple.
+  """
+
+  use ExUnit.Case, async: true
+
+  alias AshScylla.DataLayer
+
+  defp base_query do
+    %DataLayer{
+      resource: AshScylla.TestResource,
+      repo: AshScylla.TestRepo,
+      table: "test_resource",
+      filters: [],
+      sorts: [],
+      limit: nil,
+      offset: nil,
+      select: nil,
+      tenant: nil,
+      context: %{}
+    }
+  end
+
+  describe "return_query/2" do
+    test "returns {:ok, data_layer_query} tuple" do
+      query = base_query()
+      assert {:ok, result} = DataLayer.return_query(query, AshScylla.TestResource)
+      assert %DataLayer{} = result
+    end
+
+    test "returns the same query struct" do
+      query = base_query()
+      {:ok, result} = DataLayer.return_query(query, AshScylla.TestResource)
+      assert result.resource == AshScylla.TestResource
+      assert result.table == "test_resource"
+    end
+
+    test "preserves all query fields" do
+      query = %{
+        base_query()
+        | filters: [%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}],
+          limit: 10,
+          tenant: "org_123"
+      }
+
+      {:ok, result} = DataLayer.return_query(query, AshScylla.TestResource)
+      assert result.filters == query.filters
+      assert result.limit == 10
+      assert result.tenant == "org_123"
+    end
+
+    test "returns {:ok, _} even with empty filters" do
+      query = base_query()
+      assert {:ok, %DataLayer{}} = DataLayer.return_query(query, AshScylla.TestResource)
+    end
+
+    test "does not return a plain string" do
+      query = base_query()
+      result = DataLayer.return_query(query, AshScylla.TestResource)
+      refute is_binary(result)
+      assert is_tuple(result)
+      assert elem(result, 0) == :ok
+    end
+
+    test "does not return the query wrapped in a string" do
+      query = base_query()
+      {:ok, result} = DataLayer.return_query(query, AshScylla.TestResource)
+      refute is_binary(result)
+      assert %DataLayer{} = result
     end
   end
 end

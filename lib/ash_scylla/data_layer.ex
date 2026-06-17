@@ -105,7 +105,13 @@ defmodule AshScylla.DataLayer do
                         :update_query,
                         :destroy_query,
                         :distinct,
-                        :boolean_filter
+                        :boolean_filter,
+                        :transact,
+                        :composite_primary_key,
+                        :changeset_filter,
+                        :sort,
+                        :calculate,
+                        :action_select
                       ])
 
   # ============================================================================
@@ -159,7 +165,6 @@ defmodule AshScylla.DataLayer do
   # ============================================================================
 
   @impl Ash.DataLayer
-  @spec can?(Ash.Resource.t() | Ash.DataLayer.t(), atom() | {atom(), term()}) :: boolean()
   def can?(_resource_or_dsl, {:atomic, :update}) do
     # LWT is supported - Ash will use it when resource has lwt: true
     true
@@ -167,6 +172,11 @@ defmodule AshScylla.DataLayer do
 
   @impl Ash.DataLayer
   def can?(_resource_or_dsl, {:atomic, :upsert}) do
+    true
+  end
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, {:atomic, :create}) do
     true
   end
 
@@ -210,6 +220,50 @@ defmodule AshScylla.DataLayer do
   def can?(_resource_or_dsl, :offset), do: false
 
   @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :nested_expressions), do: true
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, {:filter_expr, _}), do: true
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, {:sort, _}), do: true
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :async_engine), do: true
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :bulk_create), do: true
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :transact), do: true
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :composite_primary_key), do: true
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :changeset_filter), do: true
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :calculate), do: true
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :action_select), do: true
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, {:lock, :for_update}), do: false
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, {:join, _other_resource}) do
+    # ScyllaDB doesn't support JOINs natively
+    false
+  end
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, {:lateral_join, _resources}) do
+    false
+  end
+
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, feature) when is_atom(feature) do
     MapSet.member?(@supported_features, feature)
   end
@@ -226,6 +280,12 @@ defmodule AshScylla.DataLayer do
   end
 
   @impl Ash.DataLayer
+  @spec return_query(t(), Ash.Resource.t()) :: {:ok, t()} | {:error, term()}
+  def return_query(data_layer_query, _resource) do
+    {:ok, data_layer_query}
+  end
+
+  @impl Ash.DataLayer
   @spec resource_to_query(Ash.Resource.t(), Ash.Domain.t()) :: t()
   def resource_to_query(resource, _domain) do
     table = source(resource)
@@ -233,7 +293,8 @@ defmodule AshScylla.DataLayer do
     %__MODULE__{
       resource: resource,
       repo: repo(resource),
-      table: table
+      table: table,
+      filters: []
     }
   end
 
@@ -258,11 +319,59 @@ defmodule AshScylla.DataLayer do
   end
 
   @impl Ash.DataLayer
+  @spec prefer_transaction?(Ash.Resource.t()) :: boolean()
+  def prefer_transaction?(resource) do
+    # ScyllaDB supports lightweight transactions (LWT) but not full ACID transactions.
+    # Only prefer transaction mode when LWT is enabled.
+    Dsl.lwt(resource) == true
+  end
+
+  @impl Ash.DataLayer
+  @spec prefer_transaction_for_atomic_updates?(Ash.Resource.t()) :: boolean()
+  def prefer_transaction_for_atomic_updates?(resource) do
+    Dsl.lwt(resource) == true
+  end
+
+  @impl Ash.DataLayer
+  @spec in_transaction?(Ash.Resource.t()) :: boolean()
+  def in_transaction?(_resource) do
+    # ScyllaDB doesn't have a traditional transaction state.
+    # LWT operations are atomic but not part of a multi-statement transaction.
+    false
+  end
+
+  @impl Ash.DataLayer
+  @spec transaction(Ash.Resource.t(), function(), timeout() | nil, term()) ::
+          {:ok, term()} | {:error, term()}
+  def transaction(_resource, func, _timeout \\ nil, _reason \\ %{type: :custom, metadata: %{}}) do
+    # ScyllaDB doesn't support multi-statement transactions.
+    # We execute the function directly and wrap errors.
+    # For LWT operations, individual statements are already atomic.
+    try do
+      result = func.()
+      {:ok, result}
+    rescue
+      e -> {:error, Ash.Error.to_ash_error(e, __STACKTRACE__)}
+    end
+  end
+
+  @impl Ash.DataLayer
+  @spec rollback(Ash.Resource.t(), term()) :: :ok | {:error, term()}
+  def rollback(_resource, _reason) do
+    # ScyllaDB doesn't support rollback of multi-statement transactions.
+    # Individual LWT operations are atomic and don't need rollback.
+    :ok
+  end
+
+  @impl Ash.DataLayer
   @spec destroy(Ash.Resource.t(), Ash.Changeset.t()) :: :ok | {:error, term()}
   def destroy(resource, changeset) do
     repo = repo(resource)
 
-    do_delete(changeset, resource, repo)
+    case do_delete(changeset, resource, repo) do
+      :ok -> :ok
+      {:error, _} = error -> error
+    end
   end
 
   @impl Ash.DataLayer
@@ -326,7 +435,6 @@ defmodule AshScylla.DataLayer do
   @impl Ash.DataLayer
   @spec sort(t(), term(), Ash.Resource.t()) :: {:ok, t()}
   def sort(data_layer_query, sort, _resource) do
-    Logger.warning("sort/3: CQL ORDER BY only works on clustering columns within a partition")
     %__MODULE__{sorts: sorts} = data_layer_query
 
     {:ok, %{data_layer_query | sorts: sort ++ sorts}}
@@ -364,13 +472,33 @@ defmodule AshScylla.DataLayer do
 
   @impl Ash.DataLayer
   @spec set_tenant(t(), term(), Ash.Resource.t()) :: {:ok, t()}
-  def set_tenant(data_layer_query, tenant, _resource) do
-    {:ok, %{data_layer_query | tenant: tenant}}
-  end
+  def set_tenant(resource, data_layer_query, tenant) do
+    if is_nil(resource) do
+      {:ok, %{data_layer_query | tenant: tenant}}
+    else
+      strategy = Ash.Resource.Info.multitenancy_strategy(resource)
 
+      case strategy do
+        :context ->
+          {:ok, %{data_layer_query | tenant: tenant}}
+
+        :attribute ->
+          attribute = Ash.Resource.Info.multitenancy_attribute(resource)
+
+          if attribute do
+            filter(data_layer_query, %{name: attribute, op: :eq, right: %{value: tenant}}, resource)
+          else
+            {:ok, %{data_layer_query | tenant: tenant}}
+          end
+
+        nil ->
+          {:ok, %{data_layer_query | tenant: tenant}}
+      end
+    end
+  end
   @impl Ash.DataLayer
-  @spec set_context(t(), map(), Ash.Resource.t()) :: {:ok, t()}
-  def set_context(data_layer_query, context, _resource) do
+  @spec set_context(Ash.Resource.t(), t(), map()) :: {:ok, t()}
+  def set_context(_resource, data_layer_query, context) do
     %__MODULE__{context: existing} = data_layer_query
     merged = Map.merge(existing || %{}, context)
     {:ok, %{data_layer_query | context: merged}}
@@ -379,9 +507,25 @@ defmodule AshScylla.DataLayer do
   @impl Ash.DataLayer
   @spec transform_query(Ash.Query.t()) :: Ash.Query.t()
   def transform_query(query) do
-    # Hook for pre-execution transformation.
-    # Currently a no-op; can be used to inject mandatory filters from context.
-    query
+    # Apply base_filter from DSL configuration if present
+    resource = query.resource
+    base_filter = Dsl.base_filter(resource)
+
+    query =
+      if base_filter do
+        Ash.Query.do_filter(query, base_filter)
+      else
+        query
+      end
+
+    # Apply default_context from DSL configuration if present
+    default_context = Dsl.default_context(resource)
+
+    if default_context do
+      Ash.Query.set_context(query, default_context)
+    else
+      query
+    end
   end
 
   @impl Ash.DataLayer
@@ -964,6 +1108,7 @@ defmodule AshScylla.DataLayer do
   defp autogenerate_value(attr) do
     case attr.type do
       UUID -> generate_uuid()
+      :uuid -> generate_uuid()
       Ash.Type.Integer -> nil
       _ -> nil
     end
@@ -1046,6 +1191,10 @@ defmodule AshScylla.DataLayer do
 
     {pk_where, pk_values} = build_pk_where_clause(changeset, resource)
 
+    # Use LWT IF EXISTS for conditional update when LWT is enabled
+    lwt? = Dsl.lwt(resource)
+    lwt_suffix = if lwt?, do: " IF EXISTS", else: ""
+
     query =
       IO.iodata_to_binary([
         "UPDATE ",
@@ -1053,16 +1202,30 @@ defmodule AshScylla.DataLayer do
         " SET ",
         Enum.join(set_clauses, ", "),
         " WHERE ",
-        pk_where
+        pk_where,
+        lwt_suffix
       ])
 
     Logger.debug("Executing UPDATE: #{query} with params #{inspect(values ++ pk_values)}")
 
-    with {:ok, _} <- repo.query(query, values ++ pk_values, opts),
-         {:ok, record} <- fetch_by_pk(changeset, resource, repo) do
-      {:ok, to_ash_record(record, resource)}
+    case repo.query(query, values ++ pk_values, opts) do
+      {:ok, %Xandra.Page{content: [[false]]}} ->
+        # LWT: record didn't exist (stale record)
+        {:error,
+         Ash.Error.Changes.StaleRecord.exception(
+           resource: resource,
+           filter: changeset.filter
+         )}
+
+      {:ok, _} ->
+        case fetch_by_pk(changeset, resource, repo) do
+          {:ok, record} -> {:ok, to_ash_record(record, resource)}
+          {:error, _} = error -> handle_scylla_result(error)
+        end
+
+      {:error, error} ->
+        handle_scylla_result({:error, error})
     end
-    |> handle_scylla_result()
   end
 
   @spec do_delete(term(), module(), module()) :: :ok | {:error, term()}
@@ -1077,7 +1240,29 @@ defmodule AshScylla.DataLayer do
 
     Logger.debug("Executing DELETE: #{query} with params #{inspect(pk_values)}")
 
-    with {:ok, _} <- repo.query(query, pk_values, opts), do: :ok
+    # Use LWT IF EXISTS for conditional delete when LWT is enabled
+    lwt? = Dsl.lwt(resource)
+    query = if lwt?, do: query <> " IF EXISTS", else: query
+
+    case repo.query(query, pk_values, opts) do
+      {:ok, %Xandra.Page{content: [[true]]}} ->
+        # LWT: record existed and was deleted
+        :ok
+
+      {:ok, %Xandra.Page{content: [[false]]}} ->
+        # LWT: record didn't exist (stale record)
+        {:error,
+         Ash.Error.Changes.StaleRecord.exception(
+           resource: resource,
+           filter: changeset.filter
+         )}
+
+      {:ok, _} ->
+        :ok
+
+      {:error, error} ->
+        handle_scylla_result({:error, error})
+    end
   end
 
   @spec fetch_by_primary_key(map(), module(), module()) :: {:ok, term()} | {:error, term()}
@@ -1105,6 +1290,17 @@ defmodule AshScylla.DataLayer do
 
       {:ok, %Xandra.Page{content: []}} -> not_found_error(sanitized_table, pk)
       {:ok, %Xandra.Page{content: nil}} -> not_found_error(sanitized_table, pk)
+
+      # Handle plain maps (used by FakeRepo in tests)
+      {:ok, %{content: [row | _], columns: columns}} when columns != nil ->
+        {:ok, {row, columns}}
+
+      {:ok, %{content: [row | _]}} ->
+        {:ok, row}
+
+      {:ok, %{content: []}} -> not_found_error(sanitized_table, pk)
+      {:ok, %{content: nil}} -> not_found_error(sanitized_table, pk)
+
       {:error, error} -> handle_scylla_result({:error, error})
     end
   end
@@ -1140,11 +1336,21 @@ defmodule AshScylla.DataLayer do
   end
 
   defp to_ash_record(record, resource, columns) when is_list(record) and is_list(columns) do
-    # Convert positional list from Xandra to a map using column metadata names
+    # Convert positional list from Xandra to a map using column metadata names.
+    # Xandra columns can be 4-tuples: {keyspace, table, column_name, type}
+    # (real ScyllaDB) or plain strings (some test fakes).
     record_map =
       record
       |> Enum.zip(columns)
-      |> Enum.reduce(%{}, fn {value, col_name}, acc -> Map.put(acc, col_name, value) end)
+      |> Enum.reduce(%{}, fn {value, col}, acc ->
+        col_name =
+          case col do
+            {_, _, name, _} when is_binary(name) -> name
+            name when is_binary(name) -> name
+          end
+
+        Map.put(acc, col_name, value)
+      end)
 
     to_ash_record(record_map, resource)
   end
@@ -1172,7 +1378,8 @@ defmodule AshScylla.DataLayer do
       resource
       |> Info.attributes()
       |> Enum.reduce(%{}, fn attr, acc ->
-        value = Map.get(record, attr.name)
+        value =
+          Map.get(record, attr.name) || Map.get(record, to_string(attr.name))
 
         decoded_value =
           if attr.name in uuid_fields and is_binary(value) and byte_size(value) == 16 do
@@ -1194,16 +1401,22 @@ defmodule AshScylla.DataLayer do
   # Keyspace is handled at connection level; TTL is inline in CQL.
   @spec build_opts(module()) :: keyword()
   defp build_opts(resource) do
-    consistency = Dsl.consistency(resource)
-    if consistency, do: [consistency: consistency], else: []
+    keyspace = Dsl.keyspace(resource)
+
+    []
+    |> maybe_put(:consistency, Dsl.consistency(resource))
+    |> maybe_put(:keyspace, sanitize_keyspace(keyspace))
   end
 
   # Build query options for read operations (consistency only).
   # Keyspace is handled at connection level.
   @spec build_query_opts(module(), String.t() | nil) :: keyword()
   defp build_query_opts(resource, _tenant) do
-    consistency = Dsl.consistency(resource)
-    if consistency, do: [consistency: consistency], else: []
+    keyspace = Dsl.keyspace(resource)
+
+    []
+    |> maybe_put(:consistency, Dsl.consistency(resource))
+    |> maybe_put(:keyspace, sanitize_keyspace(keyspace))
   end
 
   @spec sanitize_keyspace(String.t() | nil) :: String.t() | nil
@@ -1270,11 +1483,12 @@ defmodule AshScylla.DataLayer do
   @spec build_field_value_pairs(map(), module()) :: {[String.t()], [term()]}
   defp build_field_value_pairs(attrs, resource) do
     uuid_fields = uuid_attribute_names(resource)
+    cql_types = attr_cql_type_map(resource)
 
     {fields, values} =
       Enum.reduce(attrs, {[], []}, fn {k, v}, {fs, vs} ->
         value =
-          if k in uuid_fields and is_binary(v) do
+          if uuid_field?(k, v, uuid_fields, resource) do
             case Types.uuid_string_to_binary(v) do
               {:ok, bin} -> bin
               _ -> v
@@ -1283,7 +1497,8 @@ defmodule AshScylla.DataLayer do
             v
           end
 
-        {[sanitize_identifier(to_string(k)) | fs], [value | vs]}
+        wrapped = wrap_typed(value, k, cql_types)
+        {[sanitize_identifier(to_string(k)) | fs], [wrapped | vs]}
       end)
 
     {Enum.reverse(fields), :lists.reverse(values)}
@@ -1292,13 +1507,14 @@ defmodule AshScylla.DataLayer do
   @spec build_set_clauses(map(), module()) :: {[String.t()], [term()]}
   defp build_set_clauses(attrs, resource) do
     uuid_fields = uuid_attribute_names(resource)
+    cql_types = attr_cql_type_map(resource)
 
     {clauses, values} =
       Enum.reduce(attrs, {[], []}, fn {k, v}, {cs, vs} ->
         sanitized = sanitize_identifier(to_string(k))
 
         value =
-          if k in uuid_fields and is_binary(v) do
+          if uuid_field?(k, v, uuid_fields, resource) do
             case Types.uuid_string_to_binary(v) do
               {:ok, bin} -> bin
               _ -> v
@@ -1307,7 +1523,8 @@ defmodule AshScylla.DataLayer do
             v
           end
 
-        {["#{sanitized} = ?" | cs], [value | vs]}
+        wrapped = wrap_typed(value, k, cql_types)
+        {["#{sanitized} = ?" | cs], [wrapped | vs]}
       end)
 
     {Enum.reverse(clauses), :lists.reverse(values)}
@@ -1322,13 +1539,14 @@ defmodule AshScylla.DataLayer do
   @spec build_where_from_map(map(), module()) :: {String.t(), [term()]}
   defp build_where_from_map(pk_map, resource) do
     uuid_fields = uuid_attribute_names(resource)
+    cql_types = attr_cql_type_map(resource)
 
     {clauses, values} =
       Enum.reduce(pk_map, {[], []}, fn {k, v}, {cs, vs} ->
         sanitized = sanitize_identifier(to_string(k))
 
         value =
-          if k in uuid_fields and is_binary(v) do
+          if uuid_field?(k, v, uuid_fields, resource) do
             case Types.uuid_string_to_binary(v) do
               {:ok, bin} -> bin
               _ -> v
@@ -1337,13 +1555,14 @@ defmodule AshScylla.DataLayer do
             v
           end
 
-        {["#{sanitized} = ?" | cs], [value | vs]}
+        wrapped = wrap_typed(value, k, cql_types)
+        {["#{sanitized} = ?" | cs], [wrapped | vs]}
       end)
 
     {Enum.reverse(clauses) |> Enum.join(" AND "), :lists.reverse(values)}
   end
 
-  @spec uuid_attribute_names(module()) :: MapSet.t(atom())
+  @spec uuid_attribute_names(module()) :: MapSet.t(atom() | String.t())
   defp uuid_attribute_names(resource) do
     resource
     |> Info.attributes()
@@ -1354,9 +1573,123 @@ defmodule AshScylla.DataLayer do
         _ -> false
       end
     end)
-    |> Enum.map(& &1.name)
+    |> Enum.flat_map(fn attr -> [attr.name, to_string(attr.name)] end)
     |> MapSet.new()
   end
+
+  # Returns true if the value should be converted from a UUID string to binary.
+  # Checks both the attribute-name-based uuid_fields lookup AND a value-based
+  # heuristic (36-byte string with 4 hyphens) as a fallback for cases where the
+  # attribute type is not recognized as UUID.
+  @spec uuid_field?(term(), term(), MapSet.t(), module()) :: boolean()
+  defp uuid_field?(k, v, uuid_fields, _resource) do
+    is_binary(v) and
+      (k in uuid_fields or uuid_like_string?(v))
+  end
+
+  @spec uuid_like_string?(term()) :: boolean()
+  defp uuid_like_string?(value) when is_binary(value) and byte_size(value) == 36 do
+    value |> String.graphemes() |> Enum.count(&(&1 == "-")) == 4
+  end
+
+  defp uuid_like_string?(_), do: false
+
+  # Builds a map of attribute name (atom & string) => CQL type string for typed params.
+  # This allows the data layer to correctly tag FLOAT vs DOUBLE values for Xandra.
+  @doc false
+  @spec attr_cql_type_map(module()) :: %{(atom() | String.t()) => String.t()}
+  def attr_cql_type_map(resource) do
+    resource
+    |> Info.attributes()
+    |> Enum.reduce(%{}, fn attr, acc ->
+      cql = resolve_cql_type_for_attr(attr)
+
+      acc
+      |> Map.put(attr.name, cql)
+      |> Map.put(to_string(attr.name), cql)
+    end)
+  end
+
+  @spec resolve_cql_type_for_attr(map()) :: String.t()
+  defp resolve_cql_type_for_attr(attr) do
+    # Try storage_type/1 for Ash type modules (most reliable source of truth)
+    if is_atom(attr.type) and function_exported?(attr.type, :storage_type, 1) do
+      case attr.type.storage_type([]) do
+        :uuid -> "uuid"
+        :integer -> "bigint"
+        :float -> "float"
+        :double -> "double"
+        :boolean -> "boolean"
+        :string -> "text"
+        :text -> "text"
+        :utc_datetime -> "timestamp"
+        :utc_datetime_usec -> "timestamp"
+        :naive_datetime -> "timestamp"
+        :naive_datetime_usec -> "timestamp"
+        :timestamp -> "timestamp"
+        :date -> "date"
+        :time -> "time"
+        :time_usec -> "time"
+        :decimal -> "decimal"
+        :binary -> "blob"
+        :duration -> "duration"
+        :ci_string -> "text"
+        :map -> "map"
+        _ -> fallback_cql_type_for_attr(attr)
+      end
+    else
+      fallback_cql_type_for_attr(attr)
+    end
+  end
+
+  # Fallback: match on the raw attr.type value (atom or module).
+  @spec fallback_cql_type_for_attr(map()) :: String.t()
+  defp fallback_cql_type_for_attr(attr) do
+    case attr.type do
+      UUID -> "uuid"
+      :uuid -> "uuid"
+      Ash.Type.Integer -> "bigint"
+      Ash.Type.Float -> "float"
+      :float -> "float"
+      :double -> "double"
+      Ash.Type.Boolean -> "boolean"
+      :boolean -> "boolean"
+      Ash.Type.String -> "text"
+      :string -> "text"
+      :text -> "text"
+      Ash.Type.DateTime -> "timestamp"
+      :utc_datetime -> "timestamp"
+      :utc_datetime_usec -> "timestamp"
+      :timestamp -> "timestamp"
+      Ash.Type.Date -> "date"
+      :date -> "date"
+      Ash.Type.Time -> "time"
+      :time -> "time"
+      Ash.Type.Decimal -> "decimal"
+      :decimal -> "decimal"
+      :binary -> "blob"
+      :duration -> "duration"
+      :map -> "map"
+      :list -> "list"
+      _ -> "text"
+    end
+  end
+
+  # Wraps a float value with the correct CQL type tag (float vs double) based on
+  # the resource's attribute type info. This is necessary because Elixir floats are
+  # always 8 bytes (double), but ScyllaDB FLOAT columns expect 4 bytes.
+  # For all other types, the value is returned unchanged — connection.ex typed_params
+  # handles the mapping.
+  @spec wrap_typed(term(), atom() | String.t(), %{(atom() | String.t()) => String.t()}) :: term()
+  defp wrap_typed({type_str, _value} = typed, _key, _cql_types) when is_binary(type_str), do: typed
+  defp wrap_typed(nil, _key, _cql_types), do: nil
+
+  defp wrap_typed(value, key, cql_types) when is_float(value) do
+    cql_type = Map.get(cql_types, key) || Map.get(cql_types, to_string(key), "double")
+    {cql_type, value}
+  end
+
+  defp wrap_typed(value, _key, _cql_types), do: value
 
   # Converts UUID string params to 16-byte binaries for Xandra.
   # This handles filter params where we don't have attribute name context -

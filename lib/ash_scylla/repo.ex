@@ -8,7 +8,7 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT REQUIRED WARRANTIES OF ANY KIND, either express or implied.
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
@@ -41,7 +41,12 @@ defmodule AshScylla.Repo do
   - `:nodes` - List of ScyllaDB/Cassandra nodes to connect to
   - `:keyspace` - The keyspace to use
   - `:connect_timeout` - TCP connection timeout in ms (default: 5000)
+  - `:disable_lwt?` - Disable lightweight transactions even when resource config enables them (default: false)
+  - `:disable_atomic_actions?` - Disable atomic action support (default: false)
+  - `:installed_extensions` - List of installed ScyllaDB extensions (e.g. `[:lwt]`)
   """
+
+  @type config :: keyword()
 
   defmacro __using__(opts) do
     otp_app = Keyword.get(opts, :otp_app)
@@ -185,6 +190,31 @@ defmodule AshScylla.Repo do
         :ok
       end
 
+      @doc "Returns whether LWT operations are disabled for this repo."
+      @impl AshScylla.Repo
+      @spec disable_lwt?() :: boolean()
+      def disable_lwt? do
+        config = __MODULE__.config()
+        Keyword.get(config, :disable_lwt?, false)
+      end
+
+      @doc "Returns whether atomic actions are disabled for this repo."
+      @impl AshScylla.Repo
+      @spec disable_atomic_actions?() :: boolean()
+      def disable_atomic_actions? do
+        config = __MODULE__.config()
+        Keyword.get(config, :disable_atomic_actions?, false)
+      end
+
+      @doc "Returns installed ScyllaDB extensions for this repo."
+      @impl AshScylla.Repo
+      @spec installed_extensions() :: [atom()]
+      def installed_extensions do
+        config = __MODULE__.config()
+        Keyword.get(config, :installed_extensions, [])
+      end
+
+      @doc "Returns the full repo config."
       @impl AshScylla.Repo
       @spec config() :: keyword()
       def config do
@@ -209,6 +239,9 @@ defmodule AshScylla.Repo do
   @callback create_keyspace(String.t() | nil, keyword()) :: {:ok, term()} | {:error, term()}
   @callback drop_keyspace(String.t() | nil) :: {:ok, term()} | {:error, term()}
   @callback child_spec(keyword()) :: Supervisor.child_spec()
+  @callback disable_lwt?() :: boolean()
+  @callback disable_atomic_actions?() :: boolean()
+  @callback installed_extensions() :: [atom()]
 
   @doc "Converts repo config to Xandra connection options."
   @spec config_to_conn_opts(module()) :: keyword()

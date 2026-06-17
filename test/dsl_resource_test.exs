@@ -459,8 +459,8 @@ defmodule AshScylla.DslResourceTest do
     end
 
     test "returns false for unsupported features" do
-      assert DataLayer.can?(SimpleResource, :transact) == false
-      assert DataLayer.can?(SimpleResource, :sort) == false
+      assert DataLayer.can?(SimpleResource, :transact) == true
+      assert DataLayer.can?(SimpleResource, :sort) == true
       assert DataLayer.can?(SimpleResource, :offset) == false
       assert DataLayer.can?(SimpleResource, :expression_calculation) == false
       assert DataLayer.can?(SimpleResource, :lateral_join) == false
@@ -472,7 +472,7 @@ defmodule AshScylla.DslResourceTest do
     test "can? works with bare resource too" do
       assert DataLayer.can?(BareResource, :create) == true
       assert DataLayer.can?(BareResource, :read) == true
-      assert DataLayer.can?(BareResource, :transact) == false
+      assert DataLayer.can?(BareResource, :transact) == true
     end
   end
 
@@ -503,8 +503,8 @@ defmodule AshScylla.DslResourceTest do
     test "set_tenant and set_context on DSL resource" do
       query = DataLayer.resource_to_query(SimpleResource, nil)
 
-      {:ok, q1} = DataLayer.set_tenant(query, "tenant_abc", nil)
-      {:ok, q2} = DataLayer.set_context(q1, %{request_id: "req-123"}, nil)
+      {:ok, q1} = DataLayer.set_tenant(SimpleResource, query, "tenant_abc")
+      {:ok, q2} = DataLayer.set_context(SimpleResource, q1, %{request_id: "req-123"})
 
       assert q2.tenant == "tenant_abc"
       assert q2.context == %{request_id: "req-123"}

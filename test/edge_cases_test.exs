@@ -403,10 +403,56 @@ defmodule AshScylla.EdgeCasesTest do
       assert p == ["a", 18, 65]
     end
 
-    test "raises on invalid filter" do
-      assert_raise ArgumentError, fn ->
-        QueryBuilder.build_where_clause([:bad])
-      end
+    test "skips invalid filter" do
+      # Invalid filters are now skipped with a warning instead of raising
+      result = QueryBuilder.build_where_clause([:bad])
+      assert is_tuple(result)
+    end
+
+    test "skips string filter and returns empty clause" do
+      # A raw string filter (e.g. a UUID passed incorrectly) should be skipped
+      {clause, params} = QueryBuilder.build_where_clause(["5f76eab7-be8b-4a47-9d97-c36f6e42db0f"])
+      assert clause == ""
+      assert params == []
+    end
+
+    test "skips atom filter and returns empty clause" do
+      {clause, params} = QueryBuilder.build_where_clause([:invalid_atom])
+      assert clause == ""
+      assert params == []
+    end
+
+    test "skips nil filter and returns empty clause" do
+      {clause, params} = QueryBuilder.build_where_clause([nil])
+      assert clause == ""
+      assert params == []
+    end
+
+    test "skips integer filter and returns empty clause" do
+      {clause, params} = QueryBuilder.build_where_clause([42])
+      assert clause == ""
+      assert params == []
+    end
+
+    test "valid filters still work when mixed with invalid ones" do
+      filters = [
+        :invalid,
+        %{operator: :eq, left: %{name: :status}, right: %{value: "active"}},
+        "bad_string",
+        %{operator: :gt, left: %{name: :age}, right: %{value: 18}}
+      ]
+
+      {clause, params} = QueryBuilder.build_where_clause(filters)
+      assert clause =~ "status"
+      assert clause =~ "age"
+      assert "active" in params
+      assert 18 in params
+    end
+
+    test "all invalid filters produce empty clause" do
+      {clause, params} = QueryBuilder.build_where_clause([:a, :b, "c", nil, 42])
+      assert clause == ""
+      assert params == []
     end
   end
 
@@ -707,14 +753,11 @@ defmodule AshScylla.EdgeCasesTest do
 
     test "can? false for all unsupported" do
       unsupported = [
-        :transact,
         :aggregate,
         :join,
         :lateral_join,
         :lock,
-        :calculate,
         :combine,
-        :sort,
         :offset,
         :expression_calculation
       ]

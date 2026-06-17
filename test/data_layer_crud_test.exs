@@ -20,8 +20,24 @@ defmodule AshScylla.DataLayer.CrudTest do
   defmodule FakeRepo do
     @moduledoc false
 
+    # Unwraps {type, value} tuples from typed_params, keeping raw values for assertions.
+    defp unwrap_params(params) do
+      Enum.map(params, fn
+        {_type, value} when is_binary(_type) -> value
+        value -> value
+      end)
+    end
+
+    # Simulates real Xandra behavior: returns positional rows + string column names.
+    # Receives {type, value} tuples from the data layer's typed params and unwraps for testing.
     def query(query, params, opts \\ []) do
-      send(self(), {:ash_scylla_query, query, params, opts})
+      raw_params = unwrap_params(params)
+      send(self(), {:ash_scylla_query, query, raw_params, opts})
+
+      id_bin = fn
+        id when is_binary(id) and byte_size(id) == 36 -> elem(AshScylla.DataLayer.Types.uuid_string_to_binary(id), 1)
+        id -> id
+      end
 
       case query do
         # --- inserts ---
@@ -52,22 +68,32 @@ defmodule AshScylla.DataLayer.CrudTest do
         "DELETE FROM crud_items WHERE status = ?" ->
           {:ok, %Xandra.Page{content: []}}
 
-        # --- selects ---
+        # --- selects (real Xandra format: positional rows + string column names) ---
         "SELECT * FROM crud_items WHERE id = ? LIMIT 1" ->
           [id] = params
 
           if id == "bad-fetch" do
             {:error, %Xandra.ConnectionError{reason: :timeout, action: nil}}
           else
-            {:ok, %Xandra.Page{content: [%{id: id, name: "Ada", status: "active", age: 42}]}}
+            # Real Xandra returns UUID as 16-byte binary + string column names
+            {:ok, %Xandra.Page{
+              content: [[id_bin.(id), "Ada", "active", 42]],
+              columns: ["id", "name", "status", "age"]
+            }}
           end
 
         "SELECT * FROM lwt_items WHERE id = ? LIMIT 1" ->
           [id] = params
-          {:ok, %Xandra.Page{content: [%{id: id, name: "Grace", status: "inactive"}]}}
+          {:ok, %Xandra.Page{
+            content: [[id_bin.(id), "Grace", "inactive"]],
+            columns: ["id", "name", "status"]
+          }}
 
         "SELECT * FROM crud_items WHERE status = ? LIMIT ?" ->
-          {:ok, %Xandra.Page{content: [%{id: "row-1", name: "Ada", status: "active", age: 42}]}}
+          {:ok, %Xandra.Page{
+            content: [[elem(AshScylla.DataLayer.Types.uuid_string_to_binary("550e8400-e29b-41d4-a716-446655440000"), 1), "Ada", "active", 42]],
+            columns: ["id", "name", "status", "age"]
+          }}
 
         "SELECT COUNT(*) FROM crud_items" <> _ ->
           {:ok, %Xandra.Page{content: [[2]]}}
@@ -220,6 +246,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert {:ok, record} = DataLayer.create(Resource, changeset)
       assert record.name == "Ada"
       assert record.status == "active"
+      assert record.age == 42
       record_id = record.id
       assert is_binary(record_id)
 
@@ -232,7 +259,7 @@ defmodule AshScylla.DataLayer.CrudTest do
 
       id_bin = uuid_bin(record_id)
 
-      # fetch-by-PK
+      # fetch-by-PK (params are the 16-byte binary UUID)
       assert_receive {:ash_scylla_query, fetch_query, [^id_bin], []}
       assert fetch_query == "SELECT * FROM crud_items WHERE id = ? LIMIT 1"
     end

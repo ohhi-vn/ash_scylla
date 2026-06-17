@@ -24,7 +24,7 @@ defmodule AshScylla.Test do
     end
 
     test "returns false for unsupported features" do
-      assert AshScylla.DataLayer.can?(nil, :transact) == false
+      assert AshScylla.DataLayer.can?(nil, :transact) == true
       assert AshScylla.DataLayer.can?(nil, :offset) == false
       assert AshScylla.DataLayer.can?(nil, {:aggregate, :sum}) == false
       assert AshScylla.DataLayer.can?(nil, {:join, nil}) == false
