@@ -54,6 +54,30 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
   defp uid, do: generate_uuid()
 
+  defp await_secondary_index(conn, query, params, expected_id, retries \\ 30) do
+    rows = rows_to_maps(xq(conn, query, params))
+
+    if Enum.any?(rows, fn r -> to_string(r["id"]) == expected_id end) do
+      true
+    else
+      if retries > 0 do
+        Process.sleep(500)
+        await_secondary_index(conn, query, params, expected_id, retries - 1)
+      else
+        # Log the rows we found for debugging
+        ids = Enum.map(rows, fn r -> %{id: to_string(r["id"]), type: inspect(r["id"])} end)
+
+        flunk("""
+        Timed out waiting for secondary index to become consistent.
+        Expected ID: #{expected_id}
+        Found rows (id): #{inspect(ids)}
+        Query: #{query}
+        Params: #{inspect(params)}
+        """)
+      end
+    end
+  end
+
   defp generate_uuid do
     <<a::32, b::16, c::16, d::16, e::48>> = :crypto.strong_rand_bytes(16)
 
@@ -637,10 +661,17 @@ defmodule AshScylla.ScyllaIntegrationTest do
       )
 
       # Filter by status index and find our record by unique name
-      rows =
-        rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE status = ?", ["active"]))
+      # Secondary indexes in ScyllaDB are eventually consistent;
+      # first verify the row exists via primary key then wait for index
+      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 1,
+             "Row was not inserted successfully"
 
-      assert Enum.any?(rows, fn r -> r["id"] == id end)
+      assert await_secondary_index(
+               c,
+               "SELECT * FROM ash_scylla_test.users WHERE status = ?",
+               ["active"],
+               id
+             )
 
       # Update status
       xq(c, "UPDATE ash_scylla_test.users SET status = ? WHERE id = ?", ["archived", id])
@@ -651,11 +682,39 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
       refute Enum.any?(rows, fn r -> r["name"] == test_name end)
 
-      # New status should find it
-      rows =
-        rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE status = ?", ["archived"]))
+      # New status should find it (secondary index may need time for the update)
+      assert await_secondary_index(
+               c,
+               "SELECT * FROM ash_scylla_test.users WHERE status = ?",
+               ["archived"],
+               id
+             )
 
-      assert Enum.any?(rows, fn r -> r["id"] == id end)
+      # Delete
+      xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
+      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
+    end
+
+    test "round-trip with status index: insert -> filter by status -> update status -> re-filter -> delete does not leak records to other status queries",
+         %{
+           conn: c
+         } do
+      id = uid()
+      test_name = "LeakTest_#{String.slice(id, 0, 8)}"
+
+      xq(
+        c,
+        "INSERT INTO ash_scylla_test.users (id, name, status) VALUES (?, ?, ?)",
+        [id, test_name, "flagged"]
+      )
+
+      # Wait for the index to catch up
+      assert await_secondary_index(
+               c,
+               "SELECT * FROM ash_scylla_test.users WHERE status = ?",
+               ["flagged"],
+               id
+             )
 
       # Delete
       xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])

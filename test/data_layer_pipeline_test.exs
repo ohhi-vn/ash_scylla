@@ -351,10 +351,28 @@ defmodule AshScylla.DataLayer.PipelineTest do
       {cql, params} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "SELECT id, name FROM users"
       assert cql =~ "WHERE"
-      assert cql =~ "ORDER BY created_at desc"
+      # ScyllaDB does not support ORDER BY with secondary index scans;
+      # status is a secondary-indexed column, so ORDER BY is stripped
+      refute cql =~ "ORDER BY"
       assert cql =~ "LIMIT ?"
       assert "active" in params
       assert 10 in params
+
+      # Test with a filter on a non-indexed column — ORDER BY should be preserved
+      query_no_idx = %DataLayer{
+        resource: AshScylla.TestResourceWithIndexes,
+        repo: TestRepo,
+        table: "users",
+        filters: [%{operator: :eq, left: %{name: :created_at}, right: %{value: "2024-01-01"}}],
+        sorts: [{:created_at, :desc}],
+        limit: 10,
+        offset: nil,
+        select: [:id, :name],
+        tenant: nil
+      }
+
+      {cql_no_idx, _} = QueryBuilder.build_optimized_query(query_no_idx)
+      assert cql_no_idx =~ "ORDER BY created_at desc"
     end
 
     test "generates SELECT with IN operator" do

@@ -61,6 +61,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   """
   @spec build_optimized_query(DataLayer.t()) :: {String.t(), list()}
   def build_optimized_query(%DataLayer{
+        resource: resource,
         table: table,
         filters: filters,
         sorts: sorts,
@@ -105,8 +106,20 @@ defmodule AshScylla.DataLayer.QueryBuilder do
 
     params = params ++ agg_params ++ group_params
 
-    # Build ORDER BY clause (supports multiple columns)
-    {order_clause, order_params} = build_order_by(sorts)
+    # Detect secondary index scan — ScyllaDB does NOT support ORDER BY
+    # when querying via a secondary index. Strip the order clause and warn.
+    {order_clause, order_params} =
+      if resource != nil and sorts != [] and sorts != nil and
+           secondary_index_scan?(resource, filters) do
+        Logger.warning(
+          "AshScylla: ScyllaDB does not support ORDER BY with secondary index scans; " <>
+            "dropping ORDER BY for query on #{table}"
+        )
+
+        {"", []}
+      else
+        build_order_by(sorts)
+      end
 
     query_acc =
       if order_clause != "" do
@@ -456,7 +469,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     :< => "<",
     :lte => "<=",
     :<= => "<=",
-    :contains => "CONTAINS",
+    :contains => "LIKE",
     :contains_key => "CONTAINS KEY",
     :starts_with => "LIKE",
     :ends_with => "LIKE"
@@ -487,16 +500,21 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     if right, do: {"IS NULL", "", []}, else: {"IS NOT NULL", "", []}
   end
 
+  # LIKE operators: embed wildcards in the parameter value, not in the CQL string.
+  # CQL does not support `column LIKE %?` — the `%` must be part of the bound value.
   defp operator_cql(:starts_with, _right, params) do
-    {"LIKE", "%?", params}
+    {rest, [value]} = Enum.split(params, -1)
+    {"LIKE", "?", rest ++ ["%" <> value]}
   end
 
   defp operator_cql(:ends_with, _right, params) do
-    {"LIKE", "?%", params}
+    {rest, [value]} = Enum.split(params, -1)
+    {"LIKE", "?", rest ++ [value <> "%"]}
   end
 
   defp operator_cql(:contains, _right, params) do
-    {"CONTAINS", "?", params}
+    {rest, [value]} = Enum.split(params, -1)
+    {"LIKE", "?", rest ++ ["%" <> value <> "%"]}
   end
 
   defp operator_cql(:contains_key, _right, params) do
@@ -542,10 +560,10 @@ defmodule AshScylla.DataLayer.QueryBuilder do
           {right_cql, right_params} ->
             case op do
               :and ->
-                {["(", left_cql, ") AND (", right_cql, ")"], left_params ++ right_params}
+                {[left_cql, " AND ", right_cql], left_params ++ right_params}
 
               :or ->
-                {["(", left_cql, ") OR (", right_cql, ")"], left_params ++ right_params}
+                {["(", left_cql, " OR ", right_cql, ")"], left_params ++ right_params}
 
               _ ->
                 filter_to_cql(%{operator: op, left: left, right: right})
@@ -580,13 +598,13 @@ defmodule AshScylla.DataLayer.QueryBuilder do
                   else: {"#{left_cql} IS NOT NULL", left_params}
 
               :starts_with ->
-                {"#{left_cql} LIKE %?", left_params ++ [raw_value]}
+                {"#{left_cql} LIKE ?", left_params ++ ["%" <> raw_value]}
 
               :ends_with ->
-                {"#{left_cql} LIKE ?%", left_params ++ [raw_value]}
+                {"#{left_cql} LIKE ?", left_params ++ [raw_value <> "%"]}
 
               :contains ->
-                {"#{left_cql} LIKE ?", left_params ++ [raw_value]}
+                {"#{left_cql} LIKE ?", left_params ++ ["%" <> raw_value <> "%"]}
 
               :contains_key ->
                 {"#{left_cql} CONTAINS KEY ?", left_params ++ [raw_value]}
@@ -635,13 +653,13 @@ defmodule AshScylla.DataLayer.QueryBuilder do
                 {"#{left_cql} IS NOT NULL", left_params}
 
               {:starts_with, %{value: value}} ->
-                {"#{left_cql} LIKE %?", left_params ++ [value]}
+                {"#{left_cql} LIKE ?", left_params ++ ["%" <> value]}
 
               {:ends_with, %{value: value}} ->
-                {"#{left_cql} LIKE ?%", left_params ++ [value]}
+                {"#{left_cql} LIKE ?", left_params ++ [value <> "%"]}
 
               {:contains, %{value: value}} ->
-                {"#{left_cql} LIKE ?", left_params ++ [value]}
+                {"#{left_cql} LIKE ?", left_params ++ ["%" <> value <> "%"]}
 
               {:contains_key, %{value: value}} ->
                 {"#{left_cql} CONTAINS KEY ?", left_params ++ [value]}
@@ -878,4 +896,19 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   defp extract_filter_columns(%{expression: expr}), do: get_filter_columns([expr])
   defp extract_filter_columns(%{left: left, right: right}), do: get_filter_columns([left, right])
   defp extract_filter_columns(_), do: []
+
+  @doc false
+  @spec secondary_index_scan?(term(), list()) :: boolean()
+  def secondary_index_scan?(resource, filters) do
+    indexed_columns =
+      resource
+      |> Dsl.secondary_indexes()
+      |> Enum.flat_map(fn idx -> idx.columns end)
+      |> MapSet.new()
+
+    filter_columns = get_filter_columns(filters)
+
+    filter_columns != [] and
+      Enum.all?(filter_columns, fn col -> MapSet.member?(indexed_columns, col) end)
+  end
 end

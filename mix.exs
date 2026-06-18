@@ -4,7 +4,7 @@ defmodule AshScylla.MixProject do
   def project do
     [
       app: :ash_scylla,
-      version: "0.10.2",
+      version: "0.10.3",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),

@@ -397,12 +397,12 @@ defmodule AshScylla.DataLayer do
     Telemetry.span(resource, :read, query, fn ->
       case repo.query(query, params, opts) do
         {:ok, %Xandra.Page{content: content, columns: columns}} when columns != nil ->
-            rows = content || []
-            records = Enum.map(rows, &to_ash_record(&1, resource, columns))
-            %__MODULE__{context: context} = data_layer_query
-            {:ok, apply_calculations(records, context)}
+          rows = content || []
+          records = Enum.map(rows, &to_ash_record(&1, resource, columns))
+          %__MODULE__{context: context} = data_layer_query
+          {:ok, apply_calculations(records, context)}
 
-          {:ok, %Xandra.Page{content: content}} ->
+        {:ok, %Xandra.Page{content: content}} ->
           rows = content || []
           records = Enum.map(rows, &to_ash_record(&1, resource))
           %__MODULE__{context: context} = data_layer_query
@@ -486,7 +486,11 @@ defmodule AshScylla.DataLayer do
           attribute = Ash.Resource.Info.multitenancy_attribute(resource)
 
           if attribute do
-            filter(data_layer_query, %{name: attribute, op: :eq, right: %{value: tenant}}, resource)
+            filter(
+              data_layer_query,
+              %{name: attribute, op: :eq, right: %{value: tenant}},
+              resource
+            )
           else
             {:ok, %{data_layer_query | tenant: tenant}}
           end
@@ -496,6 +500,7 @@ defmodule AshScylla.DataLayer do
       end
     end
   end
+
   @impl Ash.DataLayer
   @spec set_context(Ash.Resource.t(), t(), map()) :: {:ok, t()}
   def set_context(_resource, data_layer_query, context) do
@@ -869,7 +874,8 @@ defmodule AshScylla.DataLayer do
      "Aggregate kind #{kind} is not supported in ScyllaDB/Cassandra. Use :count or materialized views."}
   end
 
-  @spec build_insert_statement(String.t(), map(), pos_integer() | nil, module()) :: {String.t(), list()}
+  @spec build_insert_statement(String.t(), map(), pos_integer() | nil, module()) ::
+          {String.t(), list()}
   defp build_insert_statement(table, attrs, ttl, resource) do
     {sanitized_fields, values} = build_field_value_pairs(attrs, resource)
 
@@ -1288,8 +1294,11 @@ defmodule AshScylla.DataLayer do
       {:ok, %Xandra.Page{content: [row | _]}} ->
         {:ok, row}
 
-      {:ok, %Xandra.Page{content: []}} -> not_found_error(sanitized_table, pk)
-      {:ok, %Xandra.Page{content: nil}} -> not_found_error(sanitized_table, pk)
+      {:ok, %Xandra.Page{content: []}} ->
+        not_found_error(sanitized_table, pk)
+
+      {:ok, %Xandra.Page{content: nil}} ->
+        not_found_error(sanitized_table, pk)
 
       # Handle plain maps (used by FakeRepo in tests)
       {:ok, %{content: [row | _], columns: columns}} when columns != nil ->
@@ -1298,10 +1307,14 @@ defmodule AshScylla.DataLayer do
       {:ok, %{content: [row | _]}} ->
         {:ok, row}
 
-      {:ok, %{content: []}} -> not_found_error(sanitized_table, pk)
-      {:ok, %{content: nil}} -> not_found_error(sanitized_table, pk)
+      {:ok, %{content: []}} ->
+        not_found_error(sanitized_table, pk)
 
-      {:error, error} -> handle_scylla_result({:error, error})
+      {:ok, %{content: nil}} ->
+        not_found_error(sanitized_table, pk)
+
+      {:error, error} ->
+        handle_scylla_result({:error, error})
     end
   end
 
@@ -1338,7 +1351,8 @@ defmodule AshScylla.DataLayer do
   defp to_ash_record(record, resource, columns) when is_list(record) and is_list(columns) do
     # Convert positional list from Xandra to a map using column metadata names.
     # Xandra columns can be 4-tuples: {keyspace, table, column_name, type}
-    # (real ScyllaDB) or plain strings (some test fakes).
+    # or 3-tuples: {keyspace, table, column_name} (some Xandra versions)
+    # or plain strings (some test fakes).
     record_map =
       record
       |> Enum.zip(columns)
@@ -1346,6 +1360,7 @@ defmodule AshScylla.DataLayer do
         col_name =
           case col do
             {_, _, name, _} when is_binary(name) -> name
+            {_, _, name} when is_binary(name) -> name
             name when is_binary(name) -> name
           end
 
@@ -1579,8 +1594,8 @@ defmodule AshScylla.DataLayer do
 
   # Returns true if the value should be converted from a UUID string to binary.
   # Checks both the attribute-name-based uuid_fields lookup AND a value-based
-  # heuristic (36-byte string with 4 hyphens) as a fallback for cases where the
-  # attribute type is not recognized as UUID.
+  # validation (36-byte string with 4 hyphens and valid hex segments) as a
+  # fallback for cases where the attribute type is not recognized as UUID.
   @spec uuid_field?(term(), term(), MapSet.t(), module()) :: boolean()
   defp uuid_field?(k, v, uuid_fields, _resource) do
     is_binary(v) and
@@ -1589,7 +1604,17 @@ defmodule AshScylla.DataLayer do
 
   @spec uuid_like_string?(term()) :: boolean()
   defp uuid_like_string?(value) when is_binary(value) and byte_size(value) == 36 do
-    value |> String.graphemes() |> Enum.count(&(&1 == "-")) == 4
+    case String.split(value, "-") do
+      [a, b, c, d, e]
+      when byte_size(a) == 8 and byte_size(b) == 4 and byte_size(c) == 4 and byte_size(d) == 4 and
+             byte_size(e) == 12 ->
+        # Verify all segments are valid hex
+        hex = a <> b <> c <> d <> e
+        match?({:ok, <<_::16-binary>>}, Base.decode16(hex, case: :mixed))
+
+      _ ->
+        false
+    end
   end
 
   defp uuid_like_string?(_), do: false
@@ -1681,7 +1706,9 @@ defmodule AshScylla.DataLayer do
   # For all other types, the value is returned unchanged — connection.ex typed_params
   # handles the mapping.
   @spec wrap_typed(term(), atom() | String.t(), %{(atom() | String.t()) => String.t()}) :: term()
-  defp wrap_typed({type_str, _value} = typed, _key, _cql_types) when is_binary(type_str), do: typed
+  defp wrap_typed({type_str, _value} = typed, _key, _cql_types) when is_binary(type_str),
+    do: typed
+
   defp wrap_typed(nil, _key, _cql_types), do: nil
 
   defp wrap_typed(value, key, cql_types) when is_float(value) do

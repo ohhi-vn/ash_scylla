@@ -494,7 +494,9 @@ defmodule AshScylla.DslResourceTest do
 
       assert cql =~ "SELECT id, name, status FROM full_items"
       assert cql =~ "WHERE"
-      assert cql =~ "ORDER BY name asc"
+      # ScyllaDB does not support ORDER BY with secondary index scans;
+      # status is a secondary-indexed column, so ORDER BY is stripped
+      refute cql =~ "ORDER BY"
       assert cql =~ "LIMIT ?"
       assert "active" in params
       assert 10 in params

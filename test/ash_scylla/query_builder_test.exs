@@ -168,7 +168,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
       assert params == ["active", "pending"]
     end
 
-    test "nested AND/OR filter" do
+    test "nested AND produces flat chain without extra parentheses" do
       filter = %{
         op: :and,
         left: %{operator: :eq, left: %{name: "status"}, right: %{value: "active"}},
@@ -188,9 +188,174 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
       }
 
       {cql, params} = QueryBuilder.build_optimized_query(query)
-      assert String.contains?(cql, "AND")
-      assert "active" in params
-      assert 18 in params
+      assert cql == "SELECT * FROM users WHERE status = ? AND age > ?"
+      assert params == ["active", 18]
+    end
+
+    test "chained AND filters should NOT produce double parentheses" do
+      # This replicates how Ash nests the `get_user_games_by_date_range` pattern:
+      #   ((user_id = ?) AND (started_at >= ?)) AND (started_at <= ?)
+      # which previously produced invalid CQL: "line 1:89 : Missing ')'"
+      inner = %{
+        op: :and,
+        left: %{operator: :eq, left: %{name: "user_id"}, right: %{value: "u1"}},
+        right: %{operator: :gte, left: %{name: "started_at"}, right: %{value: "2026-01-01"}}
+      }
+
+      outer = %{
+        op: :and,
+        left: inner,
+        right: %{operator: :lte, left: %{name: "started_at"}, right: %{value: "2026-12-31"}}
+      }
+
+      query = %DataLayer{
+        resource: nil,
+        repo: nil,
+        table: "game_members",
+        filters: [outer],
+        sorts: [{:started_at, :desc}],
+        limit: nil,
+        offset: nil,
+        select: [:id, :started_at, :user_id, :game_id, :is_admin],
+        tenant: nil
+      }
+
+      {cql, params} = QueryBuilder.build_optimized_query(query)
+
+      # Must not contain double-parens — CQL rejects ((...))
+      refute String.contains?(cql, "(("), "CQL must not contain double opening parens"
+      refute String.contains?(cql, "))"), "CQL must not contain double closing parens"
+
+      # Must produce valid flat AND chain
+      assert cql ==
+               "SELECT id, started_at, user_id, game_id, is_admin FROM game_members WHERE user_id = ? AND started_at >= ? AND started_at <= ? ORDER BY started_at desc"
+
+      assert params == ["u1", "2026-01-01", "2026-12-31"]
+    end
+  end
+
+  describe "build_optimized_query/1 with secondary index scan" do
+    defmodule IndexedMember do
+      @moduledoc false
+      def __ash_scylla__(:secondary_indexes), do: [%{columns: [:user_id, :status]}]
+    end
+
+    defmodule NonIndexedMember do
+      @moduledoc false
+      def __ash_scylla__(:secondary_indexes), do: []
+    end
+
+    test "ORDER BY is dropped when scanning via secondary index" do
+      filter = %{operator: :eq, left: %{name: :user_id}, right: %{value: "u1"}}
+
+      query = %DataLayer{
+        resource: IndexedMember,
+        repo: nil,
+        table: "game_members",
+        filters: [filter],
+        sorts: [{:started_at, :desc}],
+        limit: nil,
+        offset: nil,
+        select: [:id, :started_at, :user_id, :game_id],
+        tenant: nil
+      }
+
+      {cql, params} = QueryBuilder.build_optimized_query(query)
+
+      refute String.contains?(cql, "ORDER BY"),
+             "ORDER BY must be dropped for secondary index scans"
+
+      assert cql ==
+               "SELECT id, started_at, user_id, game_id FROM game_members WHERE user_id = ?"
+
+      assert params == ["u1"]
+    end
+
+    test "ORDER BY is preserved when querying via primary key (not secondary index)" do
+      filter = %{operator: :eq, left: %{name: :game_id}, right: %{value: "g1"}}
+
+      query = %DataLayer{
+        resource: IndexedMember,
+        repo: nil,
+        table: "game_members",
+        filters: [filter],
+        sorts: [{:started_at, :desc}],
+        limit: nil,
+        offset: nil,
+        select: [:id, :started_at, :user_id, :game_id],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      assert String.contains?(cql, "ORDER BY"), "ORDER BY must be preserved for PK queries"
+    end
+
+    test "ORDER BY is preserved when resource has NO secondary indexes" do
+      filter = %{operator: :eq, left: %{name: :user_id}, right: %{value: "u1"}}
+
+      query = %DataLayer{
+        resource: NonIndexedMember,
+        repo: nil,
+        table: "game_members",
+        filters: [filter],
+        sorts: [{:started_at, :desc}],
+        limit: nil,
+        offset: nil,
+        select: [:id, :started_at, :user_id, :game_id],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      assert String.contains?(cql, "ORDER BY"),
+             "ORDER BY must be preserved when no secondary index is involved"
+    end
+  end
+
+  # ============================================================================
+  # secondary_index_scan?/2
+  # ============================================================================
+
+  describe "secondary_index_scan?/2" do
+    defmodule TestResource do
+      @moduledoc false
+      def __ash_scylla__(:secondary_indexes), do: [%{columns: [:user_id, :status, :email]}]
+    end
+
+    defmodule NoIndexResource do
+      @moduledoc false
+      def __ash_scylla__(:secondary_indexes), do: []
+    end
+
+    test "returns true when all filter columns are indexed" do
+      filters = [%{operator: :eq, left: %{name: :user_id}, right: %{value: "abc"}}]
+      assert QueryBuilder.secondary_index_scan?(TestResource, filters)
+    end
+
+    test "returns true when multiple indexed columns are filtered" do
+      f1 = %{operator: :eq, left: %{name: :user_id}, right: %{value: "abc"}}
+      f2 = %{operator: :eq, left: %{name: :status}, right: %{value: "active"}}
+      assert QueryBuilder.secondary_index_scan?(TestResource, [f1, f2])
+    end
+
+    test "returns false when filter columns are NOT indexed" do
+      filters = [%{operator: :eq, left: %{name: :name}, right: %{value: "foo"}}]
+      refute QueryBuilder.secondary_index_scan?(TestResource, filters)
+    end
+
+    test "returns false when some columns are indexed and some are not" do
+      f1 = %{operator: :eq, left: %{name: :user_id}, right: %{value: "abc"}}
+      f2 = %{operator: :eq, left: %{name: :name}, right: %{value: "foo"}}
+      refute QueryBuilder.secondary_index_scan?(TestResource, [f1, f2])
+    end
+
+    test "returns false when resource has no secondary indexes" do
+      filters = [%{operator: :eq, left: %{name: :user_id}, right: %{value: "abc"}}]
+      refute QueryBuilder.secondary_index_scan?(NoIndexResource, filters)
+    end
+
+    test "returns false for empty filters" do
+      refute QueryBuilder.secondary_index_scan?(TestResource, [])
     end
   end
 
@@ -231,23 +396,23 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
       filter = %{operator: :contains, left: %{name: "bio"}, right: %{value: "elixir"}}
       {cql, params} = QueryBuilder.filter_to_cql(filter)
       assert String.contains?(cql, "LIKE")
-      assert params == ["elixir"]
+      assert params == ["%elixir%"]
     end
 
     test "starts_with uses LIKE with wildcard suffix" do
       filter = %{operator: :starts_with, left: %{name: "name"}, right: %{value: "Jo"}}
       {cql, params} = QueryBuilder.filter_to_cql(filter)
       assert String.contains?(cql, "LIKE")
-      assert String.contains?(cql, "%?")
-      assert params == ["Jo"]
+      refute String.contains?(cql, "%?")
+      assert params == ["%Jo"]
     end
 
     test "ends_with uses LIKE with wildcard prefix" do
       filter = %{operator: :ends_with, left: %{name: "email"}, right: %{value: ".com"}}
       {cql, params} = QueryBuilder.filter_to_cql(filter)
       assert String.contains?(cql, "LIKE")
-      assert String.contains?(cql, "?%")
-      assert params == [".com"]
+      refute String.contains?(cql, "?%")
+      assert params == [".com%"]
     end
 
     test "expression wrapper unwraps and converts" do

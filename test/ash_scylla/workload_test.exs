@@ -940,7 +940,9 @@ defmodule AshScylla.WorkloadTest do
       Enum.each(results, fn {cql, params, result} ->
         assert String.contains?(cql, "SELECT id, name, email FROM users")
         assert String.contains?(cql, "WHERE email = ?")
-        assert String.contains?(cql, "ORDER BY name asc")
+        # ScyllaDB does not support ORDER BY with secondary index scans;
+        # email is a secondary-indexed column, so ORDER BY is stripped
+        refute String.contains?(cql, "ORDER BY")
         assert String.contains?(cql, "LIMIT ?")
         # email value + limit
         assert length(params) == 2
