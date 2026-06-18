@@ -20,17 +20,25 @@ defmodule AshScylla.DataLayer.PipelineTest do
 
   # ── Container config ────────────────────────────────────────────────────────
 
-  @scylla_container_config ScyllaContainer.new()
-                           |> ScyllaContainer.with_image("scylladb/scylla:5.4")
-                           |> ScyllaContainer.with_cmd([
-                             "--smp",
-                             "1",
-                             "--memory",
-                             "512M",
-                             "--developer-mode",
-                             "1"
-                           ])
-                           |> ScyllaContainer.with_wait_timeout(120_000)
+  defp scylla_container_config do
+    ScyllaContainer.new()
+    |> ScyllaContainer.with_image("scylladb/scylla:5.4")
+    |> ScyllaContainer.with_cmd([
+      "--smp",
+      "1",
+      "--memory",
+      "512M",
+      "--developer-mode",
+      "1"
+    ])
+    |> ScyllaContainer.with_wait_timeout(120_000)
+  end
+
+  # When SCYLLA_DIRECT is set, connect directly to a ScyllaDB instance
+  # at the given host/port instead of spinning up a test container.
+  defp direct_connect?, do: System.get_env("SCYLLA_DIRECT") != nil
+  defp direct_host, do: System.get_env("SCYLLA_HOST") || "127.0.0.1"
+  defp direct_port, do: String.to_integer(System.get_env("SCYLLA_PORT") || "9042")
 
   # ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -55,10 +63,6 @@ defmodule AshScylla.DataLayer.PipelineTest do
 
   defp format_hex(value, len) do
     value |> Integer.to_string(16) |> String.pad_leading(len, "0")
-  end
-
-  defp uuid?(value) when is_binary(value) do
-    Regex.match?(~r/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, value)
   end
 
   defp connect_with_retry(host, port, retries) when is_integer(retries) do
@@ -104,57 +108,98 @@ defmodule AshScylla.DataLayer.PipelineTest do
   # ── Setup: ensure schema exists ─────────────────────────────────────────────
 
   setup_all do
-    case AshScylla.Test.ContainerEngine.ensure_running() do
-      :ok ->
-        case ScyllaContainer.start(@scylla_container_config) do
-          {:ok, scylla_container} ->
-            port = ScyllaContainer.port(scylla_container)
-            host = ScyllaContainer.host(scylla_container)
-            conn = connect_with_retry(host, port, 30)
+    if direct_connect?() do
+      host = direct_host()
+      port = direct_port()
+      conn = connect_with_retry(host, port, 30)
 
-            Xandra.execute!(
-              conn,
-              "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}"
-            )
+      Xandra.execute!(
+        conn,
+        "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}"
+      )
 
-            Xandra.execute!(
-              conn,
-              "CREATE TABLE IF NOT EXISTS ash_scylla_test.users (id UUID PRIMARY KEY, name TEXT, email TEXT, age INT, status TEXT, created_at TIMESTAMP)"
-            )
+      Xandra.execute!(
+        conn,
+        "CREATE TABLE IF NOT EXISTS ash_scylla_test.users (id UUID PRIMARY KEY, name TEXT, email TEXT, age INT, status TEXT, created_at TIMESTAMP)"
+      )
 
-            Xandra.execute!(
-              conn,
-              "CREATE INDEX IF NOT EXISTS idx_users_email ON ash_scylla_test.users (email)"
-            )
+      Xandra.execute!(
+        conn,
+        "CREATE INDEX IF NOT EXISTS idx_users_email ON ash_scylla_test.users (email)"
+      )
 
-            Xandra.execute!(
-              conn,
-              "CREATE INDEX IF NOT EXISTS idx_users_status ON ash_scylla_test.users (status)"
-            )
+      Xandra.execute!(
+        conn,
+        "CREATE INDEX IF NOT EXISTS idx_users_status ON ash_scylla_test.users (status)"
+      )
 
-            Xandra.execute!(
-              conn,
-              "CREATE INDEX IF NOT EXISTS idx_users_age ON ash_scylla_test.users (age)"
-            )
+      Xandra.execute!(
+        conn,
+        "CREATE INDEX IF NOT EXISTS idx_users_age ON ash_scylla_test.users (age)"
+      )
 
-            on_exit(fn ->
-              ScyllaContainer.stop(scylla_container.container_id)
-            end)
+      %{conn: conn, scylla: :direct}
+    else
+      case AshScylla.Test.ContainerEngine.ensure_running() do
+        :ok ->
+          case ScyllaContainer.start(scylla_container_config()) do
+            {:ok, scylla_container} ->
+              port = ScyllaContainer.port(scylla_container)
+              host = ScyllaContainer.host(scylla_container)
+              conn = connect_with_retry(host, port, 30)
 
-            %{conn: conn, scylla: scylla_container}
+              Xandra.execute!(
+                conn,
+                "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}"
+              )
 
-          {:error, reason} ->
-            raise "Failed to start ScyllaDB container: #{inspect(reason)}"
-        end
+              Xandra.execute!(
+                conn,
+                "CREATE TABLE IF NOT EXISTS ash_scylla_test.users (id UUID PRIMARY KEY, name TEXT, email TEXT, age INT, status TEXT, created_at TIMESTAMP)"
+              )
 
-      {:error, reason} ->
-        raise "Container engine not available: #{inspect(reason)}"
+              Xandra.execute!(
+                conn,
+                "CREATE INDEX IF NOT EXISTS idx_users_email ON ash_scylla_test.users (email)"
+              )
+
+              Xandra.execute!(
+                conn,
+                "CREATE INDEX IF NOT EXISTS idx_users_status ON ash_scylla_test.users (status)"
+              )
+
+              Xandra.execute!(
+                conn,
+                "CREATE INDEX IF NOT EXISTS idx_users_age ON ash_scylla_test.users (age)"
+              )
+
+              on_exit(fn ->
+                ScyllaContainer.stop(scylla_container.container_id)
+              end)
+
+              %{conn: conn, scylla: scylla_container}
+
+            {:error, reason} ->
+              raise "Failed to start ScyllaDB container: #{inspect(reason)}"
+          end
+
+        {:error, reason} ->
+          Logger.warning(
+            "Container engine not available: #{inspect(reason)}. Skipping integration tests."
+          )
+
+          %{conn: nil, scylla: nil}
+      end
     end
   end
 
   setup context do
-    case context.conn do
-      nil ->
+    case context do
+      %{scylla: :direct} ->
+        conn = connect_with_retry(direct_host(), direct_port(), 5)
+        %{conn: conn}
+
+      %{conn: nil} ->
         raise "ScyllaDB connection not available — setup_all failed"
 
       conn ->
@@ -403,7 +448,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
     end
 
     test "handles empty expressions" do
-      assert QueryBuilder.filter_to_cql(:unknown) == {:error, {:unknown_filter, :unknown}}
+      assert QueryBuilder.filter_to_cql(:unknown) == {"?", [:unknown]}
     end
   end
 

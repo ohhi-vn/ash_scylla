@@ -509,6 +509,9 @@ mix test --exclude integration
 # Integration tests only (requires Podman/Docker)
 mix test test/scylla_integration_test.exs --only integration
 
+# Integration tests using a pre-existing ScyllaDB instance (no container)
+SCYLLA_DIRECT=1 SCYLLA_HOST=localhost SCYLLA_PORT=9042 mix test --only integration
+
 # CI pipeline (unit tests + credo)
 mix test.ci
 ```
@@ -565,6 +568,17 @@ mix test
 
 A `.devcontainer/devcontainer.json` is provided for VS Code Dev Containers.
 It brings up both Elixir and ScyllaDB together via Podman Compose.
+
+### Integration Test
+
+```Elixir
+export CONTAINER_ENGINE=podman
+export CONTAINER_ENGINE_HOST='unix:///private/var/folders/76/xt0kl9zj2ks6wsl1q13513h40000gn/T/podman/podman-machine-default-api.sock'
+MIX_ENV=test mix test.integration
+```
+
+Note: For socket host need to check in your local machine. Auto detect feature will be added in the future.
+
 
 ---
 

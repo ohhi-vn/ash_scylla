@@ -23,7 +23,7 @@ defmodule AshScylla.DataLayer.CrudTest do
     # Unwraps {type, value} tuples from typed_params, keeping raw values for assertions.
     defp unwrap_params(params) do
       Enum.map(params, fn
-        {_type, value} when is_binary(_type) -> value
+        {_type, value} -> value
         value -> value
       end)
     end
@@ -35,8 +35,11 @@ defmodule AshScylla.DataLayer.CrudTest do
       send(self(), {:ash_scylla_query, query, raw_params, opts})
 
       id_bin = fn
-        id when is_binary(id) and byte_size(id) == 36 -> elem(AshScylla.DataLayer.Types.uuid_string_to_binary(id), 1)
-        id -> id
+        id when is_binary(id) and byte_size(id) == 36 ->
+          elem(AshScylla.DataLayer.Types.uuid_string_to_binary(id), 1)
+
+        id ->
+          id
       end
 
       case query do
@@ -76,24 +79,40 @@ defmodule AshScylla.DataLayer.CrudTest do
             {:error, %Xandra.ConnectionError{reason: :timeout, action: nil}}
           else
             # Real Xandra returns UUID as 16-byte binary + string column names
-            {:ok, %Xandra.Page{
-              content: [[id_bin.(id), "Ada", "active", 42]],
-              columns: ["id", "name", "status", "age"]
-            }}
+            {:ok,
+             %Xandra.Page{
+               content: [[id_bin.(id), "Ada", "active", 42]],
+               columns: ["id", "name", "status", "age"]
+             }}
           end
 
         "SELECT * FROM lwt_items WHERE id = ? LIMIT 1" ->
           [id] = params
-          {:ok, %Xandra.Page{
-            content: [[id_bin.(id), "Grace", "inactive"]],
-            columns: ["id", "name", "status"]
-          }}
+
+          {:ok,
+           %Xandra.Page{
+             content: [[id_bin.(id), "Grace", "inactive"]],
+             columns: ["id", "name", "status"]
+           }}
 
         "SELECT * FROM crud_items WHERE status = ? LIMIT ?" ->
-          {:ok, %Xandra.Page{
-            content: [[elem(AshScylla.DataLayer.Types.uuid_string_to_binary("550e8400-e29b-41d4-a716-446655440000"), 1), "Ada", "active", 42]],
-            columns: ["id", "name", "status", "age"]
-          }}
+          {:ok,
+           %Xandra.Page{
+             content: [
+               [
+                 elem(
+                   AshScylla.DataLayer.Types.uuid_string_to_binary(
+                     "550e8400-e29b-41d4-a716-446655440000"
+                   ),
+                   1
+                 ),
+                 "Ada",
+                 "active",
+                 42
+               ]
+             ],
+             columns: ["id", "name", "status", "age"]
+           }}
 
         "SELECT COUNT(*) FROM crud_items" <> _ ->
           {:ok, %Xandra.Page{content: [[2]]}}

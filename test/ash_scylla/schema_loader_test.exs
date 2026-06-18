@@ -1,8 +1,6 @@
 defmodule AshScylla.SchemaLoaderTest do
   use ExUnit.Case, async: true
 
-  import ExUnit.CaptureIO
-
   describe "discover/0" do
     test "returns list of schema file paths" do
       files = AshScylla.SchemaLoader.discover()
@@ -24,7 +22,9 @@ defmodule AshScylla.SchemaLoaderTest do
   describe "load/1" do
     test "loads a valid schema module" do
       # Write a temporary schema file
-      tmp_dir = Path.join(System.tmp_dir!(), "ash_scylla_test_#{:erlang.unique_integer([:positive])}")
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "ash_scylla_test_#{:erlang.unique_integer([:positive])}")
+
       tmp_file = Path.join(tmp_dir, "test_schema.ex")
 
       File.mkdir_p!(tmp_dir)
@@ -50,7 +50,9 @@ defmodule AshScylla.SchemaLoaderTest do
     end
 
     test "returns error for file without change/0" do
-      tmp_dir = Path.join(System.tmp_dir!(), "ash_scylla_test_#{:erlang.unique_integer([:positive])}")
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "ash_scylla_test_#{:erlang.unique_integer([:positive])}")
+
       tmp_file = Path.join(tmp_dir, "no_change.ex")
 
       File.mkdir_p!(tmp_dir)
@@ -70,7 +72,9 @@ defmodule AshScylla.SchemaLoaderTest do
     end
 
     test "returns error for file with syntax errors" do
-      tmp_dir = Path.join(System.tmp_dir!(), "ash_scylla_test_#{:erlang.unique_integer([:positive])}")
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "ash_scylla_test_#{:erlang.unique_integer([:positive])}")
+
       tmp_file = Path.join(tmp_dir, "bad_syntax.ex")
 
       File.mkdir_p!(tmp_dir)
@@ -82,7 +86,9 @@ defmodule AshScylla.SchemaLoaderTest do
     end
 
     test "loads a struct-based schema module and flattens it" do
-      tmp_dir = Path.join(System.tmp_dir!(), "ash_scylla_test_#{:erlang.unique_integer([:positive])}")
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "ash_scylla_test_#{:erlang.unique_integer([:positive])}")
+
       tmp_file = Path.join(tmp_dir, "struct_schema.ex")
 
       File.mkdir_p!(tmp_dir)
@@ -121,7 +127,9 @@ defmodule AshScylla.SchemaLoaderTest do
     end
 
     test "loads a mixed schema with both strings and structs" do
-      tmp_dir = Path.join(System.tmp_dir!(), "ash_scylla_test_#{:erlang.unique_integer([:positive])}")
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "ash_scylla_test_#{:erlang.unique_integer([:positive])}")
+
       tmp_file = Path.join(tmp_dir, "mixed_schema.ex")
 
       File.mkdir_p!(tmp_dir)

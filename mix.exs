@@ -110,7 +110,7 @@ defmodule AshScylla.MixProject do
       {:xandra, "~> 0.19"},
       {:decimal, "~> 3.1", override: true, only: [:dev, :test]},
       {:hackney, "~> 4.3", override: true, only: [:dev, :test]},
-      {:testcontainer_ex, "~> 0.7", only: [:test]},
+      {:testcontainer_ex, "~> 0.7", only: [:test], runtime: false},
       # {:testcontainer_ex, path: "../testcontainer_ex", only: [:test, :dev]},
       {:benchee, "~> 1.5", only: :dev},
       {:benchee_html, "~> 1.0", only: :dev},
@@ -129,6 +129,9 @@ defmodule AshScylla.MixProject do
       test: ["test --exclude integration"],
       "test.unit": ["test --exclude integration"],
       "test.integration": ["test --only integration"],
+      "test.integration.direct": [
+        "test --only integration"
+      ],
       "test.integration.apple_container": [
         "run --eval \"System.put_env(\"CONTAINER_ENGINE\", \"apple_container\")\"",
         "test --only integration"

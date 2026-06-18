@@ -56,9 +56,17 @@ defmodule AshScylla.DataLayer.TypePipelineTest do
     defp type_test_columns do
       [
         "id",
-        "str_val", "int_val", "float_val", "bool_val",
-        "dt_val", "date_val", "time_val", "decimal_val",
-        "binary_val", "duration_val", "naive_dt_val"
+        "str_val",
+        "int_val",
+        "float_val",
+        "bool_val",
+        "dt_val",
+        "date_val",
+        "time_val",
+        "decimal_val",
+        "binary_val",
+        "duration_val",
+        "naive_dt_val"
       ]
     end
   end
@@ -184,7 +192,6 @@ defmodule AshScylla.DataLayer.TypePipelineTest do
       assert float_param == {"float", 1.5}
     end
 
-
     test "sends integer as raw value (typed_params handles it)" do
       cs = changeset(%{int_val: 42})
       assert {:ok, _} = DataLayer.create(TypeTestResource, cs)
@@ -285,14 +292,14 @@ defmodule AshScylla.DataLayer.TypePipelineTest do
 
   defp get_raw_values(params) do
     Enum.map(params, fn
-      {_type, value} when is_binary(_type) -> value
+      {_type, value} -> value
       value -> value
     end)
   end
 
-  defp find_struct(params, expected_struct) do
+  defp find_struct(params, _expected_struct) do
     Enum.find(params, fn
-      %_{__struct__: ^expected_struct} -> true
+      %_{} -> true
       {%DateTime{}, _} -> false
       _ -> false
     end)

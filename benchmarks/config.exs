@@ -2,7 +2,7 @@
 
 # ScyllaDB Connection Settings (for real database benchmarks)
 config :ash_scylla_benchmarks,
-  scylla_nodes: ["127.0.0.1:9042"],
+  scylla_nodes: ["127.0.0.1:9043"],
   keyspace: "ash_scylla_bench",
   sync_connect: 10_000
 

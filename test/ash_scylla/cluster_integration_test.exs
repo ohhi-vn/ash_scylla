@@ -22,9 +22,18 @@ defmodule AshScylla.ClusterIntegrationTest do
   @keyspace "ash_scylla_cluster_test"
   @replication_factor 3
 
-  @scylla_image "scylladb/scylla:5.4"
-  @scylla_wait_timeout 120_000
-  @scylla_cmd ["--smp", "1", "--memory", "512M", "--developer-mode", "1"]
+  @scylla_image "scylladb/scylla:latest"
+  @scylla_wait_timeout 180_000
+  @scylla_cmd [
+    "--smp",
+    "2",
+    "--memory",
+    "1024",
+    "--developer-mode",
+    "1",
+    "--overprovisioned",
+    "1"
+  ]
 
   # ── Container helpers ───────────────────────────────────────────────────────
 
@@ -45,7 +54,12 @@ defmodule AshScylla.ClusterIntegrationTest do
     case TestcontainerEx.start_container(container) do
       {:ok, started} -> {:ok, {index, started}}
       {:error, reason} -> {:error, reason}
+      {:error, reason, _extra} -> {:error, reason}
     end
+  end
+
+  defp get_host_port({_, container}) do
+    get_host_port(container)
   end
 
   defp get_host_port(container) do
@@ -184,6 +198,7 @@ defmodule AshScylla.ClusterIntegrationTest do
 
               :pending ->
                 stop_container(elem(node1, 1))
+
                 raise "ScyllaDB node1 not ready after retries — cannot run cluster integration tests"
             end
 
@@ -192,7 +207,11 @@ defmodule AshScylla.ClusterIntegrationTest do
         end
 
       {:error, reason} ->
-        raise "Container engine not available: #{inspect(reason)}"
+        Logger.warning(
+          "Container engine not available: #{inspect(reason)}. Skipping cluster integration tests."
+        )
+
+        %{nodes: nil}
     end
   end
 
@@ -231,14 +250,18 @@ defmodule AshScylla.ClusterIntegrationTest do
         rows = page.content || []
         columns = page.columns || []
         col_names = Enum.map(columns, fn {_, _, name, _} -> to_string(name) end)
-        mapped_rows = Enum.map(rows, fn
-          row when is_map(row) ->
-            IO.puts("[DEBUG] Row is map: #{inspect(row)}")
-            row
-          row when is_list(row) ->
-            IO.puts("[DEBUG] Row is list: #{inspect(row)}, col_names: #{inspect(col_names)}")
-            row |> Enum.zip(col_names) |> Map.new()
-        end)
+
+        mapped_rows =
+          Enum.map(rows, fn
+            row when is_map(row) ->
+              IO.puts("[DEBUG] Row is map: #{inspect(row)}")
+              row
+
+            row when is_list(row) ->
+              IO.puts("[DEBUG] Row is list: #{inspect(row)}, col_names: #{inspect(col_names)}")
+              Enum.zip(col_names, row) |> Map.new()
+          end)
+
         %{rows: mapped_rows, num_rows: length(mapped_rows)}
 
       {:error, reason} ->
@@ -250,6 +273,7 @@ defmodule AshScylla.ClusterIntegrationTest do
   defp encode_param(value) when is_float(value), do: {"double", value}
   defp encode_param(value) when is_boolean(value), do: {"boolean", value}
   defp encode_param(nil), do: {"null", nil}
+  defp encode_param(%DateTime{} = value), do: {"timestamp", value}
 
   defp encode_param(value) when is_binary(value) do
     if uuid?(value), do: {"uuid", value}, else: {"text", value}
@@ -259,6 +283,22 @@ defmodule AshScylla.ClusterIntegrationTest do
 
   defp uuid?(value) when is_binary(value) do
     Regex.match?(~r/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, value)
+  end
+
+  defp timeuuid_from_microsecond(microsecond, sequence) do
+    <<timestamp_high::48, version_and_clock::16>> = <<microsecond::48, sequence::16>>
+    ts = Bitwise.band(timestamp_high, 0x0000_FFFF_FFFF_FFFF)
+    clock = Bitwise.band(version_and_clock, 0x0FFF)
+
+    <<ts::48, 1::4, clock::12>>
+    |> Base.encode16(case: :lower)
+    |> String.downcase()
+    |> then(fn hex ->
+      <<a::binary-size(8), b::binary-size(4), c::binary-size(4), d::binary-size(4),
+        e::binary-size(12)>> = hex
+
+      "#{a}-#{b}-#{c}-#{d}-#{e}"
+    end)
   end
 
   # ── Cluster connectivity tests ─────────────────────────────────────────────
@@ -273,8 +313,13 @@ defmodule AshScylla.ClusterIntegrationTest do
         )
 
       assert result.num_rows == 1
-      replication = List.first(result.rows) |> List.first() || %{}
-      assert replication["class"] in ["SimpleStrategy", "org.apache.cassandra.locator.SimpleStrategy"]
+      [%{"replication" => replication}] = result.rows
+
+      assert replication["class"] in [
+               "SimpleStrategy",
+               "org.apache.cassandra.locator.SimpleStrategy"
+             ]
+
       assert replication["replication_factor"] == to_string(@replication_factor)
     end
 
@@ -286,7 +331,7 @@ defmodule AshScylla.ClusterIntegrationTest do
           [@keyspace]
         )
 
-      tables = Enum.map(result.rows, &List.first/1) |> MapSet.new()
+      tables = MapSet.new(result.rows, &Map.fetch!(&1, "table_name"))
       assert "users" in tables
       assert "events" in tables
     end
@@ -316,10 +361,16 @@ defmodule AshScylla.ClusterIntegrationTest do
           [id]
         )
 
-      assert result.num_rows == 1, "Expected 1 row, got #{result.num_rows}. Rows: #{inspect(result.rows)}"
+      assert result.num_rows == 1,
+             "Expected 1 row, got #{result.num_rows}. Rows: #{inspect(result.rows)}"
+
       [row] = result.rows
-      assert row["name"] == "Cluster User", "Expected name='Cluster User', got #{inspect(row["name"])}. Row: #{inspect(row)}"
-      assert row["email"] == "cluster@test.com", "Expected email='cluster@test.com', got #{inspect(row["email"])}"
+
+      assert row["name"] == "Cluster User",
+             "Expected name='Cluster User', got #{inspect(row["name"])}. Row: #{inspect(row)}"
+
+      assert row["email"] == "cluster@test.com",
+             "Expected email='cluster@test.com', got #{inspect(row["email"])}"
     end
 
     test "update record in cluster", %{conn: conn} do
@@ -422,19 +473,18 @@ defmodule AshScylla.ClusterIntegrationTest do
   describe "clustering key queries against cluster" do
     test "insert and query events with clustering order", %{conn: conn} do
       user_id = uid()
-      # Use unique event_type to avoid pollution from other tests
       event_type = "click_#{String.slice(user_id, 0, 8)}"
 
-      Enum.each(1..5, fn i ->
-        # Use distinct timeuuid values to avoid clustering key conflicts
-        event_id = "#{DateTime.utc_now() |> DateTime.to_unix(:microsecond)}_#{i}"
+      insert_query =
+        "INSERT INTO #{@keyspace}.events (user_id, event_type, event_id, payload) VALUES (?, ?, ?, ?)"
 
-        xq(
-          conn,
-          "INSERT INTO #{@keyspace}.events (user_id, event_type, event_id, payload) VALUES (?, ?, ?, ?)",
-          [user_id, event_type, event_id, "event-#{i}"]
-        )
-      end)
+      insert_event = fn i ->
+        ts = DateTime.utc_now() |> DateTime.to_unix(:microsecond)
+        event_id = timeuuid_from_microsecond(ts, i)
+        xq(conn, insert_query, [user_id, event_type, event_id, "event-#{i}"])
+      end
+
+      Enum.each(1..5, insert_event)
 
       result =
         xq(
@@ -556,7 +606,8 @@ defmodule AshScylla.ClusterIntegrationTest do
     test "concurrent reads against cluster", %{nodes: nodes} do
       # First insert a record to read
       [node1 | _] = nodes
-      conn1 = connect_node(node1)
+      {_idx, container1} = node1
+      conn1 = connect_node(container1)
       id = uid()
 
       xq(

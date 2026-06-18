@@ -54,18 +54,54 @@ defmodule AshScylla.Test.ContainerEngine do
 
   @doc """
   Checks if the container engine is currently reachable.
+
+  Tries `TestcontainerEx.connected?()` first. For Podman on macOS, also checks
+  via `podman system connection list` since the socket lives inside the VM.
   """
   @spec reachable?() :: boolean()
   def reachable? do
-    TestcontainerEx.connected?()
+    ensure_app_started()
+    TestcontainerEx.connected?() or podman_reachable?()
+  end
+
+  defp ensure_app_started do
+    case Application.start(:testcontainer_ex) do
+      {:ok, _} -> :ok
+      {:error, {:already_started, _}} -> :ok
+      _ -> :ok
+    end
+  end
+
+  defp podman_reachable? do
+    cond do
+      podman_installed?() ->
+        # On macOS with Podman machine, the socket is inside the VM.
+        # Use `podman info` to check if the engine is actually reachable.
+        case System.cmd("podman", ["info", "--format", "{{.Host.Socket}}"],
+               stderr_to_stdout: true
+             ) do
+          {output, 0} ->
+            trimmed = String.trim(output)
+            trimmed != "" and not String.contains?(trimmed, "cannot connect")
+
+          _ ->
+            false
+        end
+
+      true ->
+        false
+    end
+  rescue
+    _ -> false
   end
 
   @doc """
   Returns the detected container engine type.
 
-  Respects the `CONTAINER_ENGINE` environment variable:
+  Podman is the default and preferred engine. The `CONTAINER_ENGINE` environment
+  variable can override:
   - `CONTAINER_ENGINE=apple_container` forces Apple Container
-  - `CONTAINER_ENGINE=podman` forces Podman
+  - `CONTAINER_ENGINE=podman` forces Podman (default)
   - Unset or empty auto-detects (Podman first, then Apple Container).
 
   Returns `:podman`, `:apple_container`, or `nil`.
@@ -77,11 +113,8 @@ defmodule AshScylla.Test.ContainerEngine do
         Logger.info("CONTAINER_ENGINE=apple_container set, selecting Apple Container")
         :apple_container
 
-      "podman" ->
-        Logger.info("CONTAINER_ENGINE=podman set, selecting Podman")
-        :podman
-
       _ ->
+        # Default to Podman — check it first, then fall back to Apple Container
         auto_detect_engine()
     end
   end
@@ -117,29 +150,91 @@ defmodule AshScylla.Test.ContainerEngine do
 
   defp start_podman do
     machine = podman_default_machine()
-    Logger.info("Attempting to start Podman machine '#{machine}'...")
 
-    task =
-      Task.async(fn ->
-        System.cmd("podman", ["machine", "start", machine], stderr_to_stdout: true)
-      end)
+    # Ensure DOCKER_HOST is set so TestcontainerEx can find the Podman socket
+    configure_docker_host(machine)
 
-    case Task.yield(task, 120_000) || Task.shutdown(task, :brutal_kill) do
-      {:ok, {output, 0}} ->
-        trimmed = String.trim(output)
-        Logger.info("Podman machine '#{machine}' started successfully.")
-        Logger.info("Podman machine output: #{trimmed}")
+    # Check if the machine is already running before attempting to start
+    case podman_machine_running?(machine) do
+      true ->
+        Logger.info("Podman machine '#{machine}' is already running.")
         wait_for_reachable(@max_retries)
 
-      {:ok, {output, exit_code}} ->
-        trimmed = String.trim(output)
-        Logger.error("Failed to start Podman machine '#{machine}' (exit #{exit_code}): #{trimmed}")
-        {:error, :podman_start_failed}
+      false ->
+        Logger.info("Attempting to start Podman machine '#{machine}'...")
 
-      nil ->
-        Logger.error("Podman machine '#{machine}' start timed out after 120s")
-        {:error, :podman_start_timeout}
+        task =
+          Task.async(fn ->
+            System.cmd("podman", ["machine", "start", machine], stderr_to_stdout: true)
+          end)
+
+        case Task.yield(task, 120_000) || Task.shutdown(task, :brutal_kill) do
+          {:ok, {output, 0}} ->
+            trimmed = String.trim(output)
+            Logger.info("Podman machine '#{machine}' started successfully.")
+            Logger.info("Podman machine output: #{trimmed}")
+            configure_docker_host(machine)
+            wait_for_reachable(@max_retries)
+
+          {:ok, {output, exit_code}} ->
+            trimmed = String.trim(output)
+
+            if exit_code == 125 and String.contains?(trimmed, "already running") do
+              Logger.info("Podman machine '#{machine}' is already running.")
+              wait_for_reachable(@max_retries)
+            else
+              Logger.error(
+                "Failed to start Podman machine '#{machine}' (exit #{exit_code}): #{trimmed}"
+              )
+
+              {:error, :podman_start_failed}
+            end
+
+          nil ->
+            Logger.error("Podman machine '#{machine}' start timed out after 120s")
+            {:error, :podman_start_timeout}
+        end
     end
+  end
+
+  defp configure_docker_host(machine) do
+    # If DOCKER_HOST or CONTAINER_ENGINE_HOST is already set, don't override
+    if System.get_env("DOCKER_HOST") || System.get_env("CONTAINER_ENGINE_HOST") do
+      Logger.info("DOCKER_HOST or CONTAINER_ENGINE_HOST already set, skipping auto-detection.")
+      :ok
+    else
+      # On macOS with Podman machine, the socket path returned by `podman machine inspect`
+      # is inside the VM and not directly accessible from the host.
+      # Instead, rely on `podman system connection` which sets up the SSH tunnel.
+      # TestcontainerEx should be able to connect via the `podman` CLI.
+      #
+      # If TestcontainerEx still can't connect, users should set DOCKER_HOST manually:
+      #   export DOCKER_HOST="unix:///Users/<user>/.local/share/containers/podman/machine/<machine>/podman.sock"
+      Logger.info(
+        "Using Podman machine '#{machine}'. If TestcontainerEx cannot connect, " <>
+          "set DOCKER_HOST or CONTAINER_ENGINE_HOST manually."
+      )
+
+      :ok
+    end
+  end
+
+  defp podman_machine_running?(machine) do
+    case System.cmd("podman", ["machine", "list", "--format", "{{.Name}} {{.Running}}"],
+           stderr_to_stdout: true
+         ) do
+      {output, 0} ->
+        output
+        |> String.split("\n", trim: true)
+        |> Enum.any?(fn line ->
+          String.starts_with?(line, machine <> " ") and String.contains?(line, "true")
+        end)
+
+      _ ->
+        false
+    end
+  rescue
+    _ -> false
   end
 
   defp podman_default_machine do

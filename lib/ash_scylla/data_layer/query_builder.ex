@@ -42,6 +42,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
 
   alias AshScylla.DataLayer
   alias AshScylla.DataLayer.Dsl
+  alias AshScylla.Identifier
 
   @doc """
   Builds an optimized CQL query from the data layer query struct.
@@ -280,7 +281,10 @@ defmodule AshScylla.DataLayer.QueryBuilder do
           |> Enum.reduce({[], []}, fn filter, {acc_c, acc_p} ->
             case filter_to_cql(filter) do
               {:error, {:unknown_filter, unknown}} ->
-                Logger.warning("AshScylla: Skipping unknown filter expression: #{inspect(unknown)}")
+                Logger.warning(
+                  "AshScylla: Skipping unknown filter expression: #{inspect(unknown)}"
+                )
+
                 {acc_c, acc_p}
 
               {c, p} ->
@@ -439,6 +443,70 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   # Filter to CQL conversion
   # ============================================================================
 
+  @operator_mapping %{
+    :eq => "=",
+    :== => "=",
+    :not_eq => "!=",
+    :!= => "!=",
+    :gt => ">",
+    :> => ">",
+    :gte => ">=",
+    :>= => ">=",
+    :lt => "<",
+    :< => "<",
+    :lte => "<=",
+    :<= => "<=",
+    :contains => "CONTAINS",
+    :contains_key => "CONTAINS KEY",
+    :starts_with => "LIKE",
+    :ends_with => "LIKE"
+  }
+
+  @operator_values %{
+    :eq => "?",
+    :== => "?",
+    :not_eq => "?",
+    :!= => "?",
+    :gt => "?",
+    :> => "?",
+    :gte => "?",
+    :>= => "?",
+    :lt => "?",
+    :< => "?",
+    :lte => "?",
+    :<= => "?",
+    :contains => "?",
+    :contains_key => "?",
+    :starts_with => "?",
+    :ends_with => "?"
+  }
+
+  # Helper to resolve operator CQL syntax for raw values (not %{value: ...} maps).
+  # Uses multi-clause function to avoid LSP type-narrowing warnings.
+  defp operator_cql(:is_nil, right, _params) when right in [true, false] do
+    if right, do: {"IS NULL", "", []}, else: {"IS NOT NULL", "", []}
+  end
+
+  defp operator_cql(:starts_with, _right, params) do
+    {"LIKE", "%?", params}
+  end
+
+  defp operator_cql(:ends_with, _right, params) do
+    {"LIKE", "?%", params}
+  end
+
+  defp operator_cql(:contains, _right, params) do
+    {"CONTAINS", "?", params}
+  end
+
+  defp operator_cql(:contains_key, _right, params) do
+    {"CONTAINS KEY", "?", params}
+  end
+
+  defp operator_cql(op, _right, params) do
+    {Map.get(@operator_mapping, op, "="), Map.get(@operator_values, op, "?"), params}
+  end
+
   @doc """
   Converts Ash filter expressions to CQL (safe version).
 
@@ -462,80 +530,141 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   end
 
   def filter_to_cql(%{op: op, left: left, right: right}) do
-    with {left_cql, left_params} <- filter_to_cql(left),
-         {right_cql, right_params} <- filter_to_cql(right) do
-      case op do
-        :and ->
-          {["(", left_cql, ") AND (", right_cql, ")"], left_params ++ right_params}
+    case filter_to_cql(left) do
+      {:error, _} = error ->
+        error
 
-        :or ->
-          {["(", left_cql, ") OR (", right_cql, ")"], left_params ++ right_params}
+      {left_cql, left_params} ->
+        case filter_to_cql(right) do
+          {:error, _} = error ->
+            error
 
-        _ ->
-          {"", []}
-      end
+          {right_cql, right_params} ->
+            case op do
+              :and ->
+                {["(", left_cql, ") AND (", right_cql, ")"], left_params ++ right_params}
+
+              :or ->
+                {["(", left_cql, ") OR (", right_cql, ")"], left_params ++ right_params}
+
+              _ ->
+                filter_to_cql(%{operator: op, left: left, right: right})
+            end
+        end
     end
     |> maybe_iodata_to_binary()
   end
 
-  @operator_mapping %{
-    :eq => "=",
-    :not_eq => "!=",
-    :gt => ">",
-    :gte => ">=",
-    :lt => "<",
-    :lte => "<=",
-    :contains => "CONTAINS",
-    :contains_key => "CONTAINS KEY",
-    :starts_with => "LIKE",
-    :ends_with => "LIKE"
-  }
-
-  @operator_values %{
-    :contains => "?",
-    :contains_key => "?",
-    :starts_with => "?",
-    :ends_with => "?"
-  }
-
   def filter_to_cql(%{operator: op, left: left, right: right}) do
-    with {left_cql, left_params} <- filter_to_cql(left) do
-      case {op, right} do
-        {:in, %{value: values}} when is_list(values) ->
-          placeholders = Enum.map_join(Enum.to_list(1..length(values)//1), ", ", fn _ -> "?" end)
-          {"#{left_cql} IN (#{placeholders})", left_params ++ values}
+    case filter_to_cql(left) do
+      {:error, _} = error ->
+        error
 
-        {:exists, _} ->
-          # EXISTS check - column is not null
-          {"#{left_cql} IS NOT NULL", left_params}
+      {left_cql, left_params} ->
+        case filter_to_cql(right) do
+          {:error, {:unknown_filter, raw_value}} ->
+            # Raw value on the right side of an operator (e.g. DateTime, string, number)
+            # Handle operators that need special CQL syntax with raw values
+            case op do
+              :in when is_list(raw_value) ->
+                build_in_clause(left_cql, left_params ++ raw_value)
 
-        {:token, %{value: keys}} when is_list(keys) ->
-          # TOKEN() function for partition key queries
-          key_list = Enum.map_join(left_cql, ", ", & &1)
-          placeholder_list = Enum.map_join(Enum.to_list(1..length(keys)), ", ", fn _ -> "?" end)
-          {"TOKEN(#{key_list}) = TOKEN(#{placeholder_list})", left_params ++ keys}
+              :in when is_struct(raw_value, MapSet) ->
+                raw_value
+                |> MapSet.to_list()
+                |> then(&build_in_clause(left_cql, left_params ++ &1))
 
-        {:starts_with, %{value: value}} ->
-          {"#{left_cql} LIKE %?", left_params ++ [value]}
+              :is_nil when raw_value in [true, false] ->
+                if raw_value,
+                  do: {"#{left_cql} IS NULL", left_params},
+                  else: {"#{left_cql} IS NOT NULL", left_params}
 
-        {:ends_with, %{value: value}} ->
-          {"#{left_cql} LIKE ?%", left_params ++ [value]}
+              :starts_with ->
+                {"#{left_cql} LIKE %?", left_params ++ [raw_value]}
 
-        {:contains, %{value: value}} ->
-          {"#{left_cql} LIKE ?", left_params ++ [value]}
+              :ends_with ->
+                {"#{left_cql} LIKE ?%", left_params ++ [raw_value]}
 
-        _ ->
-          case filter_to_cql(right) do
-            {:error, _} = error ->
-              error
+              :contains ->
+                {"#{left_cql} LIKE ?", left_params ++ [raw_value]}
 
-            {_right_cql, right_params} ->
-              cql_op = Map.get(@operator_mapping, op, "=")
-              cql_val = Map.get(@operator_values, op, "?")
-              {"#{left_cql} #{cql_op} #{cql_val}", left_params ++ right_params}
-          end
-      end
+              :contains_key ->
+                {"#{left_cql} CONTAINS KEY ?", left_params ++ [raw_value]}
+
+              :exists ->
+                {"#{left_cql} IS NOT NULL", left_params}
+
+              _ ->
+                cql_op = Map.get(@operator_mapping, op, "=")
+                cql_val = Map.get(@operator_values, op, "?")
+                {"#{left_cql} #{cql_op} #{cql_val}", left_params ++ [raw_value]}
+            end
+
+          {_right_cql, right_params} ->
+            case {op, right} do
+              {:in, %{value: values}} when is_list(values) ->
+                build_in_clause(left_cql, left_params ++ values)
+
+              {:in, values} when is_list(values) ->
+                build_in_clause(left_cql, left_params ++ values)
+
+              {:in, %MapSet{} = values} ->
+                values
+                |> MapSet.to_list()
+                |> then(&build_in_clause(left_cql, left_params ++ &1))
+
+              {:is_nil, %{value: true}} ->
+                {"#{left_cql} IS NULL", left_params}
+
+              {:is_nil, %{value: false}} ->
+                {"#{left_cql} IS NOT NULL", left_params}
+
+              {:is_nil, true} ->
+                {"#{left_cql} IS NULL", left_params}
+
+              {:is_nil, false} ->
+                {"#{left_cql} IS NOT NULL", left_params}
+
+              {:token, %{value: keys}} when is_list(keys) ->
+                build_token_clause(Enum.map(left_cql, & &1), keys)
+
+              {:token, keys} when is_list(keys) ->
+                build_token_clause(Enum.map(left_cql, & &1), keys)
+
+              {:exists, _} ->
+                {"#{left_cql} IS NOT NULL", left_params}
+
+              {:starts_with, %{value: value}} ->
+                {"#{left_cql} LIKE %?", left_params ++ [value]}
+
+              {:ends_with, %{value: value}} ->
+                {"#{left_cql} LIKE ?%", left_params ++ [value]}
+
+              {:contains, %{value: value}} ->
+                {"#{left_cql} LIKE ?", left_params ++ [value]}
+
+              {:contains_key, %{value: value}} ->
+                {"#{left_cql} CONTAINS KEY ?", left_params ++ [value]}
+
+              _ ->
+                # Handle operators that need special CQL syntax even when right side
+                # is a raw value (not a %{value: ...} map)
+                {cql_op, cql_val, extra_params} =
+                  operator_cql(op, right, right_params)
+
+                {"#{left_cql} #{cql_op} #{cql_val}", left_params ++ extra_params}
+            end
+        end
     end
+    |> maybe_iodata_to_binary()
+  end
+
+  def filter_to_cql(%{op: op, name: name, right: right}) do
+    filter_to_cql(%{operator: op, left: %{name: name}, right: right})
+  end
+
+  def filter_to_cql(%Ash.Query.Ref{attribute: attribute}) do
+    {cql_identifier(attribute_name(attribute)), []}
   end
 
   def filter_to_cql(%{value: value}) do
@@ -543,12 +672,54 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   end
 
   def filter_to_cql(%{name: name}) do
-    {"#{name}", []}
+    {cql_identifier(name), []}
   end
 
   def filter_to_cql(unknown) do
-    Logger.warning("AshScylla: Unknown filter expression: #{inspect(unknown)}")
-    {:error, {:unknown_filter, unknown}}
+    # Raw value — return it as a parameter placeholder so parent operators can use it
+    # This handles cases like: %{operator: :eq, left: %{name: :status}, right: "active"}
+    # where the right side is a raw value, not a filter expression
+    case unknown do
+      nil ->
+        {"?", [nil]}
+
+      val when is_boolean(val) ->
+        {"?", [val]}
+
+      val when is_number(val) ->
+        {"?", [val]}
+
+      val when is_binary(val) ->
+        {"?", [val]}
+
+      val when is_struct(val, DateTime) ->
+        {"?", [val]}
+
+      val when is_struct(val, Date) ->
+        {"?", [val]}
+
+      val when is_struct(val, Time) ->
+        {"?", [val]}
+
+      val when is_struct(val, Decimal) ->
+        {"?", [val]}
+
+      val when is_list(val) ->
+        {"?", [val]}
+
+      val when is_map(val) ->
+        {"?", [val]}
+
+      val when is_tuple(val) ->
+        {"?", [val]}
+
+      val when is_atom(val) ->
+        {"?", [val]}
+
+      _ ->
+        Logger.warning("AshScylla: Unknown filter expression: #{inspect(unknown)}")
+        {:error, {:unknown_filter, unknown}}
+    end
   end
 
   @doc """
@@ -656,26 +827,26 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   # TOKEN() function support
   # ============================================================================
 
-  @doc """
-  Builds a TOKEN() function clause for partition key queries.
-
-  TOKEN() is used in CQL to query by the token of partition keys,
-  enabling efficient range queries across the ring.
-
-  ## Examples
-
-      build_token_clause([:id], [uuid_value])
-      # => {"TOKEN(id) = TOKEN(?)", [uuid_value]}
-
-      build_token_clause([:org_id, :id], [org_val, id_val])
-      # => {"TOKEN(org_id, id) = TOKEN(?, ?)", [org_val, id_val]}
-  """
   @spec build_token_clause(list(), list()) :: {String.t(), list()}
-  def build_token_clause(keys, values) when is_list(keys) and is_list(values) do
-    key_list = Enum.map_join(keys, ", ", &"#{&1}")
+  defp build_token_clause(keys, values) when is_list(keys) and is_list(values) do
+    key_list = Enum.map_join(keys, ", ", &cql_identifier(&1))
     placeholder_list = Enum.map_join(Enum.to_list(1..length(values)), ", ", fn _ -> "?" end)
     {"TOKEN(#{key_list}) = TOKEN(#{placeholder_list})", values}
   end
+
+  defp build_in_clause(left_cql, values) do
+    placeholders = Enum.map_join(Enum.to_list(1..length(values)//1), ", ", fn _ -> "?" end)
+    {"#{left_cql} IN (#{placeholders})", values}
+  end
+
+  defp cql_identifier(name) do
+    name
+    |> to_string()
+    |> Identifier.sanitize!()
+  end
+
+  defp attribute_name(%{name: name}), do: name
+  defp attribute_name(name), do: name
 
   # ============================================================================
   # Private helpers

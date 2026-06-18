@@ -10,20 +10,78 @@ defmodule AshScylla.EdgeCasesTest do
   alias AshScylla.Migration
 
   describe "filter_to_cql/1 edge cases" do
-    test "unknown map filter returns error" do
-      assert {:error, {:unknown_filter, %{foo: :bar}}} = QueryBuilder.filter_to_cql(%{foo: :bar})
+    test "unknown map filter returns placeholder" do
+      # Raw maps are now treated as parameter values
+      assert {"?", [%{foo: :bar}]} = QueryBuilder.filter_to_cql(%{foo: :bar})
     end
 
-    test "nil filter returns error" do
-      assert {:error, {:unknown_filter, nil}} = QueryBuilder.filter_to_cql(nil)
+    test "nil filter returns placeholder with nil param" do
+      # Raw nil is treated as a parameter value with placeholder
+      assert {"?", [nil]} = QueryBuilder.filter_to_cql(nil)
     end
 
-    test "atom filter returns error" do
-      assert {:error, {:unknown_filter, :x}} = QueryBuilder.filter_to_cql(:x)
+    test "atom filter returns placeholder" do
+      # Raw atoms are now treated as parameter values
+      assert {"?", [:x]} = QueryBuilder.filter_to_cql(:x)
     end
 
-    test "string filter returns error" do
-      assert {:error, {:unknown_filter, "s"}} = QueryBuilder.filter_to_cql("s")
+    test "string filter returns placeholder" do
+      # Raw strings are now treated as parameter values
+      assert {"?", ["s"]} = QueryBuilder.filter_to_cql("s")
+    end
+
+    test "boolean filter returns placeholder" do
+      assert {"?", [true]} = QueryBuilder.filter_to_cql(true)
+      assert {"?", [false]} = QueryBuilder.filter_to_cql(false)
+    end
+
+    test "integer filter returns placeholder" do
+      assert {"?", [42]} = QueryBuilder.filter_to_cql(42)
+    end
+
+    test "float filter returns placeholder" do
+      assert {"?", [3.14]} = QueryBuilder.filter_to_cql(3.14)
+    end
+
+    test "DateTime filter returns placeholder" do
+      dt = ~U[2024-06-15 12:30:00Z]
+      assert {"?", [^dt]} = QueryBuilder.filter_to_cql(dt)
+    end
+
+    test "Date filter returns placeholder" do
+      d = ~D[2024-06-15]
+      assert {"?", [^d]} = QueryBuilder.filter_to_cql(d)
+    end
+
+    test "Time filter returns placeholder" do
+      t = ~T[12:30:00]
+      assert {"?", [^t]} = QueryBuilder.filter_to_cql(t)
+    end
+
+    test "list filter returns placeholder" do
+      assert {"?", [["a", "b"]]} = QueryBuilder.filter_to_cql(["a", "b"])
+    end
+
+    test "tuple filter returns placeholder" do
+      assert {"?", [{192, 168, 1, 1}]} = QueryBuilder.filter_to_cql({192, 168, 1, 1})
+    end
+
+    test "Decimal filter returns placeholder" do
+      d = Decimal.new("3.14")
+      assert {"?", [^d]} = QueryBuilder.filter_to_cql(d)
+    end
+
+    test "serialized binary term returns placeholder" do
+      # Binaries (including serialized Erlang terms) are treated as raw values
+      serialized = :erlang.term_to_binary(<<1, 2, 3>>)
+      assert {"?", [^serialized]} = QueryBuilder.filter_to_cql(serialized)
+    end
+
+    test "truly unknown term returns error" do
+      # Terms that don't match any basic type pattern still return error
+      # (this branch is effectively unreachable for normal Elixir terms)
+      assert {:error, {:unknown_filter, _}} =
+               QueryBuilder.filter_to_cql(self())
     end
 
     test "empty IN list" do
@@ -141,10 +199,17 @@ defmodule AshScylla.EdgeCasesTest do
     end
 
     test "bang version raises on unknown" do
+      # PIDs are not basic types, so they should raise
       assert_raise ArgumentError, fn ->
-        :bad
-        |> :erlang.term_to_binary()
-        |> :erlang.binary_to_term()
+        self()
+        |> then(&QueryBuilder.filter_to_cql!/1)
+      end
+    end
+
+    test "bang version raises on reference" do
+      # References are not basic types, so they should raise
+      assert_raise ArgumentError, fn ->
+        make_ref()
         |> then(&QueryBuilder.filter_to_cql!/1)
       end
     end
@@ -154,6 +219,474 @@ defmodule AshScylla.EdgeCasesTest do
       {cql, params} = QueryBuilder.filter_to_cql!(filter)
       assert cql == "id = ?"
       assert params == ["a"]
+    end
+  end
+
+  describe "filter_to_cql/1 with raw values (Ash operator format)" do
+    test "equality with raw string value" do
+      filter = %{operator: :==, left: %{name: "id"}, right: "abc-123"}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "id = ?"
+      assert params == ["abc-123"]
+    end
+
+    test "equality with raw integer value" do
+      filter = %{operator: :==, left: %{name: "count"}, right: 42}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "count = ?"
+      assert params == [42]
+    end
+
+    test "greater than or equal with raw DateTime" do
+      dt = ~U[2025-06-17 00:00:00Z]
+      filter = %{operator: :>=, left: %{name: "started_at"}, right: dt}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "started_at >= ?"
+      assert params == [dt]
+    end
+
+    test "less than or equal with raw DateTime" do
+      dt = ~U[2026-06-18 00:00:00Z]
+      filter = %{operator: :<=, left: %{name: "started_at"}, right: dt}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "started_at <= ?"
+      assert params == [dt]
+    end
+
+    test "greater than with raw Date" do
+      d = ~D[2025-06-17]
+      filter = %{operator: :>, left: %{name: "created_date"}, right: d}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "created_date > ?"
+      assert params == [d]
+    end
+
+    test "equality with raw float value" do
+      filter = %{operator: :==, left: %{name: "score"}, right: 3.14}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "score = ?"
+      assert params == [3.14]
+    end
+
+    test "equality with raw boolean value" do
+      filter = %{operator: :==, left: %{name: "active"}, right: true}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "active = ?"
+      assert params == [true]
+    end
+
+    test "equality with raw nil value" do
+      filter = %{operator: :==, left: %{name: "deleted_at"}, right: nil}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "deleted_at = ?"
+      assert params == [nil]
+    end
+
+    test "not equal with raw string value" do
+      filter = %{operator: :!=, left: %{name: "status"}, right: "deleted"}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "status != ?"
+      assert params == ["deleted"]
+    end
+
+    test "IN with raw list value" do
+      filter = %{operator: :in, left: %{name: "status"}, right: ["active", "pending"]}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "status IN (?, ?)"
+      assert params == ["active", "pending"]
+    end
+
+    test "IN with MapSet value" do
+      filter = %{operator: :in, left: %{name: "status"}, right: MapSet.new(["active", "pending"])}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "status IN (?, ?)"
+      assert "active" in params
+      assert "pending" in params
+    end
+
+    test "is_nil with raw true" do
+      filter = %{operator: :is_nil, left: %{name: "deleted_at"}, right: true}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "deleted_at IS NULL"
+      assert params == []
+    end
+
+    test "is_nil with raw false" do
+      filter = %{operator: :is_nil, left: %{name: "deleted_at"}, right: false}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "deleted_at IS NOT NULL"
+      assert params == []
+    end
+
+    test "starts_with with raw string value" do
+      filter = %{operator: :starts_with, left: %{name: "name"}, right: "Jo"}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "name LIKE %?"
+      assert params == ["Jo"]
+    end
+
+    test "ends_with with raw string value" do
+      filter = %{operator: :ends_with, left: %{name: "email"}, right: ".com"}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "email LIKE ?%"
+      assert params == [".com"]
+    end
+
+    test "contains with raw string value" do
+      filter = %{operator: :contains, left: %{name: "bio"}, right: "elixir"}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "bio CONTAINS ?"
+      assert params == ["elixir"]
+    end
+
+    test "raw value with unknown operator falls back to =" do
+      filter = %{operator: :custom_op, left: %{name: "field"}, right: "val"}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "field = ?"
+      assert params == ["val"]
+    end
+  end
+
+  describe "filter_to_cql/1 with raw DateTime range (issue repro)" do
+    test "reproduces the exact issue: uuid equality + datetime range" do
+      user_id = "019ed48d-f65a-7c9b-8ab9-a25a17829709"
+      start_dt = ~U[2025-06-17 00:00:00Z]
+      end_dt = ~U[2026-06-18 00:00:00Z]
+
+      filter = %{
+        op: :and,
+        left: %{
+          op: :and,
+          left: %{operator: :==, left: %{name: "user_id"}, right: user_id},
+          right: %{operator: :>=, left: %{name: "started_at"}, right: start_dt}
+        },
+        right: %{operator: :<=, left: %{name: "started_at"}, right: end_dt}
+      }
+
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+
+      assert cql == "((user_id = ?) AND (started_at >= ?)) AND (started_at <= ?)"
+      assert params == [user_id, start_dt, end_dt]
+    end
+
+    test "single datetime equality filter" do
+      dt = ~U[2025-06-17 00:00:00Z]
+      filter = %{operator: :==, left: %{name: "created_at"}, right: dt}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "created_at = ?"
+      assert params == [dt]
+    end
+
+    test "datetime range with only gte" do
+      dt = ~U[2025-06-17 00:00:00Z]
+      filter = %{operator: :>=, left: %{name: "started_at"}, right: dt}
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "started_at >= ?"
+      assert params == [dt]
+    end
+
+    test "nested AND with multiple datetime fields" do
+      start_dt = ~U[2025-01-01 00:00:00Z]
+      end_dt = ~U[2025-12-31 23:59:59Z]
+
+      filter = %{
+        op: :and,
+        left: %{operator: :>=, left: %{name: "started_at"}, right: start_dt},
+        right: %{operator: :<=, left: %{name: "ended_at"}, right: end_dt}
+      }
+
+      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      assert cql == "(started_at >= ?) AND (ended_at <= ?)"
+      assert params == [start_dt, end_dt]
+    end
+  end
+
+  describe "build_optimized_query/1 with raw value filters (full pipeline)" do
+    test "full query with uuid equality + datetime range" do
+      start_dt = ~U[2025-06-17 00:00:00Z]
+      end_dt = ~U[2026-06-18 00:00:00Z]
+
+      filter = %{
+        op: :and,
+        left: %{
+          op: :and,
+          left: %{
+            operator: :==,
+            left: %{name: "user_id"},
+            right: "019ed48d-f65a-7c9b-8ab9-a25a17829709"
+          },
+          right: %{operator: :>=, left: %{name: "started_at"}, right: start_dt}
+        },
+        right: %{operator: :<=, left: %{name: "started_at"}, right: end_dt}
+      }
+
+      dlq = %DataLayer{
+        resource: nil,
+        repo: nil,
+        table: "members",
+        filters: [filter],
+        sorts: [started_at: :desc],
+        limit: nil,
+        offset: nil,
+        select: nil,
+        tenant: nil
+      }
+
+      {q, params} = QueryBuilder.build_optimized_query(dlq)
+
+      assert q ==
+               "SELECT * FROM members WHERE ((user_id = ?) AND (started_at >= ?)) AND (started_at <= ?) ORDER BY started_at desc"
+
+      assert params == ["019ed48d-f65a-7c9b-8ab9-a25a17829709", start_dt, end_dt]
+
+      # Verify parentheses are balanced
+      opens = q |> String.graphemes() |> Enum.count(&(&1 == "("))
+      closes = q |> String.graphemes() |> Enum.count(&(&1 == ")"))
+      assert opens == closes
+    end
+
+    test "full query with limit and raw datetime" do
+      dt = ~U[2025-06-17 00:00:00Z]
+
+      filter = %{
+        op: :and,
+        left: %{operator: :==, left: %{name: "status"}, right: "active"},
+        right: %{operator: :>=, left: %{name: "created_at"}, right: dt}
+      }
+
+      dlq = %DataLayer{
+        resource: nil,
+        repo: nil,
+        table: "events",
+        filters: [filter],
+        sorts: [],
+        limit: 50,
+        offset: nil,
+        select: nil,
+        tenant: nil
+      }
+
+      {q, params} = QueryBuilder.build_optimized_query(dlq)
+
+      assert q == "SELECT * FROM events WHERE (status = ?) AND (created_at >= ?) LIMIT ?"
+      assert params == ["active", dt, 50]
+    end
+
+    test "full query with select columns and raw values" do
+      dt = ~U[2025-01-01 00:00:00Z]
+
+      filter = %{operator: :>=, left: %{name: "started_at"}, right: dt}
+
+      dlq = %DataLayer{
+        resource: nil,
+        repo: nil,
+        table: "games",
+        filters: [filter],
+        sorts: [started_at: :desc],
+        limit: 100,
+        offset: nil,
+        select: [:id, :name, :started_at],
+        tenant: nil
+      }
+
+      {q, params} = QueryBuilder.build_optimized_query(dlq)
+
+      assert q ==
+               "SELECT id, name, started_at FROM games WHERE started_at >= ? ORDER BY started_at desc LIMIT ?"
+
+      assert params == [dt, 100]
+    end
+
+    test "full query with OR and raw values" do
+      filter = %{
+        op: :or,
+        left: %{operator: :==, left: %{name: "status"}, right: "active"},
+        right: %{operator: :==, left: %{name: "status"}, right: "pending"}
+      }
+
+      dlq = %DataLayer{
+        resource: nil,
+        repo: nil,
+        table: "tasks",
+        filters: [filter],
+        sorts: [],
+        limit: nil,
+        offset: nil,
+        select: nil,
+        tenant: nil
+      }
+
+      {q, params} = QueryBuilder.build_optimized_query(dlq)
+
+      assert q == "SELECT * FROM tasks WHERE (status = ?) OR (status = ?)"
+      assert params == ["active", "pending"]
+    end
+
+    test "full query with nested AND/OR and raw values" do
+      dt = ~U[2025-06-01 00:00:00Z]
+
+      filter = %{
+        op: :and,
+        left: %{
+          op: :or,
+          left: %{operator: :==, left: %{name: "status"}, right: "active"},
+          right: %{operator: :==, left: %{name: "status"}, right: "pending"}
+        },
+        right: %{operator: :>=, left: %{name: "created_at"}, right: dt}
+      }
+
+      dlq = %DataLayer{
+        resource: nil,
+        repo: nil,
+        table: "items",
+        filters: [filter],
+        sorts: [created_at: :asc],
+        limit: 25,
+        offset: nil,
+        select: nil,
+        tenant: nil
+      }
+
+      {q, params} = QueryBuilder.build_optimized_query(dlq)
+
+      assert q ==
+               "SELECT * FROM items WHERE ((status = ?) OR (status = ?)) AND (created_at >= ?) ORDER BY created_at asc LIMIT ?"
+
+      assert params == ["active", "pending", dt, 25]
+
+      # Verify balanced parens
+      opens = q |> String.graphemes() |> Enum.count(&(&1 == "("))
+      closes = q |> String.graphemes() |> Enum.count(&(&1 == ")"))
+      assert opens == closes
+    end
+
+    test "full query with is_nil raw boolean" do
+      filter = %{
+        op: :and,
+        left: %{operator: :==, left: %{name: "status"}, right: "active"},
+        right: %{operator: :is_nil, left: %{name: "deleted_at"}, right: true}
+      }
+
+      dlq = %DataLayer{
+        resource: nil,
+        repo: nil,
+        table: "records",
+        filters: [filter],
+        sorts: [],
+        limit: nil,
+        offset: nil,
+        select: nil,
+        tenant: nil
+      }
+
+      {q, params} = QueryBuilder.build_optimized_query(dlq)
+
+      assert q == "SELECT * FROM records WHERE (status = ?) AND (deleted_at IS NULL)"
+      assert params == ["active"]
+    end
+
+    test "full query with IN raw list" do
+      filter = %{
+        op: :and,
+        left: %{operator: :in, left: %{name: "status"}, right: ["active", "pending", "archived"]},
+        right: %{operator: :>=, left: %{name: "created_at"}, right: ~U[2025-01-01 00:00:00Z]}
+      }
+
+      dlq = %DataLayer{
+        resource: nil,
+        repo: nil,
+        table: "posts",
+        filters: [filter],
+        sorts: [],
+        limit: nil,
+        offset: nil,
+        select: nil,
+        tenant: nil
+      }
+
+      {q, params} = QueryBuilder.build_optimized_query(dlq)
+
+      assert q == "SELECT * FROM posts WHERE (status IN (?, ?, ?)) AND (created_at >= ?)"
+      assert params == ["active", "pending", "archived", ~U[2025-01-01 00:00:00Z]]
+    end
+  end
+
+  describe "CQL syntax validation" do
+    test "parentheses are balanced for deeply nested AND" do
+      filter = %{
+        op: :and,
+        left: %{
+          op: :and,
+          left: %{
+            op: :and,
+            left: %{operator: :==, left: %{name: "a"}, right: 1},
+            right: %{operator: :==, left: %{name: "b"}, right: 2}
+          },
+          right: %{operator: :==, left: %{name: "c"}, right: 3}
+        },
+        right: %{operator: :==, left: %{name: "d"}, right: 4}
+      }
+
+      {cql, _} = QueryBuilder.filter_to_cql(filter)
+      opens = cql |> String.graphemes() |> Enum.count(&(&1 == "("))
+      closes = cql |> String.graphemes() |> Enum.count(&(&1 == ")"))
+      assert opens == closes
+      assert opens > 0
+    end
+
+    test "parentheses are balanced for mixed AND/OR" do
+      filter = %{
+        op: :or,
+        left: %{
+          op: :and,
+          left: %{operator: :==, left: %{name: "a"}, right: 1},
+          right: %{operator: :==, left: %{name: "b"}, right: 2}
+        },
+        right: %{
+          op: :and,
+          left: %{operator: :==, left: %{name: "c"}, right: 3},
+          right: %{operator: :==, left: %{name: "d"}, right: 4}
+        }
+      }
+
+      {cql, _} = QueryBuilder.filter_to_cql(filter)
+      opens = cql |> String.graphemes() |> Enum.count(&(&1 == "("))
+      closes = cql |> String.graphemes() |> Enum.count(&(&1 == ")"))
+      assert opens == closes
+    end
+
+    test "no trailing open paren for simple filter" do
+      filter = %{operator: :==, left: %{name: "id"}, right: "abc"}
+      {cql, _} = QueryBuilder.filter_to_cql(filter)
+      refute String.starts_with?(cql, "(")
+      assert cql == "id = ?"
+    end
+
+    test "full query has no dangling parens" do
+      filter = %{
+        op: :and,
+        left: %{operator: :>=, left: %{name: "started_at"}, right: ~U[2025-06-17 00:00:00Z]},
+        right: %{operator: :<=, left: %{name: "started_at"}, right: ~U[2026-06-18 00:00:00Z]}
+      }
+
+      dlq = %DataLayer{
+        resource: nil,
+        repo: nil,
+        table: "t",
+        filters: [filter],
+        sorts: [],
+        limit: nil,
+        offset: nil,
+        select: nil,
+        tenant: nil
+      }
+
+      {q, _} = QueryBuilder.build_optimized_query(dlq)
+
+      opens = q |> String.graphemes() |> Enum.count(&(&1 == "("))
+      closes = q |> String.graphemes() |> Enum.count(&(&1 == ")"))
+      assert opens == closes
+      assert String.ends_with?(q, "started_at desc") or not String.contains?(q, "ORDER")
     end
   end
 
@@ -403,38 +936,38 @@ defmodule AshScylla.EdgeCasesTest do
       assert p == ["a", 18, 65]
     end
 
-    test "skips invalid filter" do
-      # Invalid filters are now skipped with a warning instead of raising
+    test "skips truly invalid filter" do
+      # Truly invalid filters (not basic types) are still skipped with a warning
       result = QueryBuilder.build_where_clause([:bad])
       assert is_tuple(result)
     end
 
-    test "skips string filter and returns empty clause" do
-      # A raw string filter (e.g. a UUID passed incorrectly) should be skipped
+    test "raw string filter produces placeholder clause" do
+      # Raw strings are now treated as parameter values, producing a placeholder
       {clause, params} = QueryBuilder.build_where_clause(["5f76eab7-be8b-4a47-9d97-c36f6e42db0f"])
-      assert clause == ""
-      assert params == []
+      assert clause == "?"
+      assert params == ["5f76eab7-be8b-4a47-9d97-c36f6e42db0f"]
     end
 
-    test "skips atom filter and returns empty clause" do
+    test "raw atom filter produces placeholder clause" do
       {clause, params} = QueryBuilder.build_where_clause([:invalid_atom])
-      assert clause == ""
-      assert params == []
+      assert clause == "?"
+      assert params == [:invalid_atom]
     end
 
-    test "skips nil filter and returns empty clause" do
+    test "raw nil filter produces placeholder clause" do
       {clause, params} = QueryBuilder.build_where_clause([nil])
-      assert clause == ""
-      assert params == []
+      assert clause == "?"
+      assert params == [nil]
     end
 
-    test "skips integer filter and returns empty clause" do
+    test "raw integer filter produces placeholder clause" do
       {clause, params} = QueryBuilder.build_where_clause([42])
-      assert clause == ""
-      assert params == []
+      assert clause == "?"
+      assert params == [42]
     end
 
-    test "valid filters still work when mixed with invalid ones" do
+    test "valid filters still work when mixed with raw values" do
       filters = [
         :invalid,
         %{operator: :eq, left: %{name: :status}, right: %{value: "active"}},
@@ -449,10 +982,11 @@ defmodule AshScylla.EdgeCasesTest do
       assert 18 in params
     end
 
-    test "all invalid filters produce empty clause" do
+    test "all raw value filters produce placeholder clauses" do
       {clause, params} = QueryBuilder.build_where_clause([:a, :b, "c", nil, 42])
-      assert clause == ""
-      assert params == []
+      # Raw values produce placeholders; nil produces empty
+      assert clause != ""
+      assert is_list(params)
     end
   end
 
