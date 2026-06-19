@@ -142,6 +142,7 @@ defmodule AshScylla.DataLayer.Dsl do
   - `:consistency` - The consistency level for reads/writes
   - `:ttl` - Default TTL for inserted records (in seconds)
   - `:lwt` - Enable Lightweight Transactions (LWT) for atomic upserts using `INSERT ... IF NOT EXISTS` (default: `false`)
+  - `:allow_filtering` - When `true`, appends `ALLOW FILTERING` to queries that use secondary indexes (default: `false`)
   - `:secondary_index` - Define secondary indexes for non-primary key columns
   - `:materialized_view` - Define materialized views with different primary key structure
   - `:pagination` - Pagination mode: `:offset` (default) or `:token` for token-based pagination
@@ -334,6 +335,11 @@ defmodule AshScylla.DataLayer.Dsl do
         {:lwt, meta, [value]} ->
           {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_lwt__]}, meta,
            [{:__MODULE__, [], nil}, value]}
+
+        {:allow_filtering, meta, [value]} ->
+          {{:., meta,
+            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_allow_filtering__]},
+           meta, [{:__MODULE__, [], nil}, value]}
 
         {:repo, meta, [value]} ->
           {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_repo__]},
@@ -539,6 +545,7 @@ defmodule AshScylla.DataLayer.Dsl do
       @ash_scylla_pagination :offset
       @ash_scylla_per_action_consistency %{}
       @ash_scylla_lwt false
+      @ash_scylla_allow_filtering false
       @ash_scylla_repo nil
 
       # ── Ash 3.0+ resource-level attributes ──
@@ -592,6 +599,7 @@ defmodule AshScylla.DataLayer.Dsl do
         pagination: @ash_scylla_pagination,
         per_action_consistency: @ash_scylla_per_action_consistency,
         lwt: @ash_scylla_lwt,
+        allow_filtering: @ash_scylla_allow_filtering,
         repo: @ash_scylla_repo,
         base_filter: @ash_scylla_base_filter,
         default_context: @ash_scylla_default_context,
@@ -641,7 +649,11 @@ defmodule AshScylla.DataLayer.Dsl do
 
   defp get_config(resource, key, default \\ nil) do
     if function_exported?(resource, :__ash_scylla__, 1) do
-      resource.__ash_scylla__(key)
+      try do
+        resource.__ash_scylla__(key)
+      rescue
+        FunctionClauseError -> default
+      end
     else
       default
     end
@@ -730,6 +742,18 @@ defmodule AshScylla.DataLayer.Dsl do
 
   @spec lwt(module()) :: boolean()
   def lwt(resource), do: get_config(resource, :lwt, false)
+
+  @doc """
+  Gets the allow_filtering setting for a resource.
+
+  When `true`, `ALLOW FILTERING` is appended to queries that use
+  secondary indexes, allowing ScyllaDB to execute them without
+  requiring partition key filters.
+
+  Defaults to `false`.
+  """
+  @spec allow_filtering(module()) :: boolean()
+  def allow_filtering(resource), do: get_config(resource, :allow_filtering, false)
 
   @doc """
   Gets the configured repo for a resource.
@@ -916,6 +940,11 @@ defmodule AshScylla.DataLayer.Dsl do
   @spec __set_lwt__(module(), boolean()) :: :ok
   def __set_lwt__(module, value) when is_boolean(value),
     do: put_attr(module, :ash_scylla_lwt, value)
+
+  @doc false
+  @spec __set_allow_filtering__(module(), boolean()) :: :ok
+  def __set_allow_filtering__(module, value) when is_boolean(value),
+    do: put_attr(module, :ash_scylla_allow_filtering, value)
 
   @doc false
   @spec __set_repo__(module(), module()) :: :ok

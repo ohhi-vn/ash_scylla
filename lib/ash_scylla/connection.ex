@@ -123,6 +123,8 @@ defmodule AshScylla.Connection do
         Xandra.execute(conn, query, typed_params(params), opts)
 
       {keyspace, opts} ->
+        validate_keyspace!(keyspace)
+
         with {:ok, _} <- Xandra.execute(conn, "USE #{keyspace}", []) do
           Xandra.execute(conn, query, typed_params(params), opts)
         end
@@ -141,7 +143,13 @@ defmodule AshScylla.Connection do
         if request_keyspace && request_keyspace != conn.keyspace do
           GenServer.call(name, {:set_keyspace, request_keyspace}, 5_000)
           opts = Keyword.delete(opts, :keyspace)
-          query(%__MODULE__{conn | keyspace: request_keyspace, keyspace_used: true}, query, params, opts)
+
+          query(
+            %__MODULE__{conn | keyspace: request_keyspace, keyspace_used: true},
+            query,
+            params,
+            opts
+          )
         else
           ensure_keyspace!(conn, name)
           opts = Keyword.delete(opts, :keyspace)
@@ -191,6 +199,8 @@ defmodule AshScylla.Connection do
         Xandra.execute!(conn, query, typed_params(params), opts)
 
       {keyspace, opts} ->
+        validate_keyspace!(keyspace)
+
         with {:ok, _} <- Xandra.execute(conn, "USE #{keyspace}", []) do
           Xandra.execute!(conn, query, typed_params(params), opts)
         end
@@ -208,7 +218,13 @@ defmodule AshScylla.Connection do
         if request_keyspace && request_keyspace != conn.keyspace do
           GenServer.call(name, {:set_keyspace, request_keyspace}, 5_000)
           opts = Keyword.delete(opts, :keyspace)
-          query!(%__MODULE__{conn | keyspace: request_keyspace, keyspace_used: true}, query, params, opts)
+
+          query!(
+            %__MODULE__{conn | keyspace: request_keyspace, keyspace_used: true},
+            query,
+            params,
+            opts
+          )
         else
           ensure_keyspace!(conn, name)
           opts = Keyword.delete(opts, :keyspace)
@@ -267,6 +283,23 @@ defmodule AshScylla.Connection do
 
   def ensure_keyspace!(conn, _name) do
     conn
+  end
+
+  @valid_keyspace_regex ~r/^[a-zA-Z_][a-zA-Z0-9_]{0,47}$/
+
+  @doc false
+  @spec validate_keyspace!(String.t()) :: :ok | no_return()
+  def validate_keyspace!(keyspace) when is_binary(keyspace) do
+    unless Regex.match?(@valid_keyspace_regex, keyspace) do
+      raise ArgumentError,
+            "Invalid keyspace name: #{inspect(keyspace)}. Keyspace names must match #{@valid_keyspace_regex.source}"
+    end
+
+    :ok
+  end
+
+  def validate_keyspace!(keyspace) do
+    raise ArgumentError, "Keyspace name must be a string, got: #{inspect(keyspace)}"
   end
 
   @doc """
@@ -340,6 +373,18 @@ defmodule AshScylla.Connection do
         # (e.g. during first-time setup before create_keyspace runs)
         keyspace_used? =
           if keyspace do
+            # Validate keyspace name before use (defense-in-depth)
+            try do
+              validate_keyspace!(keyspace)
+            rescue
+              ArgumentError ->
+                Logger.warning(
+                  "AshScylla: Invalid keyspace name: #{inspect(keyspace)}, skipping USE"
+                )
+
+                false
+            end
+
             case Xandra.execute(conn, "USE #{keyspace}", []) do
               {:ok, _} ->
                 Logger.info(
@@ -384,6 +429,13 @@ defmodule AshScylla.Connection do
 
   @impl GenServer
   def handle_call(:ensure_keyspace, _from, %__MODULE__{conn: conn, keyspace: keyspace} = state) do
+    try do
+      validate_keyspace!(keyspace)
+    rescue
+      ArgumentError ->
+        {:reply, {:error, :invalid_keyspace}, state}
+    end
+
     case Xandra.execute(conn, "USE #{keyspace}", []) do
       {:ok, _} ->
         Logger.info("AshScylla: Keyspace '#{keyspace}' is now active")
@@ -397,6 +449,13 @@ defmodule AshScylla.Connection do
 
   @impl GenServer
   def handle_call({:set_keyspace, new_keyspace}, _from, %__MODULE__{conn: conn} = state) do
+    try do
+      validate_keyspace!(new_keyspace)
+    rescue
+      ArgumentError ->
+        {:reply, {:error, :invalid_keyspace}, state}
+    end
+
     case Xandra.execute(conn, "USE #{new_keyspace}", []) do
       {:ok, _} ->
         Logger.info("AshScylla: Keyspace set to '#{new_keyspace}'")

@@ -1,6 +1,7 @@
 defmodule AshScylla.PreparedStatementCacheTest do
   @moduledoc """
   Tests for AshScylla.PreparedStatementCache.
+  Covers: Issue #10 (invalidate/1 scans entire ETS table)
   """
 
   use ExUnit.Case, async: false
@@ -11,8 +12,9 @@ defmodule AshScylla.PreparedStatementCacheTest do
   defmodule MockRepo do
     @moduledoc false
 
-    def prepare(cql, _opts) do
-      {:ok, {:prepared_stmt, cql}}
+    def prepare(cql, opts) do
+      keyspace = Keyword.get(opts, :keyspace)
+      {:ok, {:prepared_stmt, cql, keyspace}}
     end
   end
 
@@ -24,8 +26,6 @@ defmodule AshScylla.PreparedStatementCacheTest do
 
   setup do
     # Ensure the global cache GenServer is running.
-    # start_link registers globally as {:global, __MODULE__}.
-    # If already running (from a previous test), this returns {:error, {:already_started, pid}}.
     case PreparedStatementCache.start_link([]) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
@@ -51,7 +51,7 @@ defmodule AshScylla.PreparedStatementCacheTest do
   describe "prepare/3" do
     test "prepares and caches a statement on cache miss" do
       cql = "SELECT * FROM users WHERE id = ?"
-      assert {:ok, {:prepared_stmt, ^cql}} = PreparedStatementCache.prepare(MockRepo, cql)
+      assert {:ok, {:prepared_stmt, ^cql, nil}} = PreparedStatementCache.prepare(MockRepo, cql)
       assert PreparedStatementCache.size() == 1
     end
 
@@ -88,6 +88,19 @@ defmodule AshScylla.PreparedStatementCacheTest do
 
       assert stmt1 == stmt2
     end
+
+    test "different keyspaces produce different cache entries" do
+      cql = "SELECT * FROM users WHERE id = ?"
+
+      # Prepare with default keyspace
+      assert {:ok, stmt1} = PreparedStatementCache.prepare(MockRepo, cql, keyspace: "ks1")
+      # Prepare with different keyspace
+      assert {:ok, stmt2} = PreparedStatementCache.prepare(MockRepo, cql, keyspace: "ks2")
+
+      # Should be different cache entries
+      refute stmt1 == stmt2
+      assert PreparedStatementCache.size() == 2
+    end
   end
 
   describe "invalidate/1" do
@@ -114,6 +127,19 @@ defmodule AshScylla.PreparedStatementCacheTest do
 
     test "returns :ok even if statement is not cached" do
       assert PreparedStatementCache.invalidate("SELECT * FROM nonexistent") == :ok
+    end
+
+    test "removes all entries matching a CQL string regardless of keyspace" do
+      cql = "SELECT * FROM users WHERE id = ?"
+
+      # Prepare with different keyspaces
+      assert {:ok, _} = PreparedStatementCache.prepare(MockRepo, cql, keyspace: "ks1")
+      assert {:ok, _} = PreparedStatementCache.prepare(MockRepo, cql, keyspace: "ks2")
+      assert PreparedStatementCache.size() == 2
+
+      # Invalidate should remove all matching CQL
+      assert PreparedStatementCache.invalidate(cql) == :ok
+      assert PreparedStatementCache.size() == 0
     end
   end
 
@@ -145,12 +171,47 @@ defmodule AshScylla.PreparedStatementCacheTest do
       assert {:ok, _} = PreparedStatementCache.prepare(MockRepo, "SELECT 2")
       assert PreparedStatementCache.size() == 2
     end
+
+    test "returns correct count after invalidation" do
+      PreparedStatementCache.prepare(MockRepo, "SELECT 1")
+      PreparedStatementCache.prepare(MockRepo, "SELECT 2")
+      assert PreparedStatementCache.size() == 2
+
+      PreparedStatementCache.invalidate("SELECT 1")
+      assert PreparedStatementCache.size() == 1
+    end
   end
 
   describe "table/0" do
     test "returns the ETS table tid" do
       tid = PreparedStatementCache.table()
       assert tid != nil
+    end
+  end
+
+  describe "cache performance" do
+    test "invalidate is efficient with many cached statements" do
+      # Populate cache with many statements
+      for i <- 1..100 do
+        cql = "SELECT * FROM table_#{i} WHERE id = ?"
+        PreparedStatementCache.prepare(MockRepo, cql)
+      end
+
+      assert PreparedStatementCache.size() == 100
+
+      # Invalidate one — should only remove matching entries
+      PreparedStatementCache.invalidate("SELECT * FROM table_50 WHERE id = ?")
+      assert PreparedStatementCache.size() == 99
+    end
+
+    test "repeated prepare of same statement does not grow cache" do
+      cql = "SELECT * FROM users WHERE id = ?"
+
+      for _ <- 1..50 do
+        PreparedStatementCache.prepare(MockRepo, cql)
+      end
+
+      assert PreparedStatementCache.size() == 1
     end
   end
 end

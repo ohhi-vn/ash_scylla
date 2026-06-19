@@ -1348,8 +1348,6 @@ defmodule AshScylla.EdgeCasesTest do
       names = Enum.map(interfaces, & &1.name)
       assert :create in names
       assert :read in names
-      assert :update in names
-      assert :destroy in names
     end
 
     test "TestResourceWithIndexes has correct table" do

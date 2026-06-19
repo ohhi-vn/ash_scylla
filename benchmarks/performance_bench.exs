@@ -1,5 +1,10 @@
 # Performance benchmarks for AshScylla
 # Measures latency and throughput of query building operations (no database needed)
+#
+# Run with: MIX_ENV=dev mix run benchmarks/performance_bench.exs
+#
+# Note: This script requires benchee and benchee_html which are only
+# available in :dev and :test environments.
 
 defmodule AshScylla.Benchmarks.Performance do
   @moduledoc """
@@ -8,6 +13,10 @@ defmodule AshScylla.Benchmarks.Performance do
   These benchmarks measure the CPU cost of generating CQL queries —
   no database connection is required. All benchmarks use the public
   QueryBuilder API: build_optimized_query/1 and filter_to_cql/1.
+
+  ## Usage
+
+      MIX_ENV=dev mix run benchmarks/performance_bench.exs
   """
 
   alias AshScylla.DataLayer
@@ -16,6 +25,14 @@ defmodule AshScylla.Benchmarks.Performance do
   @table "bench_test"
 
   def run do
+    unless Code.ensure_loaded?(Benchee) do
+      raise "benchee is not available. Run with: MIX_ENV=dev mix run benchmarks/performance_bench.exs"
+    end
+
+    unless Code.ensure_loaded?(Benchee.Formatters.HTML) do
+      raise "benchee_html is not available. Run with: MIX_ENV=dev mix run benchmarks/performance_bench.exs"
+    end
+
     Benchee.run(
       %{
         # SELECT query building
@@ -167,11 +184,11 @@ defmodule AshScylla.Benchmarks.Performance do
   end
 
   defp bench_order_by_single do
-    QueryBuilder.build_order_by([name: :asc])
+    QueryBuilder.build_order_by(name: :asc)
   end
 
   defp bench_order_by_multiple do
-    QueryBuilder.build_order_by([name: :asc, age: :desc])
+    QueryBuilder.build_order_by(name: :asc, age: :desc)
   end
 
   # ── Filter-to-CQL conversion ─────────────────────────────────────────────

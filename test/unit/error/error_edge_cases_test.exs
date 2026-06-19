@@ -351,7 +351,7 @@ defmodule AshScylla.ErrorEdgeCasesTest do
         original_error: nil
       }
 
-      s = ScyllaError.to_string(e)
+      s = ScyllaError.to_string(e, include_query: true)
       assert String.contains?(s, "Query: SELECT * FROM missing_table")
     end
 

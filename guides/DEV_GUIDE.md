@@ -104,16 +104,17 @@ ash_scylla/
 │   ├── dev.exs                    # Development settings
 │   └── test.exs                   # Test settings
 ├── lib/
-│   ├── ash_scylla.ex              # Main module (version)
+│   ├── ash_scylla.ex              # Main module (verify, migrate, version)
 │   └── ash_scylla/
-│       ├── data_layer.ex          # Core CRUD implementation
+│       ├── data_layer.ex          # Core CRUD, query building, bulk ops
 │       ├── data_layer/
 │       │   ├── batch.ex           # Batch operations
 │       │   ├── dsl.ex             # Resource DSL (table, keyspace, etc.)
 │       │   ├── filter_validator.ex
 │       │   ├── materialized_view.ex
 │       │   ├── pagination.ex
-│       │   └── query_builder.ex
+│       │   ├── query_builder.ex
+│       │   └── query_optimizer.ex
 │       ├── error.ex               # Error handling
 │       ├── error/
 │       │   └── scylla_error.ex    # Structured ScyllaDB errors
@@ -125,14 +126,37 @@ ash_scylla/
 │       ├── schema_loader.ex        # Schema file discovery and loading
 │       └── telemetry.ex
 ├── lib/mix/tasks/
-│   ├── ash_scylla.gen.ex          # mix ash_scylla.gen task (schema migrations from Ash DSL)
-│   ├── ash_scylla.new_template.ex # mix ash_scylla.new_template task (resource templates)
-│   ├── ash_scylla.migrate.ex      # mix ash_scylla.migrate task (schema + resource migrations)
-│   └── ash_scylla.setup.ex        # mix ash_scylla.setup task
+│   ├── ash_scylla.gen.ex          # mix ash_scylla.gen
+│   ├── ash_scylla.new_template.ex # mix ash_scylla.new_template
+│   ├── ash_scylla.migrate.ex      # mix ash_scylla.migrate
+│   └── ash_scylla.setup.ex        # mix ash_scylla.setup
 ├── test/
-│   ├── support/                   # Test resources and repos
-│   ├── data_layer_crud_test.exs   # New: CRUD unit tests with fake repo
-│   └── ...
+│   ├── test_helper.exs
+│   ├── support/                   # Test resources, repos, containers
+│   ├── mix/tasks/                 # Mix task tests
+│   ├── unit/                      # Unit tests by feature domain
+│   │   ├── autogenerate/
+│   │   ├── batch/
+│   │   ├── connection/
+│   │   ├── data_layer/
+│   │   ├── dsl/
+│   │   ├── error/
+│   │   ├── filter/
+│   │   ├── identifier/
+│   │   ├── mix_helpers/
+│   │   ├── query/
+│   │   ├── schema/
+│   │   ├── security/
+│   │   ├── source_cache/
+│   │   ├── telemetry/
+│   │   ├── types/
+│   │   └── workload/
+│   └── integration/               # Integration tests (need ScyllaDB)
+│       ├── scylla_integration_test.exs
+│       ├── data_layer_integration_test.exs
+│       ├── pipeline_integration_test.exs
+│       ├── cluster_integration_test.exs
+│       └── basic_integration_test.exs
 ├── guides/
 │   ├── USAGE_GUIDE.md
 │   ├── DEV_GUIDE.md
@@ -323,20 +347,40 @@ users = User |> Ash.read()
 
 | Command | What it runs | Needs ScyllaDB? |
 |---------|-------------|-----------------|
-| `mix test --exclude integration` | All unit tests | No |
-| `mix test test/scylla_integration_test.exs` | Integration tests | Yes |
-| `mix test test/data_layer_crud_test.exs` | CRUD unit tests | No |
+| `mix test --exclude integration` | All unit tests (~1028) | No |
+| `mix test --only integration` | All integration tests | Yes (Podman) |
 | `mix test --cover` | Unit tests + coverage report | No |
+| `mix test test/integration/cluster_integration_test.exs --only integration` | Cluster tests (3-node, Podman) | Yes (Podman) |
+| `SCYLLA_DIRECT=1 mix test test/integration/cluster_integration_test.exs` | Cluster tests (direct) | Yes (existing) |
 
-### Test Output
+### Running Tests in the Dev Container
 
+The dev container includes a single-node ScyllaDB instance. All tests work out of the box:
+
+```bash
+# Unit tests only (fast, no database needed)
+mix test --exclude integration
+
+# All integration tests against the containerized ScyllaDB
+mix test --only integration
+
+# Specific test file
+mix test test/integration/scylla_integration_test.exs
+mix test test/unit/query/query_builder_test.exs
+mix test test/unit/data_layer/data_layer_crud_test.exs
 ```
-$ mix test --exclude integration
 
-.........................
-Finished in 1.8 seconds
-587 tests, 1 skipped, 60 excluded
+### Running Tests Against a Local ScyllaDB (No Container)
+
+```bash
+# All integration tests against a local ScyllaDB
+SCYLLA_DIRECT=1 mix test --only integration
+
+# Specific test file
+SCYLLA_DIRECT=1 mix test test/integration/scylla_integration_test.exs
 ```
+
+> **Note:** The cluster integration test requires Podman and is automatically skipped when `SCYLLA_DIRECT` is set.
 
 ### Coverage Report
 

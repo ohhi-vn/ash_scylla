@@ -4,7 +4,7 @@ defmodule AshScylla.MixProject do
   def project do
     [
       app: :ash_scylla,
-      version: "0.10.3",
+      version: "0.11.0",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -21,13 +21,20 @@ defmodule AshScylla.MixProject do
       homepage_url: "https://ohhi.vn",
       docs: docs(),
       package: package(),
+      elixirc_paths: elixirc_paths(Mix.env()),
       test_coverage: [
         tool: Mix.Tasks.Test.Coverage,
         output: "cover",
         summary: [threshold: 85]
-      ]
+      ],
+      consolidate_protocols: Mix.env() != :test
     ]
   end
+
+
+  # Specifies which paths to compile per environment.
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
 
   # Run "mix help compile.app" to learn about applications.
   def application do
@@ -112,8 +119,8 @@ defmodule AshScylla.MixProject do
       {:hackney, "~> 4.3", override: true, only: [:dev, :test]},
       {:testcontainer_ex, "~> 0.7", only: [:test], runtime: false},
       # {:testcontainer_ex, path: "../testcontainer_ex", only: [:test, :dev]},
-      {:benchee, "~> 1.5", only: :dev},
-      {:benchee_html, "~> 1.0", only: :dev},
+      {:benchee, "~> 1.5", only: [:dev, :test]},
+      {:benchee_html, "~> 1.0", only: [:dev, :test]},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},
 
       # Code quality

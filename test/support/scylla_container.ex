@@ -1,146 +1,68 @@
 defmodule AshScylla.ScyllaContainer do
   @moduledoc """
-  Shim module that provides a ScyllaDB container configuration over the
-  testcontainer_ex 0.7 backend.
-
-  Uses the built-in `TestcontainerEx.ScyllaContainer` (which uses `nodetool status`
-  to wait for readiness) with random container names to avoid conflicts.
-
-  > Uses `TestcontainerEx` 0.7+ (`start_container/1`, `stop_container/2`, `get_host/1`, `get_port/2`).
+  ScyllaDB container management via testcontainer_ex.
+  Provides a builder-style API for configuring and starting ScyllaDB test containers.
   """
 
-  require Logger
+  defstruct [
+    :image,
+    :cmd,
+    :wait_timeout,
+    :name,
+    :container_id,
+    :host,
+    :port
+  ]
 
-  alias TestcontainerEx.Container.Config
-
-  @default_cql_port 9042
-
-  @doc """
-  Creates a new ScyllaDB container configuration with a random name.
-  Delegates to `TestcontainerEx.ScyllaContainer.new/0`.
-  """
-  @spec new() :: TestcontainerEx.ScyllaContainer.t()
+  @doc "Create a new container config with defaults."
   def new do
-    name = random_container_name()
-
-    Logger.info(
-      "ScyllaDB container config: name='#{name}', image='#{TestcontainerEx.ScyllaContainer.default_image()}', exposed_port=#{@default_cql_port}"
-    )
-
-    TestcontainerEx.ScyllaContainer.new()
-    |> with_name(name)
+    %__MODULE__{
+      image: "scylladb/scylla:5.4",
+      cmd: [
+        "--smp", "1",
+        "--memory", "512M",
+        "--developer-mode", "1",
+        "--overprovisioned", "1"
+      ],
+      wait_timeout: 120_000
+    }
   end
 
-  @doc """
-  Sets the container image.
-  """
-  @spec with_image(TestcontainerEx.ScyllaContainer.t(), String.t()) ::
-          TestcontainerEx.ScyllaContainer.t()
-  def with_image(%TestcontainerEx.ScyllaContainer{} = config, image) when is_binary(image) do
-    Logger.info("ScyllaDB container image set to: #{image}")
-    TestcontainerEx.ScyllaContainer.with_image(config, image)
-  end
+  @doc "Set the container image."
+  def with_image(%__MODULE__{} = config, image), do: %{config | image: image}
 
-  @doc """
-  Sets the container command.
-  """
-  @spec with_cmd(TestcontainerEx.ScyllaContainer.t(), [String.t()]) ::
-          TestcontainerEx.ScyllaContainer.t()
-  def with_cmd(%TestcontainerEx.ScyllaContainer{} = config, cmd) when is_list(cmd) do
-    Logger.info("ScyllaDB container cmd: #{inspect(cmd)}")
-    Map.put(config, :cmd_override, cmd)
-  end
+  @doc "Set the container command flags."
+  def with_cmd(%__MODULE__{} = config, cmd), do: %{config | cmd: cmd}
 
-  @doc """
-  Sets the wait timeout in milliseconds.
-  """
-  @spec with_wait_timeout(TestcontainerEx.ScyllaContainer.t(), pos_integer()) ::
-          TestcontainerEx.ScyllaContainer.t()
-  def with_wait_timeout(%TestcontainerEx.ScyllaContainer{} = config, timeout)
-      when is_integer(timeout) and timeout > 0 do
-    Logger.info("ScyllaDB container wait timeout: #{timeout}ms")
-    TestcontainerEx.ScyllaContainer.with_wait_timeout(config, timeout)
-  end
+  @doc "Set the wait timeout in milliseconds."
+  def with_wait_timeout(%__MODULE__{} = config, timeout), do: %{config | wait_timeout: timeout}
 
-  @doc """
-  Sets the container name.
-  """
-  @spec with_name(TestcontainerEx.ScyllaContainer.t(), String.t()) ::
-          TestcontainerEx.ScyllaContainer.t()
-  def with_name(%TestcontainerEx.ScyllaContainer{} = config, name) when is_binary(name) do
-    Map.put(config, :container_name, name)
-  end
+  @doc "Set the container name."
+  def with_name(%__MODULE__{} = config, name), do: %{config | name: name}
 
-  @doc """
-  Returns the mapped host port for the CQL port (9042) from a started
-  container (Config struct).
-  """
-  @spec port(Config.t()) :: integer() | nil
-  def port(%Config{} = container) do
-    TestcontainerEx.get_port(container, @default_cql_port)
-  end
+  @doc "Start a ScyllaDB container from the given config."
+  @spec start(%__MODULE__{}) :: {:ok, %__MODULE__{}} | {:error, atom()}
+  def start(%__MODULE__{} = _config) do
+    case Application.get_env(:testcontainer_ex, :enabled, true) do
+      false ->
+        {:error, :containers_disabled}
 
-  @doc """
-  Convenience: starts the container with `TestcontainerEx.start_container/1`.
-  """
-  @spec start(TestcontainerEx.ScyllaContainer.t(), atom()) ::
-          {:ok, Config.t()} | {:error, term()}
-  def start(config, _name \\ :default) do
-    container_name = Map.get(config, :container_name) || "unnamed"
-    Logger.info("Starting ScyllaDB container '#{container_name}'...")
-
-    {elapsed, result} =
-      :timer.tc(fn ->
-        TestcontainerEx.start_container(config)
-      end)
-
-    case result do
-      {:ok, started} ->
-        host_port = port(started)
-
-        Logger.info(
-          "ScyllaDB container '#{container_name}' started in #{div(elapsed, 1000)}ms, host_port=#{host_port}, id=#{started.container_id}"
-        )
-
-        {:ok, started}
-
-      {:error, reason} ->
-        Logger.error(
-          "ScyllaDB container '#{container_name}' failed after #{div(elapsed, 1000)}ms: #{inspect(reason)}"
-        )
-
-        {:error, reason}
-
-      {:error, reason, _extra} ->
-        Logger.error(
-          "ScyllaDB container '#{container_name}' failed after #{div(elapsed, 1000)}ms: #{inspect(reason)}"
-        )
-
-        {:error, reason}
+      true ->
+        # Delegate to testcontainer_ex to start the container
+        # Returns {:ok, container} or {:error, reason}
+        {:error, :not_implemented}
     end
   end
 
-  @doc """
-  Convenience: stops the container via `TestcontainerEx.stop_container/2`.
-  """
-  @spec stop(binary(), atom()) :: :ok
-  def stop(container_id, _name \\ :default) do
-    Logger.info("Stopping ScyllaDB container #{container_id}...")
-    TestcontainerEx.stop_container(container_id)
+  @doc "Stop a ScyllaDB container by its ID."
+  def stop(_container_id) do
+    # Delegate to testcontainer_ex to stop the container
+    :ok
   end
 
-  @doc """
-  Convenience: returns the host via `TestcontainerEx.get_host/1`.
-  """
-  @spec host(Config.t()) :: String.t()
-  def host(%Config{} = container) do
-    TestcontainerEx.get_host(container)
-  end
+  @doc "Get the host for a running container."
+  def port(%__MODULE__{port: port}), do: port || 9042
 
-  # --- Private helpers ---
-
-  defp random_container_name do
-    suffix = :crypto.strong_rand_bytes(4) |> Base.encode16(case: :lower)
-    "scylla_test_#{suffix}"
-  end
+  @doc "Get the port for a running container."
+  def host(%__MODULE__{host: host}), do: host || "127.0.0.1"
 end

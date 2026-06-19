@@ -290,6 +290,69 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
       assert String.contains?(cql, "ORDER BY"), "ORDER BY must be preserved for PK queries"
     end
 
+    test "ORDER BY is dropped when filter uses Ash.Query.Ref on secondary index column" do
+      filter = %Ash.Query.Ref{attribute: %{name: :user_id}}
+
+      query = %DataLayer{
+        resource: IndexedMember,
+        repo: nil,
+        table: "game_members",
+        filters: [filter],
+        sorts: [{:started_at, :desc}],
+        limit: nil,
+        offset: nil,
+        select: [:id, :started_at, :user_id, :game_id],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      refute String.contains?(cql, "ORDER BY"),
+             "ORDER BY must be dropped when filter uses Ash.Query.Ref on secondary index column"
+    end
+
+    test "ORDER BY is dropped when filter uses Ash.Query.Ref with atom attribute on indexed column" do
+      filter = %Ash.Query.Ref{attribute: :status}
+
+      query = %DataLayer{
+        resource: IndexedMember,
+        repo: nil,
+        table: "game_members",
+        filters: [filter],
+        sorts: [{:started_at, :desc}],
+        limit: nil,
+        offset: nil,
+        select: [:id, :started_at, :user_id, :game_id],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      refute String.contains?(cql, "ORDER BY"),
+             "ORDER BY must be dropped when filter uses Ash.Query.Ref with atom attribute"
+    end
+
+    test "ORDER BY is preserved when Ash.Query.Ref points to non-indexed column" do
+      filter = %Ash.Query.Ref{attribute: %{name: :game_id}}
+
+      query = %DataLayer{
+        resource: IndexedMember,
+        repo: nil,
+        table: "game_members",
+        filters: [filter],
+        sorts: [{:started_at, :desc}],
+        limit: nil,
+        offset: nil,
+        select: [:id, :started_at, :user_id, :game_id],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      assert String.contains?(cql, "ORDER BY"),
+             "ORDER BY must be preserved when Ash.Query.Ref points to non-indexed column"
+    end
+
     test "ORDER BY is preserved when resource has NO secondary indexes" do
       filter = %{operator: :eq, left: %{name: :user_id}, right: %{value: "u1"}}
 
@@ -309,6 +372,206 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
       assert String.contains?(cql, "ORDER BY"),
              "ORDER BY must be preserved when no secondary index is involved"
+    end
+  end
+
+  describe "build_optimized_query/1 with allow_filtering" do
+    defmodule AllowFilteringResource do
+      @moduledoc false
+      def __ash_scylla__(:secondary_indexes), do: [%{columns: [:email, :status]}]
+      def __ash_scylla__(:allow_filtering), do: true
+    end
+
+    defmodule DisallowFilteringResource do
+      @moduledoc false
+      def __ash_scylla__(:secondary_indexes), do: [%{columns: [:email, :status]}]
+      def __ash_scylla__(:allow_filtering), do: false
+    end
+
+    defmodule DefaultFilteringResource do
+      @moduledoc false
+      def __ash_scylla__(:secondary_indexes), do: [%{columns: [:email, :status]}]
+    end
+
+    test "appends ALLOW FILTERING when enabled and secondary index scan detected" do
+      filter = %{operator: :eq, left: %{name: :email}, right: %{value: "a@b.com"}}
+
+      query = %DataLayer{
+        resource: AllowFilteringResource,
+        repo: nil,
+        table: "users",
+        filters: [filter],
+        sorts: [],
+        limit: nil,
+        offset: nil,
+        select: [:id, :email],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      assert String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must be present when enabled and secondary index scan detected"
+
+      assert cql ==
+               "SELECT id, email FROM users WHERE email = ? ALLOW FILTERING"
+    end
+
+    test "does NOT append ALLOW FILTERING when disabled even with secondary index scan" do
+      filter = %{operator: :eq, left: %{name: :email}, right: %{value: "a@b.com"}}
+
+      query = %DataLayer{
+        resource: DisallowFilteringResource,
+        repo: nil,
+        table: "users",
+        filters: [filter],
+        sorts: [],
+        limit: nil,
+        offset: nil,
+        select: [:id, :email],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      refute String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must NOT be present when disabled"
+
+      assert cql == "SELECT id, email FROM users WHERE email = ?"
+    end
+
+    test "does NOT append ALLOW FILTERING when not set (default false) with secondary index scan" do
+      filter = %{operator: :eq, left: %{name: :email}, right: %{value: "a@b.com"}}
+
+      query = %DataLayer{
+        resource: DefaultFilteringResource,
+        repo: nil,
+        table: "users",
+        filters: [filter],
+        sorts: [],
+        limit: nil,
+        offset: nil,
+        select: [:id, :email],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      refute String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must NOT be present when not configured (default false)"
+    end
+
+    test "does NOT append ALLOW FILTERING when enabled but no secondary index scan" do
+      filter = %{operator: :eq, left: %{name: :id}, right: %{value: "uuid-123"}}
+
+      query = %DataLayer{
+        resource: AllowFilteringResource,
+        repo: nil,
+        table: "users",
+        filters: [filter],
+        sorts: [],
+        limit: nil,
+        offset: nil,
+        select: [:id, :email],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      refute String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must NOT be present when filter is not on indexed column"
+    end
+
+    test "appends ALLOW FILTERING with multiple indexed filter columns" do
+      f1 = %{operator: :eq, left: %{name: :email}, right: %{value: "a@b.com"}}
+      f2 = %{operator: :eq, left: %{name: :status}, right: %{value: "active"}}
+
+      query = %DataLayer{
+        resource: AllowFilteringResource,
+        repo: nil,
+        table: "users",
+        filters: [f1, f2],
+        sorts: [],
+        limit: 10,
+        offset: nil,
+        select: [:id, :email, :status],
+        tenant: nil
+      }
+
+      {cql, params} = QueryBuilder.build_optimized_query(query)
+
+      assert String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must be present for multi-column secondary index scan"
+
+      assert String.contains?(cql, "LIMIT ?")
+      assert "a@b.com" in params
+      assert "active" in params
+      assert 10 in params
+    end
+
+    test "appends ALLOW FILTERING with Ash.Query.Ref filter on indexed column" do
+      filter = %Ash.Query.Ref{attribute: %{name: :email}}
+
+      query = %DataLayer{
+        resource: AllowFilteringResource,
+        repo: nil,
+        table: "users",
+        filters: [filter],
+        sorts: [],
+        limit: nil,
+        offset: nil,
+        select: [:id, :email],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      assert String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must be present when Ash.Query.Ref filter targets indexed column"
+    end
+
+    test "does NOT append ALLOW FILTERING when resource is nil" do
+      filter = %{operator: :eq, left: %{name: :email}, right: %{value: "a@b.com"}}
+
+      query = %DataLayer{
+        resource: nil,
+        repo: nil,
+        table: "users",
+        filters: [filter],
+        sorts: [],
+        limit: nil,
+        offset: nil,
+        select: [:id, :email],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      refute String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must NOT be appended when resource is nil"
+    end
+
+    test "ALLOW FILTERING appears after LIMIT in the CQL string" do
+      filter = %{operator: :eq, left: %{name: :email}, right: %{value: "a@b.com"}}
+
+      query = %DataLayer{
+        resource: AllowFilteringResource,
+        repo: nil,
+        table: "users",
+        filters: [filter],
+        sorts: [],
+        limit: 5,
+        offset: nil,
+        select: [:id, :email],
+        tenant: nil
+      }
+
+      {cql, params} = QueryBuilder.build_optimized_query(query)
+
+      assert cql ==
+               "SELECT id, email FROM users WHERE email = ? LIMIT ? ALLOW FILTERING"
+
+      assert params == ["a@b.com", 5]
     end
   end
 
@@ -356,6 +619,33 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
     test "returns false for empty filters" do
       refute QueryBuilder.secondary_index_scan?(TestResource, [])
+    end
+
+    test "returns true when filter uses Ash.Query.Ref with attribute map" do
+      filters = [%Ash.Query.Ref{attribute: %{name: :user_id}}]
+      assert QueryBuilder.secondary_index_scan?(TestResource, filters)
+    end
+
+    test "returns true when filter uses Ash.Query.Ref with attribute atom" do
+      filters = [%Ash.Query.Ref{attribute: :status}]
+      assert QueryBuilder.secondary_index_scan?(TestResource, filters)
+    end
+
+    test "returns false when Ash.Query.Ref points to non-indexed column" do
+      filters = [%Ash.Query.Ref{attribute: %{name: :name}}]
+      refute QueryBuilder.secondary_index_scan?(TestResource, filters)
+    end
+
+    test "returns true when mixed Ref and plain map filters are all indexed" do
+      ref_filter = %Ash.Query.Ref{attribute: %{name: :user_id}}
+      plain_filter = %{operator: :eq, left: %{name: :status}, right: %{value: "active"}}
+      assert QueryBuilder.secondary_index_scan?(TestResource, [ref_filter, plain_filter])
+    end
+
+    test "returns false when one Ref filter is indexed and another is not" do
+      ref_indexed = %Ash.Query.Ref{attribute: :email}
+      ref_unindexed = %Ash.Query.Ref{attribute: :name}
+      refute QueryBuilder.secondary_index_scan?(TestResource, [ref_indexed, ref_unindexed])
     end
   end
 

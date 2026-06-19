@@ -12,6 +12,7 @@ defmodule AshScylla.DslResourceTest do
 
   alias AshScylla.DataLayer
   alias AshScylla.DataLayer.Dsl
+  alias AshScylla.DataLayer.QueryBuilder
 
   # ══════════════════════════════════════════════════════════════════════════
   # Inline test domains
@@ -197,6 +198,7 @@ defmodule AshScylla.DslResourceTest do
       assert FullConfigResource.__ash_scylla__(:consistency) == :quorum
       assert FullConfigResource.__ash_scylla__(:ttl) == 7200
       assert FullConfigResource.__ash_scylla__(:lwt) == true
+      assert FullConfigResource.__ash_scylla__(:allow_filtering) == false
       assert FullConfigResource.__ash_scylla__(:pagination) == :token
     end
 
@@ -321,6 +323,19 @@ defmodule AshScylla.DslResourceTest do
 
     test "lwt/1 returns false when not configured" do
       assert Dsl.lwt(SimpleResource) == false
+    end
+
+    test "allow_filtering/1 returns configured allow_filtering flag" do
+      assert Dsl.allow_filtering(FullConfigResource) == false
+      assert Dsl.allow_filtering(SimpleResource) == false
+    end
+
+    test "allow_filtering/1 returns false for resource without DSL" do
+      assert Dsl.allow_filtering(BareResource) == false
+    end
+
+    test "allow_filtering/1 returns false for non-resource module" do
+      assert Dsl.allow_filtering(String) == false
     end
 
     test "pagination/1 returns configured pagination mode" do
@@ -656,7 +671,120 @@ defmodule AshScylla.DslResourceTest do
   end
 
   # ══════════════════════════════════════════════════════════════════════════
-  # 8. DSL: materialized_view validation
+  # 8. DSL: allow_filtering option
+  # ══════════════════════════════════════════════════════════════════════════
+
+  describe "DSL: allow_filtering option" do
+    defmodule AllowFilteringDslResource do
+      @moduledoc false
+
+      use Ash.Resource,
+        domain: nil,
+        data_layer: AshScylla.DataLayer
+
+      import AshScylla.DataLayer.Dsl
+
+      ash_scylla do
+        repo(AshScylla.TestRepo)
+        table("filterable_items")
+        secondary_index(:email)
+        secondary_index(:status)
+        allow_filtering(true)
+      end
+
+      attributes do
+        uuid_primary_key(:id)
+        attribute(:email, :string)
+        attribute(:status, :string)
+      end
+
+      actions do
+        defaults([:read])
+      end
+    end
+
+    defmodule DisallowFilteringDslResource do
+      @moduledoc false
+
+      use Ash.Resource,
+        domain: nil,
+        data_layer: AshScylla.DataLayer
+
+      import AshScylla.DataLayer.Dsl
+
+      ash_scylla do
+        repo(AshScylla.TestRepo)
+        table("strict_items")
+        secondary_index(:email)
+        allow_filtering(false)
+      end
+
+      attributes do
+        uuid_primary_key(:id)
+        attribute(:email, :string)
+      end
+
+      actions do
+        defaults([:read])
+      end
+    end
+
+    test "allow_filtering true is stored in DSL config" do
+      assert AllowFilteringDslResource.__ash_scylla__(:allow_filtering) == true
+    end
+
+    test "allow_filtering false is stored in DSL config" do
+      assert DisallowFilteringDslResource.__ash_scylla__(:allow_filtering) == false
+    end
+
+    test "Dsl.allow_filtering/1 returns true for resource with allow_filtering enabled" do
+      assert Dsl.allow_filtering(AllowFilteringDslResource) == true
+    end
+
+    test "Dsl.allow_filtering/1 returns false for resource with allow_filtering disabled" do
+      assert Dsl.allow_filtering(DisallowFilteringDslResource) == false
+    end
+
+    test "Dsl.allow_filtering/1 returns false for resource without allow_filtering set" do
+      assert Dsl.allow_filtering(SimpleResource) == false
+    end
+
+    test "full pipeline: allow_filtering resource generates CQL with ALLOW FILTERING" do
+      query = DataLayer.resource_to_query(AllowFilteringDslResource, nil)
+
+      f = %{operator: :eq, left: %{name: :email}, right: %{value: "test@example.com"}}
+      {:ok, q1} = DataLayer.filter(query, f, nil)
+      {:ok, q2} = DataLayer.limit(q1, 10, nil)
+
+      {cql, params} = QueryBuilder.build_optimized_query(q2)
+
+      assert String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must be present for resource with allow_filtering enabled"
+
+      assert cql ==
+               "SELECT * FROM filterable_items WHERE email = ? LIMIT ? ALLOW FILTERING"
+
+      assert "test@example.com" in params
+      assert 10 in params
+    end
+
+    test "full pipeline: disallow_filtering resource does NOT generate ALLOW FILTERING" do
+      query = DataLayer.resource_to_query(DisallowFilteringDslResource, nil)
+
+      f = %{operator: :eq, left: %{name: :email}, right: %{value: "test@example.com"}}
+      {:ok, q1} = DataLayer.filter(query, f, nil)
+
+      {cql, _params} = QueryBuilder.build_optimized_query(q1)
+
+      refute String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must NOT be present for resource with allow_filtering disabled"
+
+      assert cql == "SELECT * FROM strict_items WHERE email = ?"
+    end
+  end
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # 9. DSL: materialized_view validation
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "DSL: materialized_view" do

@@ -163,9 +163,12 @@ defmodule AshScylla.Error.ScyllaError do
 
   @doc """
   Converts the error to a human-readable string.
+
+  ## Options
+    * `:include_query` — Include the CQL query in the output (default: `false`)
   """
-  @spec to_string(t()) :: String.t()
-  def to_string(%ScyllaError{} = error) do
+  @spec to_string(t(), keyword()) :: String.t()
+  def to_string(%ScyllaError{} = error, opts \\ []) do
     base_message = "[#{error.type}] #{error.message}"
 
     suggestion_text =
@@ -176,7 +179,7 @@ defmodule AshScylla.Error.ScyllaError do
       end
 
     query_text =
-      if error.query do
+      if Keyword.get(opts, :include_query, false) && error.query do
         "\nQuery: #{error.query}"
       else
         ""

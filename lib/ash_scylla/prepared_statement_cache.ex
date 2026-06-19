@@ -46,6 +46,7 @@ defmodule AshScylla.PreparedStatementCache do
   require Logger
 
   @cleanup_interval :timer.minutes(5)
+  @max_cache_size 10_000
 
   @doc """
   Starts the prepared statement cache.
@@ -149,7 +150,7 @@ defmodule AshScylla.PreparedStatementCache do
     tid =
       :ets.new(:ash_scylla_prepared_statement_cache, [
         :set,
-        :public,
+        :protected,
         read_concurrency: true,
         write_concurrency: true
       ])
@@ -174,6 +175,7 @@ defmodule AshScylla.PreparedStatementCache do
         [] ->
           case do_prepare(repo, cql, opts) do
             {:ok, stmt} ->
+              maybe_evict_oldest(tid)
               :ets.insert(tid, {key, stmt})
               {:ok, stmt}
 
@@ -210,9 +212,14 @@ defmodule AshScylla.PreparedStatementCache do
   end
 
   @impl GenServer
-  def handle_info(:cleanup, state) do
-    # ETS entries are automatically cleaned when the server stops.
-    # This is a placeholder for future TTL-based eviction if needed.
+  def handle_info(:cleanup, %{table: tid} = state) do
+    # Evict oldest entries if cache exceeds max size
+    current_size = :ets.info(tid, :size)
+
+    if current_size > @max_cache_size do
+      evict_oldest(tid, div(current_size - @max_cache_size, 2))
+    end
+
     schedule_cleanup()
     {:noreply, state}
   end
@@ -220,6 +227,41 @@ defmodule AshScylla.PreparedStatementCache do
   defp schedule_cleanup do
     Process.send_after(self(), :cleanup, @cleanup_interval)
   end
+
+  @doc false
+  @spec maybe_evict_oldest(:ets.tid()) :: :ok
+  defp maybe_evict_oldest(tid) do
+    case :ets.info(tid, :size) do
+      size when size >= @max_cache_size ->
+        evict_oldest(tid, div(size - @max_cache_size, 2) + 1)
+
+      _ ->
+        :ok
+    end
+  end
+
+  @doc false
+  @spec evict_oldest(:ets.tid(), non_neg_integer()) :: :ok
+  defp evict_oldest(tid, count) when count > 0 do
+    # Delete the first N entries (oldest insertion order in ETS set type)
+    # ETS set type doesn't guarantee insertion order, but this is best-effort
+    # eviction to prevent unbounded growth
+    first_n = :ets.select(tid, [{{:_, :_}, [], [true]}], count)
+
+    case first_n do
+      {entries, _continuation} ->
+        Enum.each(entries, fn key -> :ets.delete(tid, key) end)
+
+      _ ->
+        :ok
+    end
+
+    :ok
+  catch
+    _ -> :ok
+  end
+
+  defp evict_oldest(_tid, _count), do: :ok
 
   defp do_prepare(repo, cql, opts) do
     if function_exported?(repo, :prepare, 2) do

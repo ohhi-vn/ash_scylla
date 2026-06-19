@@ -27,3 +27,4 @@ ash_scylla-*.tar
 .env
 .DS_Store
 mise.toml
+benchmarks/results

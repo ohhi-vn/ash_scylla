@@ -15,8 +15,8 @@ defmodule AshScylla.Migrations.Multi1 do
   name: :testresource,
   statements: [
       "CREATE TABLE IF NOT EXISTS test_resource (id UUID, name TEXT, email TEXT, age BIGINT, password_hash TEXT, org_id UUID, created_at TIMESTAMP, updated_at TIMESTAMP, PRIMARY KEY (id))",
-      "CREATE INDEX IF NOT EXISTS idx_test_resource_name ON test_resource (name)",
-      "CREATE INDEX IF NOT EXISTS idx_test_resource_email ON test_resource (email)"
+      "CREATE INDEX IF NOT EXISTS idx_test_resource_email ON test_resource (email)",
+      "CREATE INDEX IF NOT EXISTS idx_test_resource_name ON test_resource (name)"
   ]
 }
 

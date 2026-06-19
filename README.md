@@ -506,11 +506,8 @@ mix test
 # Unit tests only (no ScyllaDB required)
 mix test --exclude integration
 
-# Integration tests only (requires Podman/Docker)
-mix test test/scylla_integration_test.exs --only integration
-
-# Integration tests using a pre-existing ScyllaDB instance (no container)
-SCYLLA_DIRECT=1 SCYLLA_HOST=localhost SCYLLA_PORT=9042 mix test --only integration
+# Integration tests only (requires Podman)
+mix test --only integration
 
 # CI pipeline (unit tests + credo)
 mix test.ci
@@ -518,20 +515,144 @@ mix test.ci
 
 ### Test Structure
 
-| File | Description |
-|------|-------------|
-| `test/ash_scylla_test.exs` | Core DataLayer and DSL unit tests |
-| `test/data_layer_crud_test.exs` | CRUD operations with FakeRepo (create, update, destroy, upsert, bulk_create, run_query, aggregates) |
-| `test/data_layer_callbacks_test.exs` | DataLayer callbacks (transform_query, set_tenant, set_context, filter, sort, limit, offset, select, lock, combination_of, calculate, add_aggregate, add_aggregates, distinct) |
-| `test/data_layer_pipeline_test.exs` | Full pipeline DSL → DataLayer → QueryBuilder → CQL generation and execution |
-| `test/data_layer_comprehensive_test.exs` | Comprehensive gap coverage: run_query edge cases, filter OR rewriting, sort edge cases, bulk_create scenarios, source/repo edge cases, upsert delegation, aggregates, distinct, calculate, handle_scylla_result, sanitize_identifier, struct defaults, exhaustive can?/2 |
-| `test/edge_cases_test.exs` | Edge cases for QueryBuilder, Batch, Pagination, MaterializedView, Migration |
-| `test/error_edge_cases_test.exs` | Comprehensive error handling edge cases |
-| `test/dsl_resource_test.exs` | DSL compilation, public API, secondary_index parsing, materialized_view |
-| `test/integration_test.exs` | Integration test placeholder |
-| `test/scylla_integration_test.exs` | Full integration tests with testcontainers |
+Tests are organized by feature domain under `test/unit/` and `test/integration/`.
 
-Integration tests use [testcontainer_ex](https://github.com/manhvu/testcontainers-elixir) to spin up a ScyllaDB instance automatically via Podman.
+#### Unit Tests (`test/unit/`)
+
+No ScyllaDB instance required. All tests use fake/mock repos or inline resources.
+
+| Directory | Feature |
+|-----------|---------|
+| `unit/autogenerate/` | UUID autogeneration |
+| `unit/batch/` | Batch operations, bulk create, partition grouping |
+| `unit/connection/` | Xandra connection, prepared statement cache |
+| `unit/data_layer/` | CRUD, callbacks, feature flags, upsert |
+| `unit/dsl/` | DSL options, resource definition, repo/migration |
+| `unit/error/` | Error handling, edge cases |
+| `unit/filter/` | Filter validation, edge cases |
+| `unit/identifier/` | Identifier sanitization consistency |
+| `unit/mix_helpers/` | Mix helper utilities |
+| `unit/query/` | Query builder, optimizer, edge cases |
+| `unit/schema/` | Schema behaviour, schema loader |
+| `unit/security/` | CQL injection prevention |
+| `unit/source_cache/` | Table name resolution, caching |
+| `unit/telemetry/` | Span/batch_span telemetry |
+| `unit/types/` | Type conversion, type pipeline |
+| `unit/workload/` | Concurrent workload stress tests |
+
+#### Integration Tests (`test/integration/`)
+
+Require a running ScyllaDB instance. Can use either testcontainers (Podman) or a direct connection.
+
+| File | Description | Multi-node? |
+|------|-------------|-------------|
+| `integration/scylla_integration_test.exs` | Full ScyllaDB integration (CRUD, secondary indexes, clustering keys, consistency levels, concurrent operations) | No |
+| `integration/data_layer_integration_test.exs` | DataLayer pipeline against real ScyllaDB | No |
+| `integration/pipeline_integration_test.exs` | DSL → DataLayer → QueryBuilder → ScyllaDB end-to-end | No |
+| `integration/basic_integration_test.exs` | Basic integration placeholder | No |
+| `integration/cluster_integration_test.exs` | Multi-node cluster topology, cluster formation, cross-node reads/writes | **Yes** |
+
+### Running Integration Tests With a Local ScyllaDB
+
+Integration tests can run against a pre-existing ScyllaDB instance — no container runtime needed. Set the `SCYLLA_DIRECT` environment variable and optionally override the host/port:
+
+```bash
+# Connect to ScyllaDB at localhost:9042 (defaults)
+SCYLLA_DIRECT=1 mix test --only integration
+
+# Connect to a remote ScyllaDB instance
+SCYLLA_DIRECT=1 SCYLLA_HOST=db.example.com SCYLLA_PORT=9042 mix test --only integration
+
+# Run a specific integration test file
+SCYLLA_DIRECT=1 mix test test/integration/scylla_integration_test.exs
+SCYLLA_DIRECT=1 mix test test/integration/data_layer_integration_test.exs
+```
+
+> **Note:** The cluster integration test (`cluster_integration_test.exs`) is automatically skipped when `SCYLLA_DIRECT` is set. It requires multi-node container orchestration and cannot run against a single ScyllaDB instance.
+
+#### ScyllaDB Configuration for Direct Connection
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `SCYLLA_DIRECT` | — | Set to `1` to enable direct connection mode |
+| `SCYLLA_HOST` | `127.0.0.1` | ScyllaDB hostname or IP address |
+| `SCYLLA_PORT` | `9042` | ScyllaDB CQL transport port |
+
+If you have authentication enabled on your ScyllaDB cluster, configure the repo in your `config/test.exs`:
+
+```elixir
+config :my_app, MyApp.Repo,
+  nodes: ["db.example.com:9042"],
+  keyspace: "my_app_test",
+  authentication: {Xandra.Auth.Password, username: "cassandra", password: "cassandra"}
+```
+
+### Running Cluster Integration Tests
+
+The cluster integration test supports two modes:
+
+#### Container Mode (default)
+
+Spins up a 3-node ScyllaDB cluster using testcontainers (Podman). Tests cluster formation, cross-node reads/writes, and concurrent operations.
+
+```bash
+# Run cluster integration test (requires Podman)
+mix test test/integration/cluster_integration_test.exs --only integration
+
+# Run with increased timeout (first run may take longer to pull images)
+MIX_ENV=test mix test test/integration/cluster_integration_test.exs --only integration --timeout 300_000
+```
+
+**Prerequisites:**
+- Podman installed and running
+- `testcontainer_ex` will automatically pull the `scylladb/scylla:latest` image
+- Sufficient resources: 3 ScyllaDB nodes × ~1 GB RAM each
+
+#### Cluster Mode (multi-node)
+
+Connects to an already-running multi-node ScyllaDB cluster. Requires `SCYLLA_NODES` with comma-separated `host:port` pairs.
+
+```bash
+# Connect to a multi-node cluster
+TEST_CLUSTER=true SCYLLA_NODES="node1:9042,node2:9042,node3:9042" \
+  mix test test/integration/cluster_integration_test.exs --only integration
+```
+
+#### Single-Node Direct Mode
+
+Connects to a single ScyllaDB instance at `SCYLLA_HOST:SCYLLA_PORT`.
+
+```bash
+# Connect to a single-node at localhost:9042 (defaults)
+SCYLLA_DIRECT=1 mix test test/integration/cluster_integration_test.exs --only integration
+
+# Connect to a single-node with custom host/port
+SCYLLA_DIRECT=1 SCYLLA_HOST=db.example.com SCYLLA_PORT=9042 \
+  mix test test/integration/cluster_integration_test.exs --only integration
+```
+
+**Configuration:**
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `TEST_CLUSTER` | `false` | Set to `true` for multi-node cluster mode |
+| `SCYLLA_DIRECT` | — | Set to `1` for single-node direct connection |
+| `SCYLLA_NODES` | — | Comma-separated `host:port` pairs (cluster mode) |
+| `SCYLLA_HOST` | `127.0.0.1` | Single host (single-node mode) |
+| `SCYLLA_PORT` | `9042` | Single port (single-node mode) |
+
+> **Note:** `TEST_CLUSTER=true` connects to each node directly for concurrent multi-node operations. `SCYLLA_DIRECT=1` without `TEST_CLUSTER` connects to a single node only.
+
+**What it tests:**
+- Cluster keyspace creation with `replication_factor: 3`
+- Table creation across the cluster
+- CRUD operations against the cluster
+- Secondary index queries across nodes
+- Clustering key queries with `CLUSTERING ORDER BY`
+- Concurrent inserts and reads across multiple nodes
+- Consistency levels (`LOCAL_QUORUM`)
+
+Integration tests use [testcontainer_ex](https://github.com/manhvu/testcontainers-elixir) to spin up ScyllaDB instances automatically via Podman (container mode).
 
 ---
 

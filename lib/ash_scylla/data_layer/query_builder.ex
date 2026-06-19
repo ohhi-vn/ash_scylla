@@ -148,6 +148,16 @@ defmodule AshScylla.DataLayer.QueryBuilder do
         {query_acc, params}
       end
 
+    # Append ALLOW FILTERING when enabled and a secondary index scan is detected.
+    query_acc =
+      if resource != nil and Dsl.allow_filtering(resource) and
+           secondary_index_scan?(resource, filters) do
+        Logger.debug("AshScylla: Appending ALLOW FILTERING for secondary index scan on #{table}")
+        [query_acc, " ALLOW FILTERING"]
+      else
+        query_acc
+      end
+
     query = IO.iodata_to_binary(query_acc)
 
     # Add OFFSET (note: OFFSET in CQL requires special handling)
@@ -341,16 +351,16 @@ defmodule AshScylla.DataLayer.QueryBuilder do
           Enum.map(sorts, fn sort_item ->
             case sort_item do
               %{field: field, direction: direction} ->
-                "#{field} #{direction}"
+                "#{cql_identifier(field)} #{direction}"
 
               {field, direction} when is_atom(field) ->
-                "#{field} #{direction}"
+                "#{cql_identifier(field)} #{direction}"
 
               %{field: field} ->
-                "#{field} ASC"
+                "#{cql_identifier(field)} ASC"
 
               {field} when is_atom(field) ->
-                "#{field} ASC"
+                "#{cql_identifier(field)} ASC"
 
               other ->
                 Logger.warning(
@@ -378,7 +388,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   def build_group_by([]), do: {"", []}
 
   def build_group_by(columns) when is_list(columns) do
-    {Enum.map_join(columns, ", ", &"#{&1}"), []}
+    {Enum.map_join(columns, ", ", &cql_identifier(&1)), []}
   end
 
   # ============================================================================
@@ -892,6 +902,10 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   end
 
   @spec extract_filter_columns(term()) :: [atom()]
+  defp extract_filter_columns(%Ash.Query.Ref{attribute: %{name: name}}) when not is_nil(name),
+    do: [name]
+
+  defp extract_filter_columns(%Ash.Query.Ref{attribute: name}) when is_atom(name), do: [name]
   defp extract_filter_columns(%{left: %{name: name}}) when not is_nil(name), do: [name]
   defp extract_filter_columns(%{expression: expr}), do: get_filter_columns([expr])
   defp extract_filter_columns(%{left: left, right: right}), do: get_filter_columns([left, right])

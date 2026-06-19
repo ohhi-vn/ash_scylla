@@ -2,10 +2,41 @@ defmodule AshScylla.ClusterIntegrationTest do
   @moduledoc """
   Integration tests for AshScylla against a real ScyllaDB cluster.
 
-  Uses testcontainer_ex 0.6 (Podman) to spin up multiple ScyllaDB containers
-  and verifies the data layer works correctly across the cluster.
+  Supports three modes:
 
-  Run with: mix test test/ash_scylla/cluster_integration_test.exs --only integration
+  **Container mode** (default): Uses testcontainer_ex (Podman) to spin up a
+  3-node ScyllaDB cluster. Requires Podman installed and running.
+
+  **Single-node direct mode** (`SCYLLA_DIRECT=1`): Connects to a single
+  ScyllaDB instance. Uses `SCYLLA_HOST`/`SCYLLA_PORT` (defaults to
+  `127.0.0.1:9042`).
+
+  **Cluster direct mode** (`TEST_CLUSTER=true`): Connects to a multi-node
+  ScyllaDB cluster. Uses `SCYLLA_NODES` (comma-separated `host:port` pairs).
+
+  ## Running
+
+  ```bash
+  # Container mode (requires Podman, default)
+  mix test test/integration/cluster_integration_test.exs --only integration
+
+  # Single-node direct mode
+  SCYLLA_DIRECT=1 mix test test/integration/cluster_integration_test.exs --only integration
+
+  # Cluster direct mode (multi-node)
+  TEST_CLUSTER=true SCYLLA_NODES="node1:9042,node2:9042,node3:9042" \\
+    mix test test/integration/cluster_integration_test.exs --only integration
+  ```
+
+  ## Configuration
+
+  | Env Var | Default | Description |
+  |---------|---------|-------------|
+  | `TEST_CLUSTER` | `false` | Set to `true` for multi-node cluster mode |
+  | `SCYLLA_DIRECT` | — | Set to `1` for single-node direct mode |
+  | `SCYLLA_NODES` | — | Comma-separated `host:port` pairs (cluster mode) |
+  | `SCYLLA_HOST` | `127.0.0.1` | Single host (single-node direct mode) |
+  | `SCYLLA_PORT` | `9042` | Single port (single-node direct mode) |
   """
 
   use ExUnit.Case, async: false
@@ -35,7 +66,27 @@ defmodule AshScylla.ClusterIntegrationTest do
     "1"
   ]
 
-  # ── Container helpers ───────────────────────────────────────────────────────
+  # ── Mode detection ──────────────────────────────────────────────────────────
+
+  # TEST_CLUSTER=true  → multi-node cluster (SCYLLA_NODES required)
+  # TEST_CLUSTER=false → single-node (default, uses SCYLLA_HOST/SCYLLA_PORT)
+  defp cluster_mode?, do: System.get_env("TEST_CLUSTER") == "true"
+
+  defp direct_nodes do
+    case System.get_env("SCYLLA_NODES") do
+      nil ->
+        host = System.get_env("SCYLLA_HOST") || "127.0.0.1"
+        port = System.get_env("SCYLLA_PORT") || "9042"
+        ["#{host}:#{port}"]
+
+      nodes ->
+        nodes
+        |> String.split(",", trim: true)
+        |> Enum.map(&String.trim/1)
+    end
+  end
+
+  # ── Container helpers (container mode only) ─────────────────────────────────
 
   defp build_container(index) do
     suffix = :crypto.strong_rand_bytes(3) |> Base.encode16(case: :lower)
@@ -72,7 +123,19 @@ defmodule AshScylla.ClusterIntegrationTest do
     TestcontainerEx.stop_container(container.container_id)
   end
 
-  defp connect_node(container, retries \\ 30) do
+  # ── Connection helpers ──────────────────────────────────────────────────────
+
+  defp connect_node(container_or_node, retries \\ 30)
+
+  defp connect_node({_index, container}, retries) do
+    connect_node(container, retries)
+  end
+
+  defp connect_node(container, retries) when is_tuple(container) do
+    connect_node(container, retries)
+  end
+
+  defp connect_node(container, retries) do
     {host, port} = get_host_port(container)
 
     case Xandra.start_link(nodes: ["#{host}:#{port}"], connect_timeout: 10_000) do
@@ -99,6 +162,31 @@ defmodule AshScylla.ClusterIntegrationTest do
     end
   end
 
+  defp connect_direct(node_string, retries \\ 30) do
+    case Xandra.start_link(nodes: [node_string], connect_timeout: 10_000) do
+      {:ok, conn} ->
+        case wait_for_node_ready(conn, 5) do
+          :ready ->
+            conn
+
+          :pending when retries > 0 ->
+            Xandra.stop(conn)
+            Process.sleep(2_000)
+            connect_direct(node_string, retries - 1)
+
+          :pending ->
+            raise "ScyllaDB node #{node_string} not ready after retries"
+        end
+
+      {:error, _} when retries > 0 ->
+        Process.sleep(2_000)
+        connect_direct(node_string, retries - 1)
+
+      {:error, reason} ->
+        raise "Failed to connect to ScyllaDB node #{node_string}: #{inspect(reason)}"
+    end
+  end
+
   defp wait_for_node_ready(conn, retries \\ 30) do
     Enum.reduce_while(1..retries, :pending, fn _attempt, _acc ->
       case Xandra.execute(conn, "SELECT now() FROM system.local") do
@@ -111,6 +199,8 @@ defmodule AshScylla.ClusterIntegrationTest do
       end
     end)
   end
+
+  # ── Schema helpers ──────────────────────────────────────────────────────────
 
   defp create_keyspace(conn) do
     cql = """
@@ -165,61 +255,110 @@ defmodule AshScylla.ClusterIntegrationTest do
   # ── Test setup ──────────────────────────────────────────────────────────────
 
   setup_all do
-    case AshScylla.Test.ContainerEngine.ensure_running() do
-      :ok ->
-        # Start first node
-        case start_node(1) do
-          {:ok, node1} ->
-            conn1 = connect_node(elem(node1, 1))
+    cond do
+      cluster_mode?() ->
+        # Multi-node cluster mode: connect directly to existing nodes
+        nodes = direct_nodes()
+        Logger.info("TEST_CLUSTER=true. Connecting to multi-node cluster: #{inspect(nodes)}")
 
-            case wait_for_node_ready(conn1) do
-              :ready ->
-                # Create keyspace and tables before adding more nodes
-                create_keyspace(conn1)
-                create_tables(conn1)
-                Xandra.stop(conn1)
+        # Connect to the first node to create schema
+        conn = connect_direct(hd(nodes))
+        create_keyspace(conn)
+        create_tables(conn)
+        Xandra.stop(conn)
 
-                # Start additional nodes
-                {:ok, node2} = start_node(2)
-                {:ok, node3} = start_node(3)
+        # Build node info for tests: list of {index, node_string}
+        node_infos =
+          nodes
+          |> Enum.with_index(1)
+          |> Enum.map(fn {node_str, idx} -> {idx, node_str} end)
 
-                # Wait for cluster to form
-                Process.sleep(10_000)
+        %{nodes: node_infos, mode: :cluster}
 
-                # Register cleanup for after all tests complete
-                on_exit(fn ->
-                  [node1, node2, node3]
-                  |> Enum.each(fn {_index, container} ->
-                    stop_container(container)
-                  end)
-                end)
+      System.get_env("SCYLLA_DIRECT") != nil ->
+        # Single-node direct mode (legacy SCYLLA_DIRECT)
+        nodes = direct_nodes()
+        Logger.info("SCYLLA_DIRECT set. Connecting directly to: #{inspect(nodes)}")
 
-                %{nodes: [node1, node2, node3]}
+        conn = connect_direct(hd(nodes))
+        create_keyspace(conn)
+        create_tables(conn)
+        Xandra.stop(conn)
 
-              :pending ->
-                stop_container(elem(node1, 1))
+        node_infos =
+          nodes
+          |> Enum.with_index(1)
+          |> Enum.map(fn {node_str, idx} -> {idx, node_str} end)
 
-                raise "ScyllaDB node1 not ready after retries — cannot run cluster integration tests"
+        %{nodes: node_infos, mode: :direct}
+
+      true ->
+        # Container mode: spin up ScyllaDB via Podman
+        case AshScylla.Test.ContainerEngine.ensure_running() do
+          :ok ->
+            # Start first node
+            case start_node(1) do
+              {:ok, node1} ->
+                conn1 = connect_node(elem(node1, 1))
+
+                case wait_for_node_ready(conn1) do
+                  :ready ->
+                    # Create keyspace and tables before adding more nodes
+                    create_keyspace(conn1)
+                    create_tables(conn1)
+                    Xandra.stop(conn1)
+
+                    # Start additional nodes
+                    {:ok, node2} = start_node(2)
+                    {:ok, node3} = start_node(3)
+
+                    # Wait for cluster to form
+                    Process.sleep(10_000)
+
+                    # Register cleanup for after all tests complete
+                    on_exit(fn ->
+                      [node1, node2, node3]
+                      |> Enum.each(fn {_index, container} ->
+                        stop_container(container)
+                      end)
+                    end)
+
+                    %{nodes: [node1, node2, node3], mode: :container}
+
+                  :pending ->
+                    stop_container(elem(node1, 1))
+
+                    raise "ScyllaDB node1 not ready after retries — cannot run cluster integration tests"
+                end
+
+              {:error, reason} ->
+                raise "Failed to start ScyllaDB node1: #{inspect(reason)}"
             end
 
           {:error, reason} ->
-            raise "Failed to start ScyllaDB node1: #{inspect(reason)}"
+            Logger.warning(
+              "Container engine not available: #{inspect(reason)}. Skipping cluster integration tests."
+            )
+
+            %{nodes: nil, mode: :skipped}
         end
-
-      {:error, reason} ->
-        Logger.warning(
-          "Container engine not available: #{inspect(reason)}. Skipping cluster integration tests."
-        )
-
-        %{nodes: nil}
     end
   end
 
   setup context do
     case Map.fetch(context, :nodes) do
-      {:ok, nodes} when nodes != [] ->
-        {_index, container} = hd(nodes)
-        conn = connect_node(container, 10)
+      {:ok, nodes} when nodes != nil and nodes != [] ->
+        conn =
+          case hd(nodes) do
+            {_idx, container} when is_tuple(container) or is_struct(container) ->
+              # Container mode: node is {index, container_struct}
+              connect_node(container, 10)
+
+            {_idx, node_string} when is_binary(node_string) ->
+              # Direct mode: node is {index, "host:port"}
+              connect_direct(node_string, 10)
+          end
+
         %{conn: conn}
 
       _ ->
@@ -254,11 +393,9 @@ defmodule AshScylla.ClusterIntegrationTest do
         mapped_rows =
           Enum.map(rows, fn
             row when is_map(row) ->
-              IO.puts("[DEBUG] Row is map: #{inspect(row)}")
               row
 
             row when is_list(row) ->
-              IO.puts("[DEBUG] Row is list: #{inspect(row)}, col_names: #{inspect(col_names)}")
               Enum.zip(col_names, row) |> Map.new()
           end)
 
@@ -290,9 +427,10 @@ defmodule AshScylla.ClusterIntegrationTest do
     ts = Bitwise.band(timestamp_high, 0x0000_FFFF_FFFF_FFFF)
     clock = Bitwise.band(version_and_clock, 0x0FFF)
 
-    <<ts::48, 1::4, clock::12>>
+    # Build a 16-byte UUID v1-like value:
+    # 48 bits timestamp | 4 bits version (1) | 12 bits clock | 64 bits node (zero-padded)
+    <<ts::48, 1::4, clock::12, 0::64>>
     |> Base.encode16(case: :lower)
-    |> String.downcase()
     |> then(fn hex ->
       <<a::binary-size(8), b::binary-size(4), c::binary-size(4), d::binary-size(4),
         e::binary-size(12)>> = hex
@@ -444,7 +582,10 @@ defmodule AshScylla.ClusterIntegrationTest do
         )
 
       assert result.num_rows >= 1
-      assert Enum.any?(result.rows, fn row -> row["id"] == id end)
+
+      assert Enum.any?(result.rows, fn row ->
+               String.downcase(row["id"]) == String.downcase(id)
+             end)
     end
 
     test "query by secondary index on status", %{conn: conn} do
@@ -464,7 +605,10 @@ defmodule AshScylla.ClusterIntegrationTest do
         )
 
       assert result.num_rows >= 1
-      assert Enum.any?(result.rows, fn row -> row["id"] == id end)
+
+      assert Enum.any?(result.rows, fn row ->
+               String.downcase(row["id"]) == String.downcase(id)
+             end)
     end
   end
 
@@ -578,13 +722,24 @@ defmodule AshScylla.ClusterIntegrationTest do
   # ── Concurrent operations against cluster ───────────────────────────────────
 
   describe "concurrent operations against cluster" do
-    test "concurrent inserts to cluster", %{nodes: nodes} do
+    test "concurrent inserts to cluster", %{nodes: nodes, mode: mode} do
       tasks =
         Enum.map(1..20, fn i ->
           Task.async(fn ->
-            # Pick a random node to connect to
-            {_index, container} = Enum.random(nodes)
-            conn = connect_node(container)
+            conn =
+              case mode do
+                :direct ->
+                  {_idx, node_string} = Enum.random(nodes)
+                  connect_direct(node_string)
+
+                :cluster ->
+                  {_idx, node_string} = Enum.random(nodes)
+                  connect_direct(node_string)
+
+                :container ->
+                  {_index, container} = Enum.random(nodes)
+                  connect_node(container)
+              end
 
             id = uid()
 
@@ -603,27 +758,51 @@ defmodule AshScylla.ClusterIntegrationTest do
       assert Enum.all?(results, &(&1 == :ok))
     end
 
-    test "concurrent reads against cluster", %{nodes: nodes} do
+    test "concurrent reads against cluster", %{nodes: nodes, mode: mode} do
       # First insert a record to read
-      [node1 | _] = nodes
-      {_idx, container1} = node1
-      conn1 = connect_node(container1)
+      conn =
+        case mode do
+          :direct ->
+            {_idx, node_string} = hd(nodes)
+            connect_direct(node_string)
+
+          :cluster ->
+            {_idx, node_string} = hd(nodes)
+            connect_direct(node_string)
+
+          :container ->
+            {_idx, container} = hd(nodes)
+            connect_node(container)
+        end
+
       id = uid()
 
       xq(
-        conn1,
+        conn,
         "INSERT INTO #{@keyspace}.users (id, name, email) VALUES (?, ?, ?)",
         [id, "Shared", "shared@cluster.com"]
       )
 
-      Xandra.stop(conn1)
+      Xandra.stop(conn)
 
       # Now read from multiple nodes concurrently
       tasks =
         Enum.map(1..10, fn _ ->
           Task.async(fn ->
-            {_index, container} = Enum.random(nodes)
-            conn = connect_node(container)
+            conn =
+              case mode do
+                :direct ->
+                  {_idx, node_string} = Enum.random(nodes)
+                  connect_direct(node_string)
+
+                :cluster ->
+                  {_idx, node_string} = Enum.random(nodes)
+                  connect_direct(node_string)
+
+                :container ->
+                  {_index, container} = Enum.random(nodes)
+                  connect_node(container)
+              end
 
             result =
               xq(

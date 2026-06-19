@@ -1,18 +1,27 @@
 defmodule AshScylla.SchemaFixtures do
-  @moduledoc "Schema modules used in tests."
-end
+  @moduledoc """
+  Shared schema fixtures for migration and schema tests.
+  """
 
-defmodule AshScylla.SchemaFixtures.SampleSchema do
-  use AshScylla.Schema
+  defmodule SampleSchema do
+    @moduledoc "A sample schema that implements the AshScylla.Schema behaviour."
+    @behaviour AshScylla.Schema
 
-  @impl AshScylla.Schema
-  def change do
-    [
-      "CREATE TABLE IF NOT EXISTS sample (id UUID PRIMARY KEY, name TEXT)"
-    ]
+    @impl true
+    def change do
+      [
+        "CREATE TABLE IF NOT EXISTS sample_table (id UUID PRIMARY KEY, name TEXT)"
+      ]
+    end
   end
-end
 
-defmodule AshScylla.SchemaFixtures.EmptySchema do
-  use AshScylla.Schema
+  defmodule EmptySchema do
+    @moduledoc "A schema that returns an empty change list (default behaviour)."
+    @behaviour AshScylla.Schema
+
+    @impl true
+    def change do
+      []
+    end
+  end
 end

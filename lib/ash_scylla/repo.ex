@@ -157,7 +157,8 @@ defmodule AshScylla.Repo do
 
             topology_str =
               Enum.map_join(topologies, ", ", fn {dc, count} ->
-                "'#{dc}': #{count}"
+                dc_str = to_string(dc) |> AshScylla.Identifier.sanitize!()
+                "'#{dc_str}': #{count}"
               end)
 
             "{'class': 'NetworkTopologyStrategy', #{topology_str}}"

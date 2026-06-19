@@ -10,11 +10,6 @@ config :ash_scylla, AshScylla.TestRepo,
   keyspace: "ash_scylla_test",
   connect_timeout: 5_000
 
-config :my_app, MyApp.Repo,
-  nodes: ["127.0.0.1:9042"],
-  keyspace: "my_app_test",
-  connect_timeout: 5_000
-
 # For integration tests with testcontainer_ex (see test/scylla_integration_test.exs):
 # The configuration is done dynamically in the test setup with:
 #

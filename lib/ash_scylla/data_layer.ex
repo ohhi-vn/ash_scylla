@@ -91,6 +91,10 @@ defmodule AshScylla.DataLayer do
 
   @compile {:inline, sanitize_identifier: 1}
 
+  @default_query_timeout 30_000
+  @default_batch_size 100
+  @max_batch_size 1000
+
   @supported_features MapSet.new([
                         :create,
                         :read,
@@ -377,7 +381,7 @@ defmodule AshScylla.DataLayer do
   @impl Ash.DataLayer
   @spec run_query(t(), Ash.Resource.t()) :: {:ok, [Ash.Resource.t()]} | {:error, term()}
   def run_query(data_layer_query, resource) do
-    %__MODULE__{repo: repo, table: _table, tenant: tenant, filters: filters} = data_layer_query
+    %__MODULE__{repo: repo, table: table, tenant: tenant, filters: filters} = data_layer_query
 
     # Validate filters to prevent ALLOW FILTERING anti-pattern
     FilterValidator.validate_filters(resource, filters)
@@ -390,9 +394,7 @@ defmodule AshScylla.DataLayer do
 
     opts = build_query_opts(resource, tenant)
 
-    Logger.debug(
-      "Executing run_query: #{query} with params #{inspect(params)} opts #{inspect(opts)}"
-    )
+    Logger.debug("Executing run_query on #{table}")
 
     Telemetry.span(resource, :read, query, fn ->
       case repo.query(query, params, opts) do
@@ -545,7 +547,12 @@ defmodule AshScylla.DataLayer do
     ttl = Dsl.ttl(resource)
     consistency = Dsl.consistency(resource)
     sanitized_table = sanitize_identifier(table)
-    batch_size = Keyword.get(opts, :batch_size, :infinity)
+
+    batch_size =
+      opts
+      |> Keyword.get(:batch_size, @default_batch_size)
+      |> min(@max_batch_size)
+
     return_records? = Keyword.get(opts, :return_records?, true)
 
     statements =
@@ -696,9 +703,7 @@ defmodule AshScylla.DataLayer do
         where_clause
       ])
 
-    Logger.debug(
-      "Executing bulk UPDATE: #{query} with params #{inspect(set_values ++ where_params)}"
-    )
+    Logger.debug("Executing bulk UPDATE on #{sanitized_table}")
 
     with {:ok, _} <- repo.query(query, set_values ++ where_params, opts) do
       run_query(data_layer_query, resource)
@@ -720,7 +725,7 @@ defmodule AshScylla.DataLayer do
     query =
       IO.iodata_to_binary(["DELETE FROM ", sanitized_table, " WHERE ", where_clause])
 
-    Logger.debug("Executing bulk DELETE: #{query} with params #{inspect(where_params)}")
+    Logger.debug("Executing bulk DELETE on #{sanitized_table}")
 
     with {:ok, _} <- repo.query(query, where_params, opts), do: :ok
   end
@@ -809,7 +814,7 @@ defmodule AshScylla.DataLayer do
     # Build COUNT queries for each aggregate
     results =
       Enum.reduce_while(aggregates, %{}, fn aggregate, acc ->
-        case build_aggregate_query(aggregate, sanitized_table, where_clause) do
+        case build_aggregate_query(aggregate, sanitized_table, where_clause, resource, filters) do
           {:error, reason} ->
             {:halt, {:error, reason}}
 
@@ -856,20 +861,25 @@ defmodule AshScylla.DataLayer do
   # Private Helpers
   # ============================================================================
 
-  @spec build_aggregate_query(Ash.Query.Aggregate.t(), String.t(), String.t()) ::
+  @spec build_aggregate_query(Ash.Query.Aggregate.t(), String.t(), String.t(), module(), list()) ::
           {String.t(), list()} | {:error, term()}
-  defp build_aggregate_query(%{kind: :count}, table, where_clause) do
+  defp build_aggregate_query(%{kind: :count}, table, where_clause, resource, filters) do
+    allow_filtering? =
+      Dsl.allow_filtering(resource) and
+        QueryBuilder.secondary_index_scan?(resource, filters)
+
     query =
       IO.iodata_to_binary([
         "SELECT COUNT(*) FROM ",
         table,
-        if(where_clause != "", do: [" WHERE ", where_clause], else: [])
+        if(where_clause != "", do: [" WHERE ", where_clause], else: []),
+        if(allow_filtering?, do: " ALLOW FILTERING", else: "")
       ])
 
     {query, []}
   end
 
-  defp build_aggregate_query(%{kind: kind}, _table, _where_clause) do
+  defp build_aggregate_query(%{kind: kind}, _table, _where_clause, _resource, _filters) do
     {:error,
      "Aggregate kind #{kind} is not supported in ScyllaDB/Cassandra. Use :count or materialized views."}
   end
@@ -1159,7 +1169,7 @@ defmodule AshScylla.DataLayer do
         if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
       ])
 
-    Logger.debug("Executing INSERT: #{query} with params #{inspect(values)}")
+    Logger.debug("Executing INSERT on #{sanitized_table}")
 
     with {:ok, _} <- repo.query(query, values, opts),
          pk <- get_primary_key(%{attributes: attrs}, resource),
@@ -1212,7 +1222,7 @@ defmodule AshScylla.DataLayer do
         lwt_suffix
       ])
 
-    Logger.debug("Executing UPDATE: #{query} with params #{inspect(values ++ pk_values)}")
+    Logger.debug("Executing UPDATE on #{sanitized_table}")
 
     case repo.query(query, values ++ pk_values, opts) do
       {:ok, %Xandra.Page{content: [[false]]}} ->
@@ -1244,7 +1254,7 @@ defmodule AshScylla.DataLayer do
     query =
       IO.iodata_to_binary(["DELETE FROM ", sanitized_table, " WHERE ", pk_where])
 
-    Logger.debug("Executing DELETE: #{query} with params #{inspect(pk_values)}")
+    Logger.debug("Executing DELETE on #{sanitized_table}")
 
     # Use LWT IF EXISTS for conditional delete when LWT is enabled
     lwt? = Dsl.lwt(resource)
@@ -1421,6 +1431,7 @@ defmodule AshScylla.DataLayer do
     []
     |> maybe_put(:consistency, Dsl.consistency(resource))
     |> maybe_put(:keyspace, sanitize_keyspace(keyspace))
+    |> maybe_put(:timeout, @default_query_timeout)
   end
 
   # Build query options for read operations (consistency only).
@@ -1432,6 +1443,7 @@ defmodule AshScylla.DataLayer do
     []
     |> maybe_put(:consistency, Dsl.consistency(resource))
     |> maybe_put(:keyspace, sanitize_keyspace(keyspace))
+    |> maybe_put(:timeout, @default_query_timeout)
   end
 
   @spec sanitize_keyspace(String.t() | nil) :: String.t() | nil
