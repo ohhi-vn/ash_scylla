@@ -784,7 +784,132 @@ defmodule AshScylla.DslResourceTest do
   end
 
   # ══════════════════════════════════════════════════════════════════════════
-  # 9. DSL: materialized_view validation
+  # 9. run_query: allow_filtering bypasses FilterValidator
+  # ══════════════════════════════════════════════════════════════════════════
+
+  describe "run_query: allow_filtering bypasses FilterValidator" do
+    defmodule RunQueryFakeRepo do
+      @moduledoc false
+
+      def query(query, params, opts \\ []) do
+        send(self(), {:run_query_fake, query, params, opts})
+        {:ok, %Xandra.Page{content: [], columns: []}}
+      end
+    end
+
+    defmodule AllowFilteringNonIndexedResource do
+      @moduledoc false
+
+      use Ash.Resource,
+        domain: nil,
+        data_layer: AshScylla.DataLayer
+
+      import AshScylla.DataLayer.Dsl
+
+      ash_scylla do
+        repo(RunQueryFakeRepo)
+        table("af_non_indexed_items")
+        secondary_index(:email)
+        allow_filtering(true)
+      end
+
+      attributes do
+        uuid_primary_key(:id)
+        attribute(:email, :string)
+        attribute(:game_id, :uuid)
+        attribute(:status, :string)
+      end
+
+      actions do
+        defaults([:read])
+      end
+    end
+
+    defmodule StrictNonIndexedResource do
+      @moduledoc false
+
+      use Ash.Resource,
+        domain: nil,
+        data_layer: AshScylla.DataLayer
+
+      import AshScylla.DataLayer.Dsl
+
+      ash_scylla do
+        repo(RunQueryFakeRepo)
+        table("strict_non_indexed_items")
+        secondary_index(:email)
+      end
+
+      attributes do
+        uuid_primary_key(:id)
+        attribute(:email, :string)
+        attribute(:game_id, :uuid)
+        attribute(:status, :string)
+      end
+
+      actions do
+        defaults([:read])
+      end
+    end
+
+    test "run_query succeeds when allow_filtering is true and filter is on non-indexed column" do
+      query = DataLayer.resource_to_query(AllowFilteringNonIndexedResource, nil)
+
+      f = %{operator: :eq, left: %{name: :game_id}, right: %{value: "b1abe5c6-cd3d-4e50-bd77-d7b9dba22fb3"}}
+      {:ok, q} = DataLayer.filter(query, f, nil)
+
+      assert {:ok, records} = DataLayer.run_query(q, AllowFilteringNonIndexedResource)
+      assert is_list(records)
+    end
+
+    test "run_query succeeds when allow_filtering is true and filter is on non-indexed column with additional indexed filter" do
+      query = DataLayer.resource_to_query(AllowFilteringNonIndexedResource, nil)
+
+      f1 = %{operator: :eq, left: %{name: :email}, right: %{value: "test@example.com"}}
+      f2 = %{operator: :eq, left: %{name: :game_id}, right: %{value: "b1abe5c6-cd3d-4e50-bd77-d7b9dba22fb3"}}
+      {:ok, q} = DataLayer.filter(query, f1, nil)
+      {:ok, q} = DataLayer.filter(q, f2, nil)
+
+      assert {:ok, records} = DataLayer.run_query(q, AllowFilteringNonIndexedResource)
+      assert is_list(records)
+    end
+
+    test "run_query raises when allow_filtering is false and filter is on non-indexed column" do
+      query = DataLayer.resource_to_query(StrictNonIndexedResource, nil)
+
+      f = %{operator: :eq, left: %{name: :game_id}, right: %{value: "b1abe5c6-cd3d-4e50-bd77-d7b9dba22fb3"}}
+      {:ok, q} = DataLayer.filter(query, f, nil)
+
+      assert_raise AshScylla.Error, ~r/requires a secondary index/, fn ->
+        DataLayer.run_query(q, StrictNonIndexedResource)
+      end
+    end
+
+    test "run_query succeeds for strict resource when filter is on indexed column" do
+      query = DataLayer.resource_to_query(StrictNonIndexedResource, nil)
+
+      f = %{operator: :eq, left: %{name: :email}, right: %{value: "test@example.com"}}
+      {:ok, q} = DataLayer.filter(query, f, nil)
+
+      assert {:ok, records} = DataLayer.run_query(q, StrictNonIndexedResource)
+      assert is_list(records)
+    end
+
+    test "allow_filtering resource generates CQL with ALLOW FILTERING for non-indexed column" do
+      query = DataLayer.resource_to_query(AllowFilteringNonIndexedResource, nil)
+
+      f = %{operator: :eq, left: %{name: :game_id}, right: %{value: "b1abe5c6-cd3d-4e50-bd77-d7b9dba22fb3"}}
+      {:ok, q} = DataLayer.filter(query, f, nil)
+
+      {cql, _params} = QueryBuilder.build_optimized_query(q)
+
+      assert String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must be present for resource with allow_filtering enabled"
+    end
+  end
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # 10. DSL: materialized_view validation
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "DSL: materialized_view" do

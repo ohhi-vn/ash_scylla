@@ -287,7 +287,35 @@ When `run_aggregate_query` returns an empty result set from ScyllaDB, it now gra
 {:ok, %{total: 0}} = DataLayer.run_aggregate_query(query, [%{kind: :count, name: :total}], resource)
 ```
 
-### 8. Consistency Level Not Met
+### 9. ALLOW FILTERING / Schema Error (Non-Indexed Column Filter)
+
+```
+%AshScylla.Error.ScyllaError{
+  type: :schema_error,
+  message: "Cannot execute this query as it might involve data filtering... use ALLOW FILTERING"
+}
+```
+
+This error occurs when a query filters on a column that is neither part of the primary key nor has a secondary index. ScyllaDB rejects such queries because they would require a full cluster scan.
+
+**Solution A (Recommended): Add a secondary index**
+```elixir
+ash_scylla do
+  secondary_index :game_id
+end
+```
+
+**Solution B: Use a materialized view** for the query pattern.
+
+**Solution C: Enable `allow_filtering`** (NOT recommended for production):
+```elixir
+ash_scylla do
+  allow_filtering true
+end
+```
+When `allow_filtering` is enabled, the `FilterValidator` is skipped and `ALLOW FILTERING` is appended to the generated CQL. A warning is logged at runtime.
+
+### 9. Consistency Level Not Met
 
 ```elixir
 %AshScylla.Error.ScyllaError{

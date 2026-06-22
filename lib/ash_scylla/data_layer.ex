@@ -384,7 +384,15 @@ defmodule AshScylla.DataLayer do
     %__MODULE__{repo: repo, table: table, tenant: tenant, filters: filters} = data_layer_query
 
     # Validate filters to prevent ALLOW FILTERING anti-pattern
-    FilterValidator.validate_filters(resource, filters)
+    # Skip validation when allow_filtering is explicitly enabled on the resource
+    if Dsl.allow_filtering(resource) do
+      Logger.warning(
+        "AshScylla: allow_filtering is enabled for #{table} — skipping filter validation. " <>
+          "This can cause full table scans and performance issues."
+      )
+    else
+      FilterValidator.validate_filters(resource, filters)
+    end
 
     # Build the optimized query with filters, sorts, limit, offset
     {query, params} = QueryBuilder.build_optimized_query(data_layer_query)

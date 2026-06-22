@@ -764,13 +764,36 @@ end
 - Optimize slow queries
 - Check ScyllaDB performance
 
-**5. Secondary Index Not Used**
+**5. Secondary Index Not Used / ALLOW FILTERING Error**
 ```
-Query filtering on non-indexed column
+Cannot execute this query as it might involve data filtering and thus may have unpredictable performance. If you want to execute this query despite the performance unpredictability, use ALLOW FILTERING
 ```
-- Create secondary index in resource DSL
-- Run migration to create index
-- Verify index exists: `DESCRIBE INDEX idx_name;`
+
+This error means you're filtering on a column that is neither part of the primary key nor has a secondary index. You have three options:
+
+**Option A (Recommended): Add a secondary index**
+```elixir
+ash_scylla do
+  secondary_index :game_id
+end
+```
+Then run migrations to create the index.
+
+**Option B: Use a materialized view** for the query pattern:
+```elixir
+ash_scylla do
+  materialized_view :members_by_game,
+    primary_key: [:game_id, :id]
+end
+```
+
+**Option C (NOT recommended for production): Enable `allow_filtering`**
+```elixir
+ash_scylla do
+  allow_filtering true
+end
+```
+This appends `ALLOW FILTERING` to queries, allowing ScyllaDB to execute them. However, this can cause **full table scans** and severe performance issues in production. Only use this for development or small datasets.
 
 ### Debugging Tips
 

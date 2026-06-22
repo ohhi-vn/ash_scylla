@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`mix ash_scylla.new_template`** — new name for the old `mix ash_scylla.gen` resource template generation (`mix ash_scylla.new_template User name:string`)
 
 ### Fixed
+- `run_query/2`: `FilterValidator` is now skipped when `allow_filtering` is enabled on the resource — previously the validator raised before the query builder could append `ALLOW FILTERING`, making the DSL option dead code
 - MaterializedView tests now match quoted identifier output
 - `schema_migration.ex` formatting fixes
 - `offset/3` now raises with clear error instead of silently dropping
