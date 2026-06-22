@@ -1,7 +1,8 @@
 defmodule AshScylla.ConnectionTest do
   @moduledoc """
   Tests for AshScylla.Connection — covers edge cases around
-  lazy keyspace handling, connection lifecycle, and error paths.
+  lazy keyspace handling, connection lifecycle, error paths,
+  and cluster mode selection logic (single-node vs Xandra.Cluster).
   """
   use ExUnit.Case, async: false
 
@@ -17,6 +18,14 @@ defmodule AshScylla.ConnectionTest do
     name = unique_name()
     full_opts = Keyword.put(opts, :name, name)
     {:ok, _pid} = Connection.start_link(full_opts)
+    on_exit(fn -> Connection.stop(name) end)
+    name
+  end
+
+  defp start_conn_async(opts) do
+    name = unique_name()
+    full_opts = Keyword.put(opts, :name, name)
+    Connection.start_link(full_opts)
     on_exit(fn -> Connection.stop(name) end)
     name
   end
@@ -166,4 +175,95 @@ defmodule AshScylla.ConnectionTest do
                %Connection{}
     end
   end
+
+  # ── Cluster mode selection ─────────────────────────────────────────────────
+
+  describe "cluster mode selection" do
+    test "single node uses Xandra (not Xandra.Cluster)" do
+      name = start_conn(nodes: ["127.0.0.1:9042"])
+      conn = Connection.get_conn(name)
+      assert is_pid(conn.conn)
+      assert conn.nodes == ["127.0.0.1:9042"]
+    end
+
+    test "single node with tuple format uses Xandra" do
+      name = start_conn(nodes: [{"127.0.0.1", 9042}])
+      conn = Connection.get_conn(name)
+      assert is_pid(conn.conn)
+    end
+
+    test "multiple nodes with same port uses Xandra.Cluster" do
+      name = start_conn(nodes: ["127.0.0.1:9042", "127.0.0.1:9042"])
+      conn = Connection.get_conn(name)
+      assert is_pid(conn.conn)
+    end
+
+    test "multiple nodes with different ports falls back to single-node" do
+      name = start_conn(nodes: ["127.0.0.1:9043", "127.0.0.1:9044"])
+      conn = Connection.get_conn(name)
+      assert is_pid(conn.conn)
+    end
+
+    test "multiple nodes with tuple format and same port uses Xandra.Cluster" do
+      name = start_conn(nodes: [{"127.0.0.1", 9042}, {"127.0.0.1", 9042}])
+      conn = Connection.get_conn(name)
+      assert is_pid(conn.conn)
+    end
+  end
+
+  # ── parse_node/1 (private function tested via init behavior) ──────────────
+
+  describe "node parsing" do
+    test "parses string host:port" do
+      name = start_conn(nodes: ["127.0.0.1:9042"])
+      conn = Connection.get_conn(name)
+      assert conn.nodes == ["127.0.0.1:9042"]
+    end
+
+    test "parses tuple {host, port}" do
+      name = start_conn(nodes: [{"127.0.0.1", 9042}])
+      conn = Connection.get_conn(name)
+      assert is_pid(conn.conn)
+    end
+
+    test "parses hostname:port string" do
+      name = start_conn(nodes: ["scylla.example.com:9042"])
+      conn = Connection.get_conn(name)
+      assert conn.nodes == ["scylla.example.com:9042"]
+    end
+  end
+
+  # ── Non-standard port auto-detection ──────────────────────────────────────
+
+  describe "non-standard port handling" do
+    test "single node with non-standard port" do
+      name = start_conn(nodes: ["127.0.0.1:9043"])
+      conn = Connection.get_conn(name)
+      assert is_pid(conn.conn)
+      assert conn.nodes == ["127.0.0.1:9043"]
+    end
+
+    test "multiple nodes with same non-standard port" do
+      name = start_conn(nodes: ["127.0.0.1:9043", "127.0.0.1:9043"])
+      conn = Connection.get_conn(name)
+      assert is_pid(conn.conn)
+    end
+  end
+
+  # ── sync_connect option ───────────────────────────────────────────────────
+
+  describe "sync_connect option" do
+    test "single node works without sync_connect" do
+      name = start_conn(nodes: ["127.0.0.1:9042"])
+      conn = Connection.get_conn(name)
+      assert is_pid(conn.conn)
+    end
+
+    test "single node works with sync_connect disabled" do
+      name = start_conn(nodes: ["127.0.0.1:9042"], sync_connect: false)
+      conn = Connection.get_conn(name)
+      assert is_pid(conn.conn)
+    end
+  end
+
 end

@@ -21,7 +21,12 @@ defmodule AshScylla.Connection do
   Replaces the Exandra/Ecto.Repo pattern. Manages a Xandra connection
   process and provides query/prepare operations.
 
+  Supports both single-node (`Xandra.start_link/1`) and multi-node
+  (`Xandra.Cluster.start_link/1`) connections.
+
   ## Usage
+
+  Single-node connection:
 
       # In your application supervision tree:
       children = [
@@ -31,13 +36,43 @@ defmodule AshScylla.Connection do
       # Or start manually:
       {:ok, conn} = AshScylla.Connection.start_link(nodes: ["127.0.0.1:9042"], keyspace: "my_app")
 
+  Multi-node cluster connection (all nodes must use the same port):
+
+      children = [
+        {AshScylla.Connection,
+          name: MyApp.Scylla,
+          nodes: ["scylla-1:9042", "scylla-2:9042", "scylla-3:9042"],
+          keyspace: "my_app",
+          pool_size: 10}
+      ]
+
   ## Options
 
-  All options are passed through to `Xandra.start_link/1`. Key options:
+  All options are passed through to `Xandra.start_link/1` (single node) or
+  `Xandra.Cluster.start_link/1` (multiple nodes). Key options:
 
   - `:name` - Register the connection under this name (required for supervised start)
-  - `:nodes` - List of nodes, e.g. `["127.0.0.1:9042"]`
+  - `:nodes` - List of nodes, e.g. `["127.0.0.1:9042"]` or `[{"127.0.0.1", 9042}]`
   - `:keyspace` - Keyspace to USE on connect
+  - `:pool_size` - Number of connections per node (cluster mode, default: 1)
+  - `:connect_timeout` - Connection timeout in milliseconds (default: 5000)
+  - `:autodiscovered_nodes_port` - Port for autodiscovered peers (default: 9042).
+    When using a cluster with a non-standard port, this is auto-detected from
+    the first node if all nodes share the same port.
+  - `:sync_connect` - Wait for at least one connection before returning.
+    Set to `false` for async connect (default: 5000ms timeout in cluster mode).
+
+  ## Cluster Mode
+
+  When multiple nodes are provided, `AshScylla.Connection` uses `Xandra.Cluster`
+  for load balancing and fault tolerance.
+
+  **Important:** Xandra.Cluster requires all nodes to share the same port.
+  It uses a single `autodiscovered_nodes_port` for all discovered peers
+  (Scylla/Cassandra `system.peers` does not advertise ports).
+
+  If nodes have different ports, `AshScylla.Connection` falls back to a
+  single-node connection to the first node and logs a warning.
   """
 
   use GenServer
@@ -178,7 +213,7 @@ defmodule AshScylla.Connection do
   defp type_value(value) when is_float(value), do: {"double", value}
   defp type_value(true), do: {"boolean", true}
   defp type_value(false), do: {"boolean", false}
-  defp type_value(nil), do: nil
+  defp type_value(nil), do: {"text", nil}
   defp type_value(value) when is_list(value), do: {"list", value}
   defp type_value(value) when is_map(value), do: {"map", value}
   defp type_value(value), do: {"text", to_string(value)}
@@ -349,6 +384,9 @@ defmodule AshScylla.Connection do
     keyspace = Keyword.get(opts, :keyspace)
     nodes = Keyword.get(opts, :nodes, ["127.0.0.1:9042"])
 
+    # Parse node addresses to extract host/port tuples
+    parsed_nodes = Enum.map(nodes, &parse_node/1)
+
     xandra_opts =
       [
         nodes: nodes
@@ -367,7 +405,57 @@ defmodule AshScylla.Connection do
         ])
       )
 
-    case Xandra.start_link(xandra_opts) do
+    {start_fun, xandra_opts} =
+      if length(nodes) > 1 do
+        # Check if all nodes use the same port. Xandra.Cluster uses a single
+        # autodiscovered_nodes_port for all peers, so mixed-port clusters
+        # won't work properly with Xandra.Cluster.
+        ports = Enum.map(parsed_nodes, &elem(&1, 1))
+
+        if length(Enum.uniq(ports)) == 1 do
+          # All nodes share the same port — safe to use Xandra.Cluster.
+          # Auto-detect the port from the first node.
+          xandra_opts =
+            if Keyword.has_key?(xandra_opts, :autodiscovered_nodes_port) do
+              xandra_opts
+            else
+              case parsed_nodes do
+                [{_host, port} | _] when is_integer(port) ->
+                  Keyword.put(xandra_opts, :autodiscovered_nodes_port, port)
+                _ ->
+                  xandra_opts
+              end
+            end
+
+          # Use sync_connect to ensure at least one connection is established
+          # before returning. This prevents the pool from staying in :never_connected
+          # and crashing with FunctionClauseError on unhandled events.
+          xandra_opts =
+            if Keyword.has_key?(xandra_opts, :sync_connect) do
+              xandra_opts
+            else
+              Keyword.put(xandra_opts, :sync_connect, 5_000)
+            end
+
+          {&Xandra.Cluster.start_link/1, xandra_opts}
+        else
+          # Nodes have different ports — Xandra.Cluster can't handle this.
+          # Fall back to a single-node connection to the first node.
+          Logger.warning(
+            "AshScylla: Nodes have different ports (#{inspect(ports)}). " <>
+              "Xandra.Cluster requires all nodes to share the same port. " <>
+              "Falling back to single-node connection to #{inspect(hd(nodes))}."
+          )
+
+          # Override nodes to only use the first node for single connection
+          xandra_opts = Keyword.put(xandra_opts, :nodes, [hd(nodes)])
+          {&Xandra.start_link/1, xandra_opts}
+        end
+      else
+        {&Xandra.start_link/1, xandra_opts}
+      end
+
+    case start_fun.(xandra_opts) do
       {:ok, conn} ->
         # Try to USE keyspace, but don't fail if it doesn't exist yet
         # (e.g. during first-time setup before create_keyspace runs)
@@ -466,4 +554,24 @@ defmodule AshScylla.Connection do
         {:reply, {:error, reason}, state}
     end
   end
+
+  # Parses a node string like "127.0.0.1:9042" or "host:port" into {host, port}.
+  # Returns {host, nil} if no port is specified.
+  defp parse_node(node) when is_binary(node) do
+    case String.split(node, ":", parts: 2) do
+      [host, port_str] ->
+        case Integer.parse(port_str) do
+          {port, ""} -> {host, port}
+          _ -> {host, nil}
+        end
+      [host] ->
+        {host, nil}
+    end
+  end
+
+  defp parse_node({host, port}) when is_binary(host) and is_integer(port) do
+    {host, port}
+  end
+
+  defp parse_node(node), do: {to_string(node), nil}
 end

@@ -395,14 +395,45 @@ end
 
 ### Repo Configuration
 
+Single-node connection:
+
 ```elixir
 config :my_app, MyApp.Repo,
-  nodes: ["scylla-1:9042", "scylla-2:9042"],  # Cluster nodes
-  keyspace: "my_app_prod",
-  pool_size: 50,                                # Connections per node
-  request_timeout: 300_000,                     # Query timeout (ms)
-  connect_timeout: 10_000
+  nodes: ["127.0.0.1:9042"],
+  keyspace: "my_app_dev"
 ```
+
+Multi-node cluster connection (all nodes must use the same port):
+
+```elixir
+config :my_app, MyApp.Repo,
+  nodes: ["scylla-1:9042", "scylla-2:9042", "scylla-3:9042"],
+  keyspace: "my_app_prod",
+  pool_size: 10,
+  connect_timeout: 5_000
+```
+
+Cluster with a non-standard port (autodiscovered_nodes_port is auto-detected):
+
+```elixir
+config :my_app, MyApp.Repo,
+  nodes: ["scylla-1:9043", "scylla-2:9043", "scylla-3:9043"],
+  keyspace: "my_app_prod"
+```
+
+Or set it explicitly:
+
+```elixir
+config :my_app, MyApp.Repo,
+  nodes: ["scylla-1:9043", "scylla-2:9043"],
+  autodiscovered_nodes_port: 9043,
+  keyspace: "my_app_prod"
+```
+
+NOTE: Xandra.Cluster uses a single autodiscovered_nodes_port for all discovered
+peers because ScyllaDB/Cassandra system.peers does not advertise ports.
+All cluster nodes must use the same port, or the connection falls back to
+single-node mode with a warning.
 
 **Pool Size Guidelines:**
 - Development: 5-10
@@ -426,6 +457,7 @@ Since ScyllaDB/Cassandra is a NoSQL wide-column store, some features are not sup
 | **No OR conditions** | CQL limitation | Multiple queries or UNION-like patterns |
 | **No foreign keys** | No relational integrity | Application-level validation |
 | **OFFSET not supported** | ScyllaDB has no native OFFSET; it would require full table scan | Use keyset pagination with `pagination :token`. The data layer silently drops OFFSET to prevent performance disasters. |
+| **Cluster requires same port** | Xandra.Cluster uses one autodiscovered_nodes_port for all peers | Configure all ScyllaDB nodes on the same port, or use single-node connection |
 
 ---
 
