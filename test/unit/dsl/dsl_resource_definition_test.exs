@@ -514,7 +514,7 @@ defmodule AshScylla.DslResourceTest do
       refute cql =~ "ORDER BY"
       assert cql =~ "LIMIT ?"
       assert "active" in params
-      assert 10 in params
+      assert {"int", 10} in params
     end
 
     test "set_tenant and set_context on DSL resource" do
@@ -765,7 +765,7 @@ defmodule AshScylla.DslResourceTest do
                "SELECT * FROM filterable_items WHERE email = ? LIMIT ? ALLOW FILTERING"
 
       assert "test@example.com" in params
-      assert 10 in params
+      assert {"int", 10} in params
     end
 
     test "full pipeline: disallow_filtering resource does NOT generate ALLOW FILTERING" do
@@ -855,7 +855,12 @@ defmodule AshScylla.DslResourceTest do
     test "run_query succeeds when allow_filtering is true and filter is on non-indexed column" do
       query = DataLayer.resource_to_query(AllowFilteringNonIndexedResource, nil)
 
-      f = %{operator: :eq, left: %{name: :game_id}, right: %{value: "b1abe5c6-cd3d-4e50-bd77-d7b9dba22fb3"}}
+      f = %{
+        operator: :eq,
+        left: %{name: :game_id},
+        right: %{value: "b1abe5c6-cd3d-4e50-bd77-d7b9dba22fb3"}
+      }
+
       {:ok, q} = DataLayer.filter(query, f, nil)
 
       assert {:ok, records} = DataLayer.run_query(q, AllowFilteringNonIndexedResource)
@@ -866,7 +871,13 @@ defmodule AshScylla.DslResourceTest do
       query = DataLayer.resource_to_query(AllowFilteringNonIndexedResource, nil)
 
       f1 = %{operator: :eq, left: %{name: :email}, right: %{value: "test@example.com"}}
-      f2 = %{operator: :eq, left: %{name: :game_id}, right: %{value: "b1abe5c6-cd3d-4e50-bd77-d7b9dba22fb3"}}
+
+      f2 = %{
+        operator: :eq,
+        left: %{name: :game_id},
+        right: %{value: "b1abe5c6-cd3d-4e50-bd77-d7b9dba22fb3"}
+      }
+
       {:ok, q} = DataLayer.filter(query, f1, nil)
       {:ok, q} = DataLayer.filter(q, f2, nil)
 
@@ -877,7 +888,12 @@ defmodule AshScylla.DslResourceTest do
     test "run_query raises when allow_filtering is false and filter is on non-indexed column" do
       query = DataLayer.resource_to_query(StrictNonIndexedResource, nil)
 
-      f = %{operator: :eq, left: %{name: :game_id}, right: %{value: "b1abe5c6-cd3d-4e50-bd77-d7b9dba22fb3"}}
+      f = %{
+        operator: :eq,
+        left: %{name: :game_id},
+        right: %{value: "b1abe5c6-cd3d-4e50-bd77-d7b9dba22fb3"}
+      }
+
       {:ok, q} = DataLayer.filter(query, f, nil)
 
       assert_raise AshScylla.Error, ~r/requires a secondary index/, fn ->
@@ -898,7 +914,12 @@ defmodule AshScylla.DslResourceTest do
     test "allow_filtering resource generates CQL with ALLOW FILTERING for non-indexed column" do
       query = DataLayer.resource_to_query(AllowFilteringNonIndexedResource, nil)
 
-      f = %{operator: :eq, left: %{name: :game_id}, right: %{value: "b1abe5c6-cd3d-4e50-bd77-d7b9dba22fb3"}}
+      f = %{
+        operator: :eq,
+        left: %{name: :game_id},
+        right: %{value: "b1abe5c6-cd3d-4e50-bd77-d7b9dba22fb3"}
+      }
+
       {:ok, q} = DataLayer.filter(query, f, nil)
 
       {cql, _params} = QueryBuilder.build_optimized_query(q)

@@ -373,7 +373,7 @@ defmodule AshScylla.DataLayer do
     repo = repo(resource)
 
     case do_delete(changeset, resource, repo) do
-      :ok -> :ok
+      :ok -> {:ok, changeset.data}
       {:error, _} = error -> error
     end
   end
@@ -381,7 +381,8 @@ defmodule AshScylla.DataLayer do
   @impl Ash.DataLayer
   @spec run_query(t(), Ash.Resource.t()) :: {:ok, [Ash.Resource.t()]} | {:error, term()}
   def run_query(data_layer_query, resource) do
-    %__MODULE__{repo: repo, table: table, tenant: tenant, filters: filters} = data_layer_query
+    %__MODULE__{repo: repo, table: table, tenant: tenant, filters: filters, sorts: sorts} =
+      data_layer_query
 
     # Validate filters to prevent ALLOW FILTERING anti-pattern
     # Skip validation when allow_filtering is explicitly enabled on the resource
@@ -397,6 +398,11 @@ defmodule AshScylla.DataLayer do
     # Build the optimized query with filters, sorts, limit, offset
     {query, params} = QueryBuilder.build_optimized_query(data_layer_query)
 
+    # Detect if ORDER BY was dropped due to secondary index scan
+    order_dropped? =
+      resource != nil and sorts != [] and sorts != nil and
+        QueryBuilder.secondary_index_scan?(resource, filters)
+
     # Convert UUID string params to binary for Xandra
     params = convert_uuid_params(params, resource)
 
@@ -409,12 +415,14 @@ defmodule AshScylla.DataLayer do
         {:ok, %Xandra.Page{content: content, columns: columns}} when columns != nil ->
           rows = content || []
           records = Enum.map(rows, &to_ash_record(&1, resource, columns))
+          records = maybe_apply_in_memory_sort(records, sorts, order_dropped?)
           %__MODULE__{context: context} = data_layer_query
           {:ok, apply_calculations(records, context)}
 
         {:ok, %Xandra.Page{content: content}} ->
           rows = content || []
           records = Enum.map(rows, &to_ash_record(&1, resource))
+          records = maybe_apply_in_memory_sort(records, sorts, order_dropped?)
           %__MODULE__{context: context} = data_layer_query
           {:ok, apply_calculations(records, context)}
 
@@ -423,8 +431,23 @@ defmodule AshScylla.DataLayer do
       end
     end)
   rescue
+    e in [AshScylla.Error] -> reraise(e, __STACKTRACE__)
     e -> handle_query_result({:error, e})
   end
+
+  # When ORDER BY is dropped due to secondary index scan, apply sorting in-memory
+  # to compensate. This is not ideal for large result sets but ensures correctness.
+  defp maybe_apply_in_memory_sort(records, sorts, true) do
+    Enum.sort_by(records, fn record ->
+      Enum.map(sorts, fn sort_field ->
+        value = Map.get(record, sort_field)
+        # Ensure nil values sort last
+        {value == nil, value}
+      end)
+    end)
+  end
+
+  defp maybe_apply_in_memory_sort(records, _, false), do: records
 
   # ============================================================================
   # Optional Callbacks - Filter
@@ -590,7 +613,7 @@ defmodule AshScylla.DataLayer do
 
     case result do
       :ok when return_records? -> {:ok, stream_bulk_records(changesets, resource)}
-      :ok -> :ok
+      :ok -> {:ok, Enum.map(changesets, & &1.data)}
       {:error, error} -> handle_scylla_result({:error, error})
     end
   end
@@ -1359,6 +1382,35 @@ defmodule AshScylla.DataLayer do
     end)
   end
 
+  @spec get_primary_key_from_changeset(term(), module()) :: map()
+  defp get_primary_key_from_changeset(changeset, resource) do
+    pk_from_attrs = get_primary_key(changeset, resource)
+
+    pk_from_data =
+      case Map.get(changeset, :data) do
+        data when is_map(data) ->
+          data_attributes = Map.get(data, :attributes, %{})
+
+          Enum.reduce(Info.attributes(resource), %{}, fn attr, acc ->
+            if attr.primary_key? do
+              case Map.get(data_attributes, attr.name) do
+                nil -> acc
+                val -> Map.put(acc, attr.name, val)
+              end
+            else
+              acc
+            end
+          end)
+
+        _ ->
+          %{}
+      end
+
+    # Merge: prefer non-nil attributes, fall back to data values
+    pk_from_attrs_non_nil = Map.reject(pk_from_attrs, fn {_k, v} -> is_nil(v) end)
+    Map.merge(pk_from_data, pk_from_attrs_non_nil)
+  end
+
   @spec to_ash_record(term(), module(), list() | nil) :: struct()
   defp to_ash_record(record, resource, columns \\ nil)
 
@@ -1406,6 +1458,7 @@ defmodule AshScylla.DataLayer do
 
   defp to_ash_record(record, resource, _columns) when is_map(record) do
     uuid_fields = uuid_attribute_names(resource)
+    atom_fields = atom_attribute_names(resource)
 
     attrs =
       resource
@@ -1415,13 +1468,18 @@ defmodule AshScylla.DataLayer do
           Map.get(record, attr.name) || Map.get(record, to_string(attr.name))
 
         decoded_value =
-          if attr.name in uuid_fields and is_binary(value) and byte_size(value) == 16 do
-            case Types.uuid_binary_to_string(value) do
-              {:ok, str} -> str
-              _ -> value
-            end
-          else
-            value
+          cond do
+            attr.name in uuid_fields and is_binary(value) and byte_size(value) == 16 ->
+              case Types.uuid_binary_to_string(value) do
+                {:ok, str} -> str
+                _ -> value
+              end
+
+            attr.name in atom_fields and is_binary(value) ->
+              String.to_atom(value)
+
+            true ->
+              value
           end
 
         Map.put(acc, attr.name, decoded_value)
@@ -1567,7 +1625,7 @@ defmodule AshScylla.DataLayer do
 
   @spec build_pk_where_clause(term(), module()) :: {String.t(), [term()]}
   defp build_pk_where_clause(changeset, resource) do
-    pk = get_primary_key(changeset, resource)
+    pk = get_primary_key_from_changeset(changeset, resource)
     build_where_from_map(pk, resource)
   end
 
@@ -1609,6 +1667,23 @@ defmodule AshScylla.DataLayer do
       end
     end)
     |> Enum.flat_map(fn attr -> [attr.name, to_string(attr.name)] end)
+    |> MapSet.new()
+  end
+
+  # Returns a MapSet of attribute names (atoms) that are typed as Atom.
+  # These attributes need string-to-atom conversion when read from ScyllaDB.
+  @spec atom_attribute_names(module()) :: MapSet.t(atom())
+  defp atom_attribute_names(resource) do
+    resource
+    |> Info.attributes()
+    |> Enum.filter(fn attr ->
+      case attr.type do
+        Ash.Type.Atom -> true
+        :atom -> true
+        _ -> false
+      end
+    end)
+    |> Enum.map(& &1.name)
     |> MapSet.new()
   end
 
@@ -1734,6 +1809,18 @@ defmodule AshScylla.DataLayer do
   defp wrap_typed(value, key, cql_types) when is_float(value) do
     cql_type = Map.get(cql_types, key) || Map.get(cql_types, to_string(key), "double")
     {cql_type, value}
+  end
+
+  defp wrap_typed(value, key, cql_types) when is_integer(value) do
+    cql_type = Map.get(cql_types, key) || Map.get(cql_types, to_string(key), "bigint")
+    {cql_type, value}
+  end
+
+  defp wrap_typed(value, _key, _cql_types) when is_boolean(value), do: value
+
+  defp wrap_typed(value, key, cql_types) when is_atom(value) do
+    cql_type = Map.get(cql_types, key) || Map.get(cql_types, to_string(key), "text")
+    {cql_type, Atom.to_string(value)}
   end
 
   defp wrap_typed(value, _key, _cql_types), do: value

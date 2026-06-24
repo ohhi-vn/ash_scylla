@@ -122,7 +122,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
       {cql, params} = QueryBuilder.build_optimized_query(query)
       assert String.contains?(cql, "LIMIT ?")
-      assert 10 in params
+      assert {"int", 10} in params
     end
 
     test "combined: filter + sort + limit" do
@@ -145,7 +145,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
       assert String.contains?(cql, "ORDER BY created_at desc")
       assert String.contains?(cql, "LIMIT ?")
       assert "active" in params
-      assert 25 in params
+      assert {"int", 25} in params
     end
 
     test "IN operator filter" do
@@ -506,7 +506,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
       assert String.contains?(cql, "LIMIT ?")
       assert "a@b.com" in params
       assert "active" in params
-      assert 10 in params
+      assert {"int", 10} in params
     end
 
     test "appends ALLOW FILTERING with Ash.Query.Ref filter on indexed column" do
@@ -571,7 +571,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
       assert cql ==
                "SELECT id, email FROM users WHERE email = ? LIMIT ? ALLOW FILTERING"
 
-      assert params == ["a@b.com", 5]
+      assert params == ["a@b.com", {"int", 5}]
     end
   end
 

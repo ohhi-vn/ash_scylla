@@ -330,7 +330,7 @@ defmodule AshScylla.DataLayer.CrudTest do
 
       id_bin = uuid_bin(id)
 
-      assert DataLayer.destroy(Resource, changeset(%{id: id})) == :ok
+      assert {:ok, _} = DataLayer.destroy(Resource, changeset(%{id: id}))
 
       assert_receive {:ash_scylla_query, delete_query, [^id_bin], opts}
       assert delete_query == "DELETE FROM crud_items WHERE id = ?"

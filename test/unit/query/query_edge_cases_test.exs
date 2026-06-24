@@ -464,7 +464,7 @@ defmodule AshScylla.EdgeCasesTest do
       {q, params} = QueryBuilder.build_optimized_query(dlq)
 
       assert q == "SELECT * FROM events WHERE status = ? AND created_at >= ? LIMIT ?"
-      assert params == ["active", dt, 50]
+      assert params == ["active", dt, {"int", 50}]
     end
 
     test "full query with select columns and raw values" do
@@ -489,7 +489,7 @@ defmodule AshScylla.EdgeCasesTest do
       assert q ==
                "SELECT id, name, started_at FROM games WHERE started_at >= ? ORDER BY started_at desc LIMIT ?"
 
-      assert params == [dt, 100]
+      assert params == [dt, {"int", 100}]
     end
 
     test "full query with OR and raw values" do
@@ -547,7 +547,7 @@ defmodule AshScylla.EdgeCasesTest do
       assert q ==
                "SELECT * FROM items WHERE (status = ? OR status = ?) AND created_at >= ? ORDER BY created_at asc LIMIT ?"
 
-      assert params == ["active", "pending", dt, 25]
+      assert params == ["active", "pending", dt, {"int", 25}]
 
       # Verify balanced parens
       opens = q |> String.graphemes() |> Enum.count(&(&1 == "("))
@@ -733,7 +733,7 @@ defmodule AshScylla.EdgeCasesTest do
 
       {cql, params} = QueryBuilder.build_optimized_query(qs)
       refute String.contains?(cql, "OFFSET")
-      assert params == [10]
+      assert params == [{"int", 10}]
     end
 
     test "multiple sort fields" do
@@ -807,7 +807,7 @@ defmodule AshScylla.EdgeCasesTest do
 
       {cql, params} = QueryBuilder.build_optimized_query(qs)
       assert cql == "SELECT * FROM t WHERE s = ? LIMIT ?"
-      assert params == ["a", 25]
+      assert params == ["a", {"int", 25}]
     end
   end
 

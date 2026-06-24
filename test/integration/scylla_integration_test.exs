@@ -9,6 +9,14 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
   require Logger
 
+  # Enable source annotations for debugging (see https://spark.hexdocs.pm/use-source-annotations.html)
+  setup do
+    debug_info? = Code.get_compiler_option(:debug_info)
+    Code.put_compiler_option(:debug_info, true)
+    on_exit(fn -> Code.put_compiler_option(:debug_info, debug_info?) end)
+    :ok
+  end
+
   alias AshScylla.TestRepo
   alias AshScylla.ScyllaContainer, warn: false
 
@@ -41,18 +49,26 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
   defp direct_host do
     System.get_env("SCYLLA_HOST") ||
-      (case System.get_env("SCYLLA_NODES") do
-         nil -> "127.0.0.1"
-         nodes -> nodes |> String.split(",") |> hd() |> String.split(":") |> hd()
-       end)
+      case System.get_env("SCYLLA_NODES") do
+        nil -> "127.0.0.1"
+        nodes -> nodes |> String.split(",") |> hd() |> String.split(":") |> hd()
+      end
   end
 
   defp direct_port do
     case System.get_env("SCYLLA_PORT") do
       nil ->
         case System.get_env("SCYLLA_NODES") do
-          nil -> 9042
-          nodes -> nodes |> String.split(",") |> hd() |> String.split(":") |> List.last() |> String.to_integer()
+          nil ->
+            9042
+
+          nodes ->
+            nodes
+            |> String.split(",")
+            |> hd()
+            |> String.split(":")
+            |> List.last()
+            |> String.to_integer()
         end
 
       port ->
@@ -307,50 +323,48 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
     if System.get_env("TEST_CLUSTER") == "true" do
       Logger.warning("TEST_CLUSTER=true set — skipping ScyllaIntegrationTest (container-only)")
-      %{scylla: nil, engine_unavailable: true}
+      :ok
     else
-    if direct_connect?() do
-      host = direct_host()
-      port = direct_port()
-      Logger.info("SCYLLA_DIRECT set. Connecting directly to ScyllaDB at #{host}:#{port}")
+      if direct_connect?() do
+        host = direct_host()
+        port = direct_port()
+        Logger.info("SCYLLA_DIRECT set. Connecting directly to ScyllaDB at #{host}:#{port}")
 
-      case try_connect(host, port) do
-        {:ok, conn} ->
-          Logger.info("Connected to ScyllaDB. Creating schema...")
-          schema(conn)
-          Logger.info("Schema created successfully.")
-          Logger.info("=== ScyllaIntegrationTest setup_all complete (direct) ===")
-          %{scylla: :direct, engine_unavailable: false}
+        case try_connect(host, port) do
+          {:ok, conn} ->
+            Logger.info("Connected to ScyllaDB. Creating schema...")
+            schema(conn)
+            Logger.info("Schema created successfully.")
+            Logger.info("=== ScyllaIntegrationTest setup_all complete (direct) ===")
+            %{scylla: :direct, engine_unavailable: false}
 
-        {:error, _} ->
-          Logger.error("ScyllaDB not reachable at #{host}:#{port} after retries.")
-          raise "ScyllaDB not reachable after retries — cannot run integration tests"
+          {:error, _} ->
+            Logger.error("ScyllaDB not reachable at #{host}:#{port} after retries.")
+            raise "ScyllaDB not reachable after retries — cannot run integration tests"
+        end
+      else
+        engine = AshScylla.Test.ContainerEngine.engine_type()
+        Logger.info("Detected container engine: #{inspect(engine)}")
+
+        reachable = AshScylla.Test.ContainerEngine.reachable?()
+        Logger.info("Container engine reachable: #{reachable}")
+
+        case AshScylla.Test.ContainerEngine.ensure_running() do
+          :ok ->
+            Logger.info("Container engine ready. Starting ScyllaDB container...")
+            Logger.info("About to call ScyllaContainer.start...")
+            _ = ScyllaContainer.start(scylla_container_config())
+            Logger.warning("ScyllaContainer.start not implemented. Skipping integration tests.")
+            :ok
+
+          {:error, reason} ->
+            Logger.warning(
+              "Container engine not available: #{inspect(reason)}. Integration tests will be skipped."
+            )
+
+            :ok
+        end
       end
-    else
-      engine = AshScylla.Test.ContainerEngine.engine_type()
-      Logger.info("Detected container engine: #{inspect(engine)}")
-
-      reachable = AshScylla.Test.ContainerEngine.reachable?()
-      Logger.info("Container engine reachable: #{reachable}")
-
-      case AshScylla.Test.ContainerEngine.ensure_running() do
-        :ok ->
-          Logger.info("Container engine ready. Starting ScyllaDB container...")
-
-          Logger.info("About to call ScyllaContainer.start...")
-
-          _ = ScyllaContainer.start(scylla_container_config())
-          Logger.warning("ScyllaContainer.start not implemented. Skipping integration tests.")
-          %{scylla: nil, engine_unavailable: true}
-
-        {:error, reason} ->
-          Logger.warning(
-            "Container engine not available: #{inspect(reason)}. Integration tests will be skipped."
-          )
-
-          %{scylla: nil, engine_unavailable: true}
-      end
-    end
     end
   end
 
@@ -362,11 +376,8 @@ defmodule AshScylla.ScyllaIntegrationTest do
         conn = connect_with_retry(host, port, 5)
         %{conn: conn}
 
-      {:ok, nil} ->
-        {:skip, "ScyllaDB container not available"}
-
       _ ->
-        {:skip, "ScyllaDB container not available"}
+        %{conn: nil}
     end
   end
 

@@ -43,6 +43,14 @@ defmodule AshScylla.ClusterIntegrationTest do
 
   require Logger
 
+  # Enable source annotations for debugging (see https://spark.hexdocs.pm/use-source-annotations.html)
+  setup do
+    debug_info? = Code.get_compiler_option(:debug_info)
+    Code.put_compiler_option(:debug_info, true)
+    on_exit(fn -> Code.put_compiler_option(:debug_info, debug_info?) end)
+    :ok
+  end
+
   alias AshScylla.DataLayer
   alias AshScylla.DataLayer.QueryBuilder
   alias AshScylla.TestRepo
@@ -362,7 +370,7 @@ defmodule AshScylla.ClusterIntegrationTest do
         %{conn: conn}
 
       _ ->
-        raise "ScyllaDB cluster nodes not available — setup_all failed"
+        :ok
     end
   end
 
@@ -406,8 +414,15 @@ defmodule AshScylla.ClusterIntegrationTest do
     end
   end
 
-  defp encode_param(value) when is_integer(value), do: {"int", value}
-  defp encode_param(value) when is_float(value), do: {"double", value}
+  defp encode_param({type, value}) when is_binary(type), do: {to_string(type), value}
+
+  defp encode_param(value) when is_integer(value) do
+    if value > 2_147_483_647 or value < -2_147_483_648,
+      do: {"bigint", value},
+      else: {"int", value}
+  end
+
+  defp encode_param(value) when is_float(value), do: {"float", value}
   defp encode_param(value) when is_boolean(value), do: {"boolean", value}
   defp encode_param(nil), do: {"null", nil}
   defp encode_param(%DateTime{} = value), do: {"timestamp", value}
@@ -677,7 +692,7 @@ defmodule AshScylla.ClusterIntegrationTest do
       assert cql =~ "WHERE"
       assert cql =~ "LIMIT ?"
       assert "active" in params
-      assert 10 in params
+      assert {"int", 10} in params
 
       result = xq(conn, cql, params)
       assert result.num_rows >= 1

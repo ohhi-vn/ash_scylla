@@ -130,11 +130,12 @@ defmodule AshScylla.DataLayer.QueryBuilder do
 
     params = params ++ order_params
 
-    # Add LIMIT
+    # Add LIMIT — tag as {"int", limit} to match ScyllaDB's INT type
+    # (avoids marshaling error: Int32Type expects 4 bytes, bigint is 8)
     {query_acc, params} =
       if limit do
         Logger.debug("AshScylla: Adding LIMIT #{limit}")
-        {[query_acc, " LIMIT ?"], params ++ [limit]}
+        {[query_acc, " LIMIT ?"], params ++ [{"int", limit}]}
       else
         {query_acc, params}
       end
@@ -148,11 +149,13 @@ defmodule AshScylla.DataLayer.QueryBuilder do
         {query_acc, params}
       end
 
-    # Append ALLOW FILTERING when enabled and a secondary index scan is detected.
+    # Append ALLOW FILTERING when enabled and there are filters
+    # that involve non-primary-key columns (secondary index scans or
+    # non-indexed column scans).
     query_acc =
-      if resource != nil and Dsl.allow_filtering(resource) and
-           secondary_index_scan?(resource, filters) do
-        Logger.debug("AshScylla: Appending ALLOW FILTERING for secondary index scan on #{table}")
+      if resource != nil and Dsl.allow_filtering(resource) and filters != [] and
+           needs_allow_filtering?(resource, filters) do
+        Logger.debug("AshScylla: Appending ALLOW FILTERING for query on #{table}")
         [query_acc, " ALLOW FILTERING"]
       else
         query_acc
@@ -912,13 +915,40 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   defp extract_filter_columns(_), do: []
 
   @doc false
+  @spec needs_allow_filtering?(term(), list()) :: boolean()
+  def needs_allow_filtering?(resource, filters) do
+    filter_columns = get_filter_columns(filters)
+
+    pk_columns =
+      if Ash.Resource.Info.resource?(resource) do
+        resource
+        |> Ash.Resource.Info.primary_key()
+        |> MapSet.new()
+      else
+        MapSet.new([:id])
+      end
+
+    Enum.any?(filter_columns, fn col -> not MapSet.member?(pk_columns, col) end)
+  end
+
+  @doc false
   @spec secondary_index_scan?(term(), list()) :: boolean()
   def secondary_index_scan?(resource, filters) do
+    pk_columns =
+      if Ash.Resource.Info.resource?(resource) do
+        resource
+        |> Ash.Resource.Info.primary_key()
+        |> MapSet.new()
+      else
+        MapSet.new()
+      end
+
     indexed_columns =
       resource
       |> Dsl.secondary_indexes()
       |> Enum.flat_map(fn idx -> idx.columns end)
       |> MapSet.new()
+      |> MapSet.union(pk_columns)
 
     filter_columns = get_filter_columns(filters)
 

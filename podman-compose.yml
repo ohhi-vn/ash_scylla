@@ -1,0 +1,31 @@
+version: "3.8"
+
+services:
+  scylladb:
+    image: docker.io/scylladb/scylla:5.4
+    container_name: ash_scylla_dev
+    ports:
+      - "9042:9042"
+      - "9160:9160" # REST API
+      - "9180:9180" # Prometheus metrics
+    volumes:
+      - scylla_data:/var/lib/scylla
+    command: --smp 1 --memory 512M --developer-mode 1 --overprovisioned 1
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'SELECT now() FROM system.local'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  scylla_data:
+
+# Usage:
+#   podman-compose -f podman-compose.yml up -d
+#   podman-compose -f podman-compose.yml down
+#
+# Run integration tests:
+#   SCYLLA_DIRECT=true SCYLLA_HOST=127.0.0.1 SCYLLA_PORT=9042 mix test --include integration
+#
+# Connect via cqlsh:
+#   podman exec -it ash_scylla_dev cqlsh

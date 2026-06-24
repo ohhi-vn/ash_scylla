@@ -11,6 +11,14 @@ defmodule AshScylla.DataLayer.PipelineTest do
 
   require Logger
 
+  # Enable source annotations for debugging (see https://spark.hexdocs.pm/use-source-annotations.html)
+  setup do
+    debug_info? = Code.get_compiler_option(:debug_info)
+    Code.put_compiler_option(:debug_info, true)
+    on_exit(fn -> Code.put_compiler_option(:debug_info, debug_info?) end)
+    :ok
+  end
+
   alias AshScylla.DataLayer
   alias AshScylla.DataLayer.QueryBuilder
   alias AshScylla.TestRepo
@@ -40,18 +48,26 @@ defmodule AshScylla.DataLayer.PipelineTest do
 
   defp direct_host do
     System.get_env("SCYLLA_HOST") ||
-      (case System.get_env("SCYLLA_NODES") do
-         nil -> "127.0.0.1"
-         nodes -> nodes |> String.split(",") |> hd() |> String.split(":") |> hd()
-       end)
+      case System.get_env("SCYLLA_NODES") do
+        nil -> "127.0.0.1"
+        nodes -> nodes |> String.split(",") |> hd() |> String.split(":") |> hd()
+      end
   end
 
   defp direct_port do
     case System.get_env("SCYLLA_PORT") do
       nil ->
         case System.get_env("SCYLLA_NODES") do
-          nil -> 9042
-          nodes -> nodes |> String.split(",") |> hd() |> String.split(":") |> List.last() |> String.to_integer()
+          nil ->
+            9042
+
+          nodes ->
+            nodes
+            |> String.split(",")
+            |> hd()
+            |> String.split(":")
+            |> List.last()
+            |> String.to_integer()
         end
 
       port ->
@@ -131,52 +147,52 @@ defmodule AshScylla.DataLayer.PipelineTest do
       Logger.warning("TEST_CLUSTER=true set — skipping PipelineTest (container-only)")
       %{conn: nil, scylla: nil}
     else
-    if direct_connect?() do
-      host = direct_host()
-      port = direct_port()
-      conn = connect_with_retry(host, port, 30)
+      if direct_connect?() do
+        host = direct_host()
+        port = direct_port()
+        conn = connect_with_retry(host, port, 30)
 
-      Xandra.execute!(
-        conn,
-        "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}"
-      )
+        Xandra.execute!(
+          conn,
+          "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}"
+        )
 
-      Xandra.execute!(
-        conn,
-        "CREATE TABLE IF NOT EXISTS ash_scylla_test.users (id UUID PRIMARY KEY, name TEXT, email TEXT, age INT, status TEXT, created_at TIMESTAMP)"
-      )
+        Xandra.execute!(
+          conn,
+          "CREATE TABLE IF NOT EXISTS ash_scylla_test.users (id UUID PRIMARY KEY, name TEXT, email TEXT, age INT, status TEXT, created_at TIMESTAMP)"
+        )
 
-      Xandra.execute!(
-        conn,
-        "CREATE INDEX IF NOT EXISTS idx_users_email ON ash_scylla_test.users (email)"
-      )
+        Xandra.execute!(
+          conn,
+          "CREATE INDEX IF NOT EXISTS idx_users_email ON ash_scylla_test.users (email)"
+        )
 
-      Xandra.execute!(
-        conn,
-        "CREATE INDEX IF NOT EXISTS idx_users_status ON ash_scylla_test.users (status)"
-      )
+        Xandra.execute!(
+          conn,
+          "CREATE INDEX IF NOT EXISTS idx_users_status ON ash_scylla_test.users (status)"
+        )
 
-      Xandra.execute!(
-        conn,
-        "CREATE INDEX IF NOT EXISTS idx_users_age ON ash_scylla_test.users (age)"
-      )
+        Xandra.execute!(
+          conn,
+          "CREATE INDEX IF NOT EXISTS idx_users_age ON ash_scylla_test.users (age)"
+        )
 
-      %{conn: conn, scylla: :direct}
-    else
-      case AshScylla.Test.ContainerEngine.ensure_running() do
-        :ok ->
-          _ = ScyllaContainer.start(scylla_container_config())
-          Logger.warning("ScyllaContainer.start not implemented. Skipping integration tests.")
-          %{conn: nil, scylla: nil}
+        %{conn: conn, scylla: :direct}
+      else
+        case AshScylla.Test.ContainerEngine.ensure_running() do
+          :ok ->
+            _ = ScyllaContainer.start(scylla_container_config())
+            Logger.warning("ScyllaContainer.start not implemented. Skipping integration tests.")
+            %{conn: nil, scylla: nil}
 
-        {:error, reason} ->
-          Logger.warning(
-            "Container engine not available: #{inspect(reason)}. Skipping integration tests."
-          )
+          {:error, reason} ->
+            Logger.warning(
+              "Container engine not available: #{inspect(reason)}. Skipping integration tests."
+            )
 
-          %{conn: nil, scylla: nil}
+            %{conn: nil, scylla: nil}
+        end
       end
-    end
     end
   end
 
@@ -186,11 +202,8 @@ defmodule AshScylla.DataLayer.PipelineTest do
         conn = connect_with_retry(direct_host(), direct_port(), 5)
         %{conn: conn}
 
-      {:ok, nil} ->
-        {:skip, "ScyllaDB connection not available (TEST_CLUSTER mode)"}
-
       _ ->
-        {:skip, "ScyllaDB connection not available"}
+        :ok
     end
   end
 

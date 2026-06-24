@@ -9,6 +9,14 @@ defmodule AshScylla.DataLayer.IntegrationTest do
 
   require Logger
 
+  # Enable source annotations for debugging (see https://spark.hexdocs.pm/use-source-annotations.html)
+  setup do
+    debug_info? = Code.get_compiler_option(:debug_info)
+    Code.put_compiler_option(:debug_info, true)
+    on_exit(fn -> Code.put_compiler_option(:debug_info, debug_info?) end)
+    :ok
+  end
+
   alias AshScylla.DataLayer
   alias AshScylla.DataLayer.QueryBuilder
   alias AshScylla.ScyllaContainer, warn: false
@@ -37,18 +45,26 @@ defmodule AshScylla.DataLayer.IntegrationTest do
 
   defp direct_host do
     System.get_env("SCYLLA_HOST") ||
-      (case System.get_env("SCYLLA_NODES") do
-         nil -> "127.0.0.1"
-         nodes -> nodes |> String.split(",") |> hd() |> String.split(":") |> hd()
-       end)
+      case System.get_env("SCYLLA_NODES") do
+        nil -> "127.0.0.1"
+        nodes -> nodes |> String.split(",") |> hd() |> String.split(":") |> hd()
+      end
   end
 
   defp direct_port do
     case System.get_env("SCYLLA_PORT") do
       nil ->
         case System.get_env("SCYLLA_NODES") do
-          nil -> 9042
-          nodes -> nodes |> String.split(",") |> hd() |> String.split(":") |> List.last() |> String.to_integer()
+          nil ->
+            9042
+
+          nodes ->
+            nodes
+            |> String.split(",")
+            |> hd()
+            |> String.split(":")
+            |> List.last()
+            |> String.to_integer()
         end
 
       port ->
@@ -228,35 +244,39 @@ defmodule AshScylla.DataLayer.IntegrationTest do
       Logger.warning("TEST_CLUSTER=true set — skipping IntegrationTest (container-only)")
       %{conn: nil, scylla: nil}
     else
-    if direct_connect?() do
-      host = direct_host()
-      port = direct_port()
-      conn = connect_with_retry(host, port)
+      if direct_connect?() do
+        host = direct_host()
+        port = direct_port()
+        conn = connect_with_retry(host, port)
 
-      xq(
-        conn,
-        "CREATE KEYSPACE IF NOT EXISTS ash_scylla_dl_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}"
-      )
+        xq(
+          conn,
+          "CREATE KEYSPACE IF NOT EXISTS ash_scylla_dl_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}"
+        )
 
-      xq(
-        conn,
-        "CREATE TABLE IF NOT EXISTS ash_scylla_dl_test.items (id UUID PRIMARY KEY, name TEXT, status TEXT, value INT, score FLOAT, active BOOLEAN, created_at TIMESTAMP, tags LIST<TEXT>, metadata MAP<TEXT, TEXT>)"
-      )
+        xq(
+          conn,
+          "CREATE TABLE IF NOT EXISTS ash_scylla_dl_test.items (id UUID PRIMARY KEY, name TEXT, status TEXT, value INT, score FLOAT, active BOOLEAN, created_at TIMESTAMP, tags LIST<TEXT>, metadata MAP<TEXT, TEXT>)"
+        )
 
-      xq(conn, "CREATE INDEX IF NOT EXISTS idx_items_status ON ash_scylla_dl_test.items (status)")
-      xq(conn, "CREATE INDEX IF NOT EXISTS idx_items_value ON ash_scylla_dl_test.items (value)")
+        xq(
+          conn,
+          "CREATE INDEX IF NOT EXISTS idx_items_status ON ash_scylla_dl_test.items (status)"
+        )
 
-      %{scylla: :direct}
-    else
-      case AshScylla.Test.ContainerEngine.ensure_running() do
-        :ok ->
-          _ = ScyllaContainer.start(scylla_container_config())
-          %{scylla: nil}
+        xq(conn, "CREATE INDEX IF NOT EXISTS idx_items_value ON ash_scylla_dl_test.items (value)")
 
-        {:error, _} ->
-          %{scylla: nil}
+        %{scylla: :direct}
+      else
+        case AshScylla.Test.ContainerEngine.ensure_running() do
+          :ok ->
+            _ = ScyllaContainer.start(scylla_container_config())
+            %{scylla: nil}
+
+          {:error, _} ->
+            %{scylla: nil}
+        end
       end
-    end
     end
   end
 
@@ -267,11 +287,8 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         xq(conn, "TRUNCATE ash_scylla_dl_test.items")
         %{conn: conn}
 
-      {:ok, nil} ->
-        {:skip, "ScyllaDB container not available"}
-
       _ ->
-        {:skip, "ScyllaDB container not available"}
+        :ok
     end
   end
 

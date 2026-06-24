@@ -209,11 +209,12 @@ defmodule AshScylla.Connection do
   defp type_value({type_str, _value} = typed) when is_binary(type_str), do: typed
   defp type_value(%_{} = struct), do: type_struct(struct)
   defp type_value(value) when is_binary(value), do: {"text", value}
+
   defp type_value(value) when is_integer(value), do: {"bigint", value}
   defp type_value(value) when is_float(value), do: {"double", value}
   defp type_value(true), do: {"boolean", true}
   defp type_value(false), do: {"boolean", false}
-  defp type_value(nil), do: {"text", nil}
+  defp type_value(nil), do: nil
   defp type_value(value) when is_list(value), do: {"list", value}
   defp type_value(value) when is_map(value), do: {"map", value}
   defp type_value(value), do: {"text", to_string(value)}
@@ -387,9 +388,17 @@ defmodule AshScylla.Connection do
     # Parse node addresses to extract host/port tuples
     parsed_nodes = Enum.map(nodes, &parse_node/1)
 
+    # Convert tuple format nodes to "host:port" strings for Xandra
+    nodes_as_strings =
+      Enum.map(nodes, fn
+        {host, port} when is_binary(host) and is_integer(port) -> "#{host}:#{port}"
+        node when is_binary(node) -> node
+        node -> to_string(node)
+      end)
+
     xandra_opts =
       [
-        nodes: nodes
+        nodes: nodes_as_strings
       ]
       |> Keyword.merge(
         Keyword.take(opts, [
@@ -422,6 +431,7 @@ defmodule AshScylla.Connection do
               case parsed_nodes do
                 [{_host, port} | _] when is_integer(port) ->
                   Keyword.put(xandra_opts, :autodiscovered_nodes_port, port)
+
                 _ ->
                   xandra_opts
               end
@@ -448,7 +458,7 @@ defmodule AshScylla.Connection do
           )
 
           # Override nodes to only use the first node for single connection
-          xandra_opts = Keyword.put(xandra_opts, :nodes, [hd(nodes)])
+          xandra_opts = Keyword.put(xandra_opts, :nodes, [hd(nodes_as_strings)])
           {&Xandra.start_link/1, xandra_opts}
         end
       else
@@ -498,7 +508,12 @@ defmodule AshScylla.Connection do
           end
 
         {:ok,
-         %__MODULE__{conn: conn, keyspace: keyspace, nodes: nodes, keyspace_used: keyspace_used?}}
+         %__MODULE__{
+           conn: conn,
+           keyspace: keyspace,
+           nodes: nodes_as_strings,
+           keyspace_used: keyspace_used?
+         }}
 
       {:error, reason} ->
         {:stop, reason}
@@ -564,6 +579,7 @@ defmodule AshScylla.Connection do
           {port, ""} -> {host, port}
           _ -> {host, nil}
         end
+
       [host] ->
         {host, nil}
     end

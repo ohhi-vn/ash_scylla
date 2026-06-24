@@ -288,7 +288,7 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
 
   describe "bulk_create/3 - empty changesets list" do
     test "returns ok for empty list" do
-      assert :ok = DataLayer.bulk_create(Resource, [], return_records?: false)
+      assert {:ok, []} = DataLayer.bulk_create(Resource, [], return_records?: false)
     end
   end
 
@@ -298,7 +298,7 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
         %Ash.Changeset{attributes: %{id: "id-1", name: "First"}}
       ]
 
-      assert :ok = DataLayer.bulk_create(Resource, changesets, return_records?: false)
+      assert {:ok, _} = DataLayer.bulk_create(Resource, changesets, return_records?: false)
     end
   end
 
@@ -539,7 +539,7 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
     test "returns :ok unchanged" do
       changeset = %Ash.Changeset{attributes: %{id: "test-id"}}
       result = DataLayer.destroy(Resource, changeset)
-      assert result == :ok
+      assert match?({:ok, _}, result)
     end
   end
 

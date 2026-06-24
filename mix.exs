@@ -4,7 +4,7 @@ defmodule AshScylla.MixProject do
   def project do
     [
       app: :ash_scylla,
-      version: "0.11.1",
+      version: "0.12.0",
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -27,10 +27,10 @@ defmodule AshScylla.MixProject do
         output: "cover",
         summary: [threshold: 85]
       ],
-      consolidate_protocols: Mix.env() != :test
+      consolidate_protocols: Mix.env() != :test,
+      test_elixirc_options: [debug_info: true]
     ]
   end
-
 
   # Specifies which paths to compile per environment.
   defp elixirc_paths(:test), do: ["lib", "test/support"]

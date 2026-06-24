@@ -250,6 +250,57 @@ defmodule AshScylla.ConnectionTest do
     end
   end
 
+  # ── typed_params / type_value ────────────────────────────────────────────
+
+  describe "typed_params/1" do
+    test "integers are tagged as bigint" do
+      params = Connection.typed_params([10, 250, 1000])
+      assert params == [{"bigint", 10}, {"bigint", 250}, {"bigint", 1000}]
+    end
+
+    test "large integers are tagged as bigint" do
+      params = Connection.typed_params([2_147_483_648, -2_147_483_649, 9_999_999_999])
+
+      assert params == [
+               {"bigint", 2_147_483_648},
+               {"bigint", -2_147_483_649},
+               {"bigint", 9_999_999_999}
+             ]
+    end
+
+    test "limit value 250 is passed as raw integer (query_builder.ex tags it as int)" do
+      # Connection.type_value tags all integers as bigint
+      # The LIMIT int32 fix is in query_builder.ex which tags the limit as {"int", limit}
+      params = Connection.typed_params(["active", 250])
+      assert params == [{"text", "active"}, {"bigint", 250}]
+    end
+
+    test "passes through already-typed tuples" do
+      params = Connection.typed_params([{"int", 10}, {"text", "hello"}])
+      assert params == [{"int", 10}, {"text", "hello"}]
+    end
+
+    test "floats are tagged as double" do
+      params = Connection.typed_params([3.14])
+      assert params == [{"double", 3.14}]
+    end
+
+    test "booleans are tagged as boolean" do
+      params = Connection.typed_params([true, false])
+      assert params == [{"boolean", true}, {"boolean", false}]
+    end
+
+    test "nil passes through as nil" do
+      params = Connection.typed_params([nil])
+      assert params == [nil]
+    end
+
+    test "atoms are encoded as text via to_string" do
+      params = Connection.typed_params([:active])
+      assert params == [{"text", "active"}]
+    end
+  end
+
   # ── sync_connect option ───────────────────────────────────────────────────
 
   describe "sync_connect option" do
@@ -265,5 +316,4 @@ defmodule AshScylla.ConnectionTest do
       assert is_pid(conn.conn)
     end
   end
-
 end
