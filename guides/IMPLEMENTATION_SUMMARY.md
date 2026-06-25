@@ -8,6 +8,8 @@
 
 AshScylla is a comprehensive data layer for the Ash Framework that enables persistence with **ScyllaDB** or **Apache Cassandra**. It uses [Xandra](https://github.com/whatyouhide/xandra) (a native Elixir CQL driver) to communicate via CQL (Cassandra Query Language).
 
+Current version: **0.12.0**
+
 ---
 
 ## Architecture
@@ -53,44 +55,69 @@ AshScylla is a comprehensive data layer for the Ash Framework that enables persi
 
 | File | Purpose |
 |------|---------|
-| `lib/ash_scylla.ex` | Main module with version info |
+| `lib/ash_scylla.ex` | Main module with `verify/2`, `migrate/2`, `create_keyspace/2`, `version/0` |
+| `lib/ash_scylla/application.ex` | Application callback, creates `:ash_scylla_repo_cache` ETS table |
 | `lib/ash_scylla/data_layer.ex` | Main DataLayer implementation (`Ash.DataLayer` behaviour) |
-| `lib/ash_scylla/repo.ex` | Repo configuration helper |
-| `lib/ash_scylla/migration.ex` | CQL migration helpers |
+| `lib/ash_scylla/connection.ex` | GenServer wrapping Xandra connections |
+| `lib/ash_scylla/repo.h` | Repo behaviour and `__using__` macro |
+| `lib/ash_scylla/migrator.ex` | CQL schema migration runner via Xandra |
+| `lib/ash_scylla/migration.ex` | CQL DDL generation helpers (CREATE TABLE, INDEX, TYPE) |
 | `lib/ash_scylla/error.ex` | Unified error handling interface |
-| `lib/ash_scylla/error/scylla_error.ex` | ScyllaDB-specific error types |
+| `lib/ash_scylla/error/scylla_error.ex` | ScyllaDB-specific error types and categorization |
+| `lib/ash_scylla/telemetry.ex` | Telemetry span helpers for queries and batches |
+| `lib/ash_scylla/prepared_statement_cache.ex` | ETS-based prepared statement cache (GenServer) |
+| `lib/ash_scylla/schema.ex` | Schema migration behaviour for `priv/migrations` |
+| `lib/ash_scylla/schema_loader.ex` | Schema file discovery and loading |
+| `lib/ash_scylla/resource_generator.ex` | Resource template generator |
+| `lib/ash_scylla/identifier.ex` | CQL identifier sanitization |
+| `lib/ash_scylla/mix_helpers.ex` | Shared Mix task helpers (resource/repo discovery) |
+| `lib/ash_scylla/release.ex` | Release task helpers for production migrations |
 
 ### Data Layer Modules
 
 | File | Purpose |
 |------|---------|
-| `lib/ash_scylla/data_layer/dsl.ex` | DSL extensions for ScyllaDB options |
+| `lib/ash_scylla/data_layer/dsl.ex` | `ash_scylla` DSL macro and config accessors |
 | `lib/ash_scylla/data_layer/query_builder.ex` | Query building with filter-to-CQL conversion |
-| `lib/ash_scylla/data_layer/batch.ex` | Batch operations (BATCH statements) |
-| `lib/ash_scylla/data_layer/materialized_view.ex` | Materialized view support |
-| `lib/ash_scylla/data_layer/pagination.ex` | Pagination helpers |
+| `lib/ash_scylla/data_layer/query_optimizer.ex` | Query optimization hints (consistency, timeout, paging) |
+| `lib/ash_scylla/data_layer/filter_validator.ex` | Filter validation (prevents ALLOW FILTERING anti-pattern) |
+| `lib/ash_scylla/data_layer/batch.ex` | Batch operations (BATCH INSERT/UPDATE/DELETE, async partition-aware) |
+| `lib/ash_scylla/data_layer/pagination.ex` | Token-based pagination via Xandra paging state |
+| `lib/ash_scylla/data_layer/materialized_view.ex` | Materialized view CQL generation |
+| `lib/ash_scylla/data_layer/schema_migration.ex` | Automatic schema diff and migration |
+| `lib/ash_scylla/data_layer/types.ex` | Canonical Ash type → CQL type mapping |
+| `lib/ash_scylla/data_layer/collection.ex` | Collection type (LIST, SET, MAP) encoding/CQL |
+| `lib/ash_scylla/data_layer/compression.ex` | Application-level compression for large payloads |
+| `lib/ash_scylla/data_layer/udt.ex` | User Defined Type encoding/decoding |
+
+### Mix Tasks
+
+| File | Purpose |
+|------|---------|
+| `lib/mix/tasks/ash_scylla.gen.ex` | Generate schema migration files from Ash DSL |
+| `lib/mix/tasks/ash_scylla.new_template.ex` | Generate Ash resource templates |
+| `lib/mix/tasks/ash_scylla.migrate.ex` | Run schema migrations |
+| `lib/mix/tasks/ash_scylla.setup.ex` | Create ScyllaDB keyspace |
+| `lib/mix/tasks/ash_scylla.gen.repo.ex` | Generate AshScylla Repo module |
 
 ### Test Files
 
 | File | Purpose |
 |------|---------|
-| `test/ash_scylla_test.exs` | Core DataLayer and DSL unit tests |
-| `test/edge_cases_test.exs` | Edge cases for all modules |
-| `test/error_edge_cases_test.exs` | Error handling edge cases |
-| `test/ash_scylla/error_test.exs` | Error wrapping, retry, formatting |
-| `test/ash_scylla/dsl_repo_migration_test.exs` | DSL, Repo, Migration tests |
-| `test/ash_scylla/query_builder_test.exs` | QueryBuilder and Pagination |
-| `test/ash_scylla/batch_materialized_view_test.exs` | Batch and MaterializedView |
-| `test/scylla_integration_test.exs` | Integration tests with testcontainers |
-| `test/support/test_repo.ex` | Test repo configuration |
+| `test/test_helper.exs` | Test setup (ETS, support files, ExUnit) |
+| `test/support/test_repo.ex` | Test repo (`AshScylla.TestRepo`) |
 | `test/support/test_resource.ex` | Basic test resource |
 | `test/support/test_resource_with_indexes.ex` | Test resource with full DSL config |
+| `test/support/test_domain.ex` | Test domain |
+| `test/support/schema_fixtures.ex` | Schema migration fixtures |
+| `test/support/scylla_container.ex` | ScyllaDB container management |
+| `test/support/container_engine.ex` | Container engine (Podman) integration |
 
 ---
 
 ## Features Implemented
 
-### Core Ash.DataLayer Features ✅
+### Core Ash.DataLayer Features
 
 | Feature | Status | Notes |
 |---------|--------|-------|
@@ -99,90 +126,57 @@ AshScylla is a comprehensive data layer for the Ash Framework that enables persi
 | `:update` | ✅ | Update existing records |
 | `:destroy` | ✅ | Delete records |
 | `:filter` | ✅ | Filter queries with CQL WHERE conversion |
-| `:sort` | ⚠️ | ORDER BY on clustering columns only (within a partition); not natively supported across partitions |
-| `:limit` | ✅ | LIMIT results |
-| `:offset` | ⚠️ | Not natively supported in ScyllaDB; silently dropped. Use keyset pagination instead |
+| `:sort` | ✅ | ORDER BY on clustering columns (within partition) |
+| `:limit` | ✅ | LIMIT is natively supported |
+| `:offset` | ❌ | Raises error — use keyset pagination instead |
 | `:select` | ✅ | Select specific fields |
 | `:multitenancy` | ✅ | Keyspace-based multitenancy |
 | `:bulk_create` | ✅ | Batch INSERT operations |
-| `:upsert` | ✅ | Upsert records (INSERT IF NOT EXISTS with LWT) |
+| `:upsert` | ✅ | Upsert records (INSERT with LWT) |
+| `:update_query` | ✅ | Bulk update via filtered queries |
+| `:destroy_query` | ✅ | Bulk delete via filtered queries |
+| `:distinct` | ✅ | DISTINCT on partition key columns |
+| `:keyset` | ✅ | Token-based keyset pagination (default mode) |
+| `:boolean_filter` | ✅ | OR filter rewriting to IN where possible |
+| `:composite_primary_key` | ✅ | Composite PK support |
+| `:changeset_filter` | ✅ | Changeset-based filtering |
+| `:calculate` | ✅ | In-memory calculations |
+| `:action_select` | ✅ | Action-specific select |
+| `{:aggregate, :count}` | ✅ | Per-partition COUNT |
+| `{:atomic, :update}` | ✅ | Atomic updates via LWT (IF clauses) |
+| `{:atomic, :upsert}` | ✅ | Atomic upserts via LWT |
+| `{:atomic, :create}` | ✅ | Atomic creates |
+| `:transact` | ✅ | Transaction wrapper (no-op for CWT, function-based for LWT) |
 
-### ScyllaDB-Specific Features 🚀
-
-#### 7. Token-Based Pagination
-Efficient pagination without OFFSET using Xandra's native paging state:
-
-```elixir
-# First page
-{:ok, records, next_token} =
-  AshScylla.DataLayer.Pagination.fetch_page(repo, "users", [], nil, 10)
-
-# Subsequent pages
-{:ok, records, next_token} =
-  AshScylla.DataLayer.Pagination.fetch_page(repo, "users", [], next_token, 10)
-```
-
-- `AshScylla.DataLayer.Pagination` module
-- Uses Xandra's native paging_state mechanism
-- Opaque base64-encoded page tokens
-- Default page size: 50, max: 1000
-
-#### 8. Prepared Statement Caching
-For high-throughput workloads, eliminate repeated query parsing:
-
-```elixir
-# In your supervision tree
-children = [
-  AshScylla.PreparedStatementCache,
-  # ... other children
-]
-```
-
-- `AshScylla.PreparedStatementCache` GenServer + ETS cache
-- Automatic prepared statement reuse
+### ScyllaDB-Specific Features
 
 #### 1. TTL (Time To Live)
-Automatically expire data after a specified time:
-
 ```elixir
 ash_scylla do
   ttl 3600  # Expire after 1 hour
 end
 ```
-
 - TTL applied to INSERT statements via `USING TTL` clause
-- Integration tests for TTL expiration
 
 #### 2. Consistency Levels
-Configure read/write consistency per resource:
-
 ```elixir
 ash_scylla do
-  consistency :quorum  # :any, :one, :two, :three, :quorum, :all
+  consistency :quorum  # :any, :one, :two, :three, :quorum, :all, :local_quorum
 end
 ```
-
-- Consistency passed to repo queries
 - Supports all ScyllaDB consistency levels
 
 #### 3. Secondary Indexes
-Query non-primary key columns:
-
 ```elixir
 ash_scylla do
   secondary_index :email              # Single column
-  secondary_index [:name, :age]        # Composite index
+  secondary_index [:name, :age]        # Composite index (multi-column)
   secondary_index :status, name: "idx_status"
 end
 ```
-
-- QueryBuilder automatically checks for indexes
-- Generates CQL CREATE INDEX statements
-- Integration tests for secondary index queries
+- ScyllaDB OSS doesn't support multi-column secondary indexes — generates separate single-column indexes
 
 #### 4. Materialized Views
-Alternative query patterns with automatic view maintenance:
-
 ```elixir
 ash_scylla do
   materialized_view :users_by_email,
@@ -191,47 +185,81 @@ ash_scylla do
     clustering_order: [id: :desc]
 end
 ```
-
 - Automatic CQL generation for CREATE MATERIALIZED VIEW
-- Support for clustering order and custom WHERE clauses
-- Integration tests for materialized view queries
 
 #### 5. Batch Operations
-Reduce network round-trips with BATCH statements:
-
 ```elixir
-# Bulk create (uses BATCH internally)
-{:ok, users} = user_data_list
-  |> Ash.bulk_create(MyApp.User, :create)
+# Synchronous batch
+AshScylla.DataLayer.Batch.batch_insert(repo, statements)
 
-# Async partition-aware batching for large datasets
-AshScylla.DataLayer.Batch.batch_insert_async(repo, statements, resource: MyApp.User, max_concurrency: 8)
+# Async partition-aware batching
+AshScylla.DataLayer.Batch.batch_insert_async(repo, statements, max_concurrency: 8)
 ```
-
-- `AshScylla.DataLayer.Batch` module
 - Supports BATCH INSERT, UPDATE, DELETE
-- Integrated with `bulk_create/3`
-- Async partition-aware batching for large datasets
+- Async mode groups by partition key for safety
 
-#### 6. Query Building
-Convert Ash queries to optimized CQL:
-
+#### 6. Token-Based Pagination
 ```elixir
-# Builds CQL like:
-# SELECT id, name, email FROM users WHERE age > ? AND status = ?
+# First page
+{:ok, records, next_token} =
+  AshScylla.DataLayer.Pagination.fetch_page(repo, table, filters, nil, 10)
+
+# Subsequent pages
+{:ok, records, next_token} =
+  AshScylla.DataLayer.Pagination.fetch_page(repo, table, filters, next_token, 10)
+```
+- Uses Xandra's native paging_state mechanism
+- Default page size: 50, max: 1000
+
+#### 7. Prepared Statement Caching
+```elixir
+children = [
+  AshScylla.PreparedStatementCache,
+  # ...
+]
+```
+- GenServer + ETS cache
+- Automatic prepared statement reuse
+- Max 10,000 entries, cleanup every 5 minutes
+
+#### 8. Per-Action Consistency
+```elixir
+ash_scylla do
+  consistency :quorum
+  per_action_consistency read: :one, create: :quorum
+end
 ```
 
-- `QueryBuilder.build_optimized_query/1` - Converts DataLayer struct to CQL
-- `QueryBuilder.filter_to_cql/1` - Converts Ash filters to CQL WHERE
-- Supports operators: `=`, `!=`, `>`, `>=`, `<`, `<=`, `IN`
-- Proper parameter binding with `?` placeholders
-- Filter validation to prevent ALLOW FILTERING anti-pattern
+#### 9. Lightweight Transactions (LWT)
+```elixir
+ash_scylla do
+  lwt true
+end
+```
+- Enables `IF NOT EXISTS` on create, `IF` clauses on update
+
+#### 10. Query Optimization
+- Filter validation prevents ALLOW FILTERING anti-pattern
+- In-memory sort compensation when ORDER BY is dropped due to secondary index scan
+- Query optimizer hints (consistency, timeout, paging, speculative retry)
+
+#### 11. Application-Level Compression
+- Supports LZ4, Snappy, Deflate, Zstd
+- Table-level compression CQL generation
+- Transparent field-level compression
+
+#### 12. User Defined Types (UDT)
+- Full encoding/decoding for Xandra
+- CQL generation for CREATE/ALTER/DROP TYPE
+
+#### 13. Collection Types
+- LIST, SET, MAP encoding for Xandra
+- CONTAINS/CONTAINS KEY filter support
+- Frozen collection support
 
 ---
 
 ## Data Layer Query Struct
-
-The DataLayer uses a struct to hold query state:
 
 ```elixir
 defstruct [
@@ -243,47 +271,60 @@ defstruct [
   limit: nil,
   offset: nil,
   select: nil,
-  tenant: nil
+  distinct: nil,
+  tenant: nil,
+  context: %{},
+  atomic: nil,
+  upsert?: false,
+  upsert_fields: [],
+  upsert_identity: nil,
+  keyset: nil,
+  aggregates: [],
+  group_by: nil
 ]
 ```
-
-This struct is passed through the query building pipeline and converted to CQL at execution time.
 
 ---
 
 ## Error Handling
 
-AshScylla includes comprehensive error handling:
+AshScylla provides structured error handling for ScyllaDB-specific errors:
 
 ### Error Types
 
-| Error Type | When It Occurs | Suggestion |
-|------------|---------------|------------|
-| `syntax_error` | Invalid CQL syntax | Check CQL syntax |
-| `schema_error` | Table/column not found | Run migrations, verify table names |
-| `query_error` | Invalid queries | Check PRIMARY KEY, WHERE clauses |
-| `overloaded` | ScyllaDB node overloaded | Increase timeout, reduce load |
-| `timeout` | Query timeout | Increase `request_timeout` |
-| `connection_*` | Connection issues | Check if ScyllaDB is running |
-| `unauthorized` | Permission denied | Check credentials |
-| `already_exists` | Resource conflict | Use IF NOT EXISTS |
-| `not_found` | Resource missing | Verify table/keyspace exists |
+| Error Type | When It Occurs | Retryable? | Delay |
+|------------|---------------|------------|-------|
+| `:syntax_error` | Invalid CQL syntax | ❌ | - |
+| `:query_error` | General query execution error | ❌ | - |
+| `:schema_error` | Table/keyspace/column not found | ❌ | - |
+| `:overloaded` | ScyllaDB node overloaded | ✅ | 1000ms |
+| `:timeout` | Query timeout | ✅ | 500ms |
+| `:consistency_error` | Consistency level not met | ❌ | - |
+| `:unauthorized` | Permission denied | ❌ | - |
+| `:already_exists` | Resource conflict | ❌ | - |
+| `:not_found` | Resource missing | ❌ | - |
+| `:connection_timeout` | Connection timeout | ✅ | 2000ms |
+| `:connection_closed` | Connection closed | ✅ | 1000ms |
+| `:connection_error` | General connection error | ✅ | 2000ms |
 
-### Retry Logic
+### Using Error Handling
 
 ```elixir
-if AshScylla.Error.retryable?(error) do
-  delay = AshScylla.Error.retry_delay(error)
-  Process.sleep(delay)
-  # retry the operation
+case AshScylla.DataLayer.run_query(query, resource) do
+  {:ok, results} ->
+    {:ok, results}
+
+  {:error, %AshScylla.Error.ScyllaError{} = error} ->
+    Logger.error("Database error: #{AshScylla.Error.format_error(error)}")
+
+    if AshScylla.Error.retryable?(error) do
+      delay = AshScylla.Error.retry_delay(error)
+      {:retry, delay}
+    else
+      {:error, error}
+    end
 end
 ```
-
-Retry delays are tailored to error types:
-- `:overloaded` → 1000ms
-- `:connection_timeout` → 2000ms
-- `:timeout` → 500ms
-- Other errors → 500ms
 
 ---
 
@@ -294,40 +335,45 @@ Retry delays are tailored to error types:
 | `ash` | ~> 3.0 | Ash Framework |
 | `xandra` | ~> 0.19 | Native Elixir CQL driver |
 
+Dev/test dependencies:
 
-| `testcontainer_ex` | ~> 0.3.1 | Integration test containers (dev/test only) |
-| `benchee` | ~> 1.5 | Benchmarking (dev only) |
-| `benchee_html` | ~> 1.0 | Benchmark HTML reports (dev only) |
-| `credo` | ~> 1.7 | Static analysis (dev/test) |
-| `dialyxir` | ~> 1.4 | Type checking (dev/test) |
-| `ex_doc` | ~> 0.40 | Documentation generation (dev only) |
+| Dependency | Version | Purpose |
+|------------|---------|---------|
+| `testcontainer_ex` | ~> 0.3.1 | Integration test containers |
+| `benchee` | ~> 1.5 | Benchmarking |
+| `benchee_html` | ~> 1.0 | Benchmark HTML reports |
+| `credo` | ~> 1.7 | Static analysis |
+| `dialyxir` | ~> 1.4 | Type checking |
+| `ex_doc` | ~> 0.40 | Documentation generation |
 
 ---
 
 ## Current Status
 
-### ✅ Working Features
+### Working Features
 
 - Compiles successfully with no errors
-- 200+ tests covering core, edge cases, and error handling
-- Unit tests pass
-- Integration tests with real ScyllaDB (using testcontainers)
-- Full CRUD operations
-- TTL and consistency level support
-- Secondary indexes
-- Materialized views
-- Batch operations
-- Bulk create support
-- Comprehensive error handling
+- 1000+ unit tests across 19 feature domains
+- Integration tests with real ScyllaDB (via Podman/testcontainers)
+- Full CRUD operations with TTL, consistency, LWT
+- Secondary indexes, materialized views, UDTs
+- Batch operations (sync + async partition-aware)
+- Token-based pagination
+- Prepared statement caching
+- Comprehensive error handling with retry logic
+- Telemetry integration
+- Schema migration system (AshScylla.Schema)
+- Resource template generation
+- Compression and collection type support
 
-### ❌ Not Supported (ScyllaDB Limitations)
+### Not Supported (ScyllaDB Limitations)
 
-- JOINs (use denormalization or multiple queries)
-- Complex aggregations (COUNT, SUM across partitions)
+- JOINs (use denormalization)
+- Complex aggregations across partitions (only per-partition COUNT)
 - ACID transactions across partitions (only lightweight transactions)
-- Complex WHERE clauses without secondary indexes or materialized views
-- OFFSET in CQL (requires token-based pagination)
-- OR conditions in WHERE clause
+- OFFSET (raises error — use keyset pagination)
+- OR conditions in WHERE clause (rewritten to IN where possible)
+- Foreign keys
 
 ---
 
@@ -336,65 +382,33 @@ Retry delays are tailored to error types:
 ### Unit Tests
 
 ```bash
-mix test
+mix test --exclude integration
 ```
 
 ### Integration Tests
 
-Integration tests use [testcontainers](https://github.com/testcontainers/testcontainers-elixir) to spin up a ScyllaDB instance automatically:
+```bash
+# With Podman container (default)
+mix test --only integration
+
+# Against local ScyllaDB
+SCYLLA_DIRECT=1 mix test --only integration
+
+# Cluster tests (3-node, requires Podman)
+mix test test/integration/cluster_integration_test.exs --only integration
+
+# Specific test file
+mix test test/integration/scylla_integration_test.exs
+mix test test/unit/data_layer/data_layer_crud_test.exs
+```
+
+### Coverage
 
 ```bash
-# Ensure Podman is running
-podman --version
-
-# Run integration tests
-mix test test/scylla_integration_test.exs
+mix test --exclude integration --cover
 ```
 
-Integration tests will:
-1. Start a ScyllaDB container via testcontainers
-2. Create keyspace, tables, indexes, and materialized views
-3. Run CRUD operations
-4. Test TTL expiration
-5. Test secondary index queries
-6. Test materialized view queries
-7. Test batch operations
-
----
-
-## Future Enhancements
-
-1. **User Defined Types (UDT)** — full runtime support beyond CQL generation
-2. **Collection types** — deeper optimization for lists, sets, maps
-3. **Automatic schema migrations** from Ash resources
-4. **Compression** support for large payloads
-5. **Query optimization** hints
-
----
-
-## Performance Considerations
-
-### Connection Pooling
-
-```elixir
-config :my_app, MyApp.Repo,
-  pool_size: 50,                # Connections per node
-  request_timeout: 300_000,     # Query timeout (ms)
-  connect_timeout: 10_000
-```
-
-**Pool Size Calculation:**
-```
-pool_size = (expected_concurrent_queries / number_of_nodes) * 1.5
-```
-
-### Query Optimization
-
-- Use **primary key queries** when possible (most efficient)
-- Create **secondary indexes** for non-primary key queries
-- Use **materialized views** for alternative query patterns
-- Avoid **ALLOW FILTERING** (not supported in this data layer)
-- Use **BATCH statements** for multiple operations
+Generates `cover/index.html`.
 
 ---
 
@@ -410,19 +424,17 @@ end
 # Configure Resource with all features
 defmodule MyApp.User do
   use Ash.Resource,
-    data_layer: AshScylla.DataLayer
+    data_layer: AshScylla.DataLayer,
+    domain: MyApp.Domain
 
   ash_scylla do
     table "users"
-    keyspace "my_keyspace"
     consistency :quorum
     ttl 3600
+    lwt true
 
-    # Secondary indexes
     secondary_index :email
-    secondary_index [:name, :age]
 
-    # Materialized views
     materialized_view :users_by_email,
       primary_key: [:email, :id],
       include_columns: [:name, :age]

@@ -36,6 +36,12 @@ defmodule AshScylla.Identifier do
 
       iex> AshScylla.Identifier.sanitize!("users; DROP TABLE users")
       ** (ArgumentError) Invalid CQL identifier: "users; DROP TABLE users"
+
+  ## Design
+
+  This module is compile-time optimized: `sanitize_identifier/1` is inlined
+  and the regex match is compiled once. All public CQL-generating functions
+  in AshScylla call this before interpolating identifiers.
   """
 
   @valid_identifier ~r/^[a-zA-Z_][a-zA-Z0-9_]*$/

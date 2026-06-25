@@ -13,8 +13,9 @@
 5. [Working with the Dev Container](#working-with-the-dev-container)
 6. [Your First Resource](#your-first-resource)
 7. [Running Tests](#running-tests)
-8. [Common Development Tasks](#common-development-tasks)
-9. [Troubleshooting](#troubleshooting)
+8. [Type Mapping](#type-mapping)
+9. [Common Development Tasks](#common-development-tasks)
+10. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -76,7 +77,7 @@ podman ps
 mix run -e '
   {:ok, conn} = Xandra.start_link(nodes: ["scylla:9042"])
   {:ok, result} = Xandra.execute(conn, "SELECT release_version FROM system.local")
-  IO.inspect(result.rows, label: "ScyllaDB version")
+  IO.inspect(result, label: "ScyllaDB version")
 '
 ```
 
@@ -85,7 +86,6 @@ mix run -e '
 ```bash
 # Unit tests (no database needed)
 mix test --exclude integration
-# → 587 tests, 0 failures
 
 # Integration tests (uses the ScyllaDB container)
 mix test test/scylla_integration_test.exs
@@ -106,66 +106,49 @@ ash_scylla/
 ├── lib/
 │   ├── ash_scylla.ex              # Main module (verify, migrate, version)
 │   └── ash_scylla/
+│       ├── application.ex         # Application callback
+│       ├── connection.ex          # Xandra connection GenServer
 │       ├── data_layer.ex          # Core CRUD, query building, bulk ops
 │       ├── data_layer/
 │       │   ├── batch.ex           # Batch operations
+│       │   ├── collection.ex      # Collection type support
+│       │   ├── compression.ex     # Compression support
 │       │   ├── dsl.ex             # Resource DSL (table, keyspace, etc.)
 │       │   ├── filter_validator.ex
 │       │   ├── materialized_view.ex
 │       │   ├── pagination.ex
 │       │   ├── query_builder.ex
-│       │   └── query_optimizer.ex
+│       │   ├── query_optimizer.ex
+│       │   ├── schema_migration.ex
+│       │   ├── types.ex           # Type mapping
+│       │   └── udt.ex             # User Defined Types
 │       ├── error.ex               # Error handling
 │       ├── error/
 │       │   └── scylla_error.ex    # Structured ScyllaDB errors
+│       ├── identifier.ex          # CQL identifier sanitization
 │       ├── migration.ex           # CQL schema generation helpers
+│       ├── migrator.ex            # CQL migration runner
+│       ├── mix_helpers.ex         # Mix task helpers
 │       ├── prepared_statement_cache.ex
-│       ├── repo.ex                # Repo helpers (keyspace management)
-│       ├── resource_generator.ex   # Resource template generator
-│       ├── schema.ex               # AshScylla.Schema behaviour for priv/migrations
-│       ├── schema_loader.ex        # Schema file discovery and loading
-│       └── telemetry.ex
+│       ├── release.ex             # Release task helpers
+│       ├── repo.ex                # Repo behaviour
+│       ├── resource_generator.ex  # Resource template generator
+│       ├── schema.ex              # Schema migration behaviour
+│       ├── schema_loader.ex       # Schema file discovery
+│       └── telemetry.ex           # Telemetry integration
 ├── lib/mix/tasks/
 │   ├── ash_scylla.gen.ex          # mix ash_scylla.gen
-│   ├── ash_scylla.new_template.ex # mix ash_scylla.new_template
+│   ├── ash_scylla.gen.repo.ex     # mix ash_scylla.gen.repo
 │   ├── ash_scylla.migrate.ex      # mix ash_scylla.migrate
+│   ├── ash_scylla.new_template.ex # mix ash_scylla.new_template
 │   └── ash_scylla.setup.ex        # mix ash_scylla.setup
 ├── test/
 │   ├── test_helper.exs
 │   ├── support/                   # Test resources, repos, containers
-│   ├── mix/tasks/                 # Mix task tests
 │   ├── unit/                      # Unit tests by feature domain
-│   │   ├── autogenerate/
-│   │   ├── batch/
-│   │   ├── connection/
-│   │   ├── data_layer/
-│   │   ├── dsl/
-│   │   ├── error/
-│   │   ├── filter/
-│   │   ├── identifier/
-│   │   ├── mix_helpers/
-│   │   ├── query/
-│   │   ├── schema/
-│   │   ├── security/
-│   │   ├── source_cache/
-│   │   ├── telemetry/
-│   │   ├── types/
-│   │   └── workload/
 │   └── integration/               # Integration tests (need ScyllaDB)
-│       ├── scylla_integration_test.exs
-│       ├── data_layer_integration_test.exs
-│       ├── pipeline_integration_test.exs
-│       ├── cluster_integration_test.exs
-│       └── basic_integration_test.exs
-├── guides/
-│   ├── USAGE_GUIDE.md
-│   ├── DEV_GUIDE.md
-│   ├── PRODUCTION_GUIDE.md
-│   ├── ERROR_HANDLING.md
-│   ├── IMPLEMENTATION_SUMMARY.md
-│   ├── CHANGELOG.md
-│   └── CONTRIBUTING.md
-├── podman-compose.yml            # ScyllaDB + Elixir container
+├── guides/                        # Documentation
+├── podman-compose.yml             # ScyllaDB + Elixir container
 ├── mix.exs
 └── README.md
 ```
@@ -248,13 +231,11 @@ config :my_app, MyApp.Repo,
 
 ### 3. Generate a Resource
 
-Use the built-in generator to scaffold a resource template:
-
 ```bash
-mix ash_scylla.new_template User name:string, email:string, age:int
+mix ash_scylla.new_template User name:string, email:string
 ```
 
-This creates `lib/my_app/resources/user.ex` with a starter template. Then customize it with ScyllaDB-specific options:
+This creates `lib/my_app/resources/user.ex` with a starter template. Then customize it:
 
 ```elixir
 # lib/my_app/resources/user.ex
@@ -296,13 +277,22 @@ defmodule MyApp.Domain do
 end
 ```
 
-### 5. Initialize and Test
+### 5. Generate Schema and Migrate
 
 ```bash
-# Create the keyspace
-mix run -e 'MyApp.Repo.create_keyspace()'
+# Generate schema migration from Ash DSL
+mix ash_scylla.gen --dev
 
-# Start IEx and play
+# Create the keyspace
+mix ash_scylla.setup
+
+# Run migrations
+mix ash_scylla.migrate
+```
+
+### 6. Start Using It
+
+```bash
 iex -S mix
 ```
 
@@ -343,44 +333,107 @@ users = User |> Ash.read()
 
 ## Running Tests
 
-### Test Categories
-
-| Command | What it runs | Needs ScyllaDB? |
-|---------|-------------|-----------------|
-| `mix test --exclude integration` | All unit tests (~1028) | No |
-| `mix test --only integration` | All integration tests | Yes (Podman) |
-| `mix test --cover` | Unit tests + coverage report | No |
-| `mix test test/integration/cluster_integration_test.exs --only integration` | Cluster tests (3-node, Podman) | Yes (Podman) |
-| `SCYLLA_DIRECT=1 mix test test/integration/cluster_integration_test.exs` | Cluster tests (direct) | Yes (existing) |
-
-### Running Tests in the Dev Container
-
-The dev container includes a single-node ScyllaDB instance. All tests work out of the box:
+### Quick Reference
 
 ```bash
-# Unit tests only (fast, no database needed)
+# ── Unit tests ──────────────────────────────────────────────────────────────
+# Fast, no database needed. Uses fake/mock repos.
 mix test --exclude integration
 
-# All integration tests against the containerized ScyllaDB
+# With coverage report → cover/index.html
+mix test --exclude integration --cover
+
+# ── Integration tests ────────────────────────────────────────────────────────
+# Need a running ScyllaDB instance.
+
+# Against the Podman container (dev container default):
 mix test --only integration
 
-# Specific test file
-mix test test/integration/scylla_integration_test.exs
-mix test test/unit/query/query_builder_test.exs
-mix test test/unit/data_layer/data_layer_crud_test.exs
-```
-
-### Running Tests Against a Local ScyllaDB (No Container)
-
-```bash
-# All integration tests against a local ScyllaDB
+# Against a local ScyllaDB at localhost:9042:
 SCYLLA_DIRECT=1 mix test --only integration
 
-# Specific test file
+# A single integration file:
 SCYLLA_DIRECT=1 mix test test/integration/scylla_integration_test.exs
+
+# ── Cluster integration tests ────────────────────────────────────────────────
+# Require a multi-node ScyllaDB (Podman or existing cluster).
+
+# Podman mode (spins up a 3-node cluster via testcontainers):
+mix test test/integration/cluster_integration_test.exs --only integration
+
+# Direct mode (connect to an existing multi-node cluster):
+TEST_CLUSTER=true SCYLLA_NODES="node1:9042,node2:9042,node3:9042" \
+  mix test test/integration/cluster_integration_test.exs --only integration
+
+# Single-node direct mode (connect to one node, multi-node tests skipped):
+SCYLLA_DIRECT=1 mix test test/integration/cluster_integration_test.exs --only integration
+
+
+# ── Benchmarks ───────────────────────────────────────────────────────────────
+mix run benchmarks/run_benchmarks.exs
 ```
 
-> **Note:** The cluster integration test requires Podman and is automatically skipped when `SCYLLA_DIRECT` is set.
+### Unit Tests
+
+Unit tests live under `test/unit/` and are organised by feature domain. They use
+inline or fake repos — no ScyllaDB instance is required.
+
+```bash
+# All unit tests (~1000+)
+mix test --exclude integration
+
+# A specific feature domain
+mix test test/unit/query/
+mix test test/unit/data_layer/
+mix test test/unit/batch/
+
+# A single file
+mix test test/unit/query/query_builder_test.exs
+```
+
+### Integration Tests
+
+Integration tests need a real ScyllaDB instance. They are tagged with `@moduletag :integration`.
+
+```bash
+# All integration tests (excludes unit tests)
+mix test --only integration
+
+# Against a pre-existing ScyllaDB at localhost:9042
+SCYLLA_DIRECT=1 mix test --only integration
+
+# A specific file
+SCYLLA_DIRECT=1 mix test test/integration/scylla_integration_test.exs
+SCYLLA_DIRECT=1 mix test test/integration/data_layer_integration_test.exs
+SCYLLA_DIRECT=1 mix test test/integration/pipeline_integration_test.exs
+SCYLLA_DIRECT=1 mix test test/integration/type_roundtrip_integration_test.exs
+```
+
+> **Tip:** When `SCYLLA_DIRECT` is set, the cluster integration test
+> (`cluster_integration_test.exs`) is automatically skipped because it requires
+> multi-node orchestration.
+
+### Cluster Integration Tests
+
+The cluster tests spin up a 3-node ScyllaDB cluster and verify cross-node reads,
+writes, and concurrent operations.
+
+```bash
+# Podman mode (default — starts containers via testcontainers)
+mix test test/integration/cluster_integration_test.exs --only integration
+
+# Direct mode (connect to an existing cluster)
+TEST_CLUSTER=true SCYLLA_NODES="node1:9042,node2:9042,node3:9042" \
+  mix test test/integration/cluster_integration_test.exs --only integration
+```
+
+### Benchmarks
+
+Benchmarks measure query-building performance (not actual database operations).
+
+```bash
+mix run benchmarks/run_benchmarks.exs
+```
 
 ### Coverage Report
 
@@ -390,7 +443,97 @@ mix test --exclude integration --cover
 
 Generates `cover/index.html` — open it in a browser to see line-by-line coverage.
 
+### Running Tests in the Dev Container
+
+The dev container includes a single-node ScyllaDB instance. All tests work out
+of the box:
+
+```bash
+# Unit tests only (fast, no database needed)
+mix test --exclude integration
+
+# Integration tests against the containerized ScyllaDB
+mix test --only integration
+```
+
+### Running Tests Against a Local ScyllaDB (No Container)
+
+```bash
+SCYLLA_DIRECT=1 mix test --only integration
+```
+
 ---
+
+## Type Mapping
+
+AshScylla maps Elixir types to CQL types via `AshScylla.DataLayer.Types/2`.
+The canonical mapping is used across `AshScylla.Migration`, `AshScylla.DataLayer.Udt`,
+and `AshScylla.DataLayer.Collection`.
+
+### Ash → CQL Type Mapping
+
+| Ash DSL Type | CQL Type | Notes |
+|--------------|----------|-------|
+| `:string` | `TEXT` | |
+| `:integer` | `BIGINT` | 64-bit; ScyllaDB `INT` is 32-bit |
+| `:uuid` | `UUID` | |
+| `:boolean` | `BOOLEAN` | |
+| `:float` | `DOUBLE` | 8-byte float; ScyllaDB `FLOAT` is 4-byte |
+| `:decimal` | `DECIMAL` | |
+| `:utc_datetime` | `TIMESTAMP` | |
+| `:naive_datetime` | `TIMESTAMP` | |
+| `:date` | `DATE` | |
+| `:time` | `TIME` | |
+| `:binary` | `BLOB` | |
+| `:map` | `MAP<K, V>` | Key/value types inferred from attributes |
+| `{:array, :string}` | `LIST<TEXT>` | |
+| `{:array, :integer}` | `LIST<BIGINT>` | |
+
+Unknown or custom types fall back to `TEXT`.
+
+### Query-Builder Parameter Tagging
+
+When building CQL queries, `AshScylla.DataLayer.QueryBuilder` tags each parameter
+with its CQL type to avoid marshalling errors:
+
+| Elixir Value | Tagged As | Reason |
+|--------------|-----------|--------|
+| Integer (limit, offset) | `{"int", value}` | ScyllaDB `LIMIT` expects 4-byte int, not 8-byte bigint |
+| String | `{"text", value}` | |
+| UUID binary | `{"uuid", value}` | |
+| Float | `{"double", value}` | |
+| Boolean | `{"boolean", value}` | |
+| `nil` | `nil` | Passed through unchanged |
+
+These tagged tuples are passed to `Xandra.execute/3` directly. When writing tests
+that inspect `params` returned by `QueryBuilder.build_optimized_query/1`, assert
+against the tagged form:
+
+```elixir
+{cql, params} = QueryBuilder.build_optimized_query(query)
+assert {"int", 10} in params   # ✅ correct
+# assert 10 in params          # ❌ will fail
+```
+
+### Collection Types
+
+| Elixir Type | Xandra Encoding | CQL Type |
+|-------------|----------------|----------|
+| List | Elixir list (preserves order, allows duplicates) | `LIST<T>` |
+| MapSet | Elixir `MapSet` (unordered, unique) | `SET<T>` |
+| Map | Elixir map | `MAP<K, V>` |
+| Frozen | Tuple (immutable, stored as single blob) | `FROZEN<T>` |
+
+### User Defined Types (UDTs)
+
+UDTs are encoded as tuples ordered by their schema field definition. The schema is
+derived from the resource's `@dsl` UDT configuration.
+
+```elixir
+# Encoding: map → tuple ordered by schema fields
+AshScylla.DataLayer.Udt.encode(%{city: "Hanoi", street: "123"}, MyApp.Address)
+# → {"Hanoi", "123"}
+```
 
 ## Common Development Tasks
 
@@ -404,24 +547,217 @@ mix run -e '
 '
 ```
 
-### Inspect Generated CQL
+### Building CQL Queries from Ash
+
+AshScylla converts Ash queries into optimized CQL via `AshScylla.DataLayer.QueryBuilder`.
+The pipeline has three stages:
+
+```
+Ash.Resource / Ash.Query
+        │
+        ▼
+AshScylla.DataLayer          # builds the struct
+        │
+        ▼
+QueryBuilder                 # converts filters → CQL WHERE
+        │
+        ▼
+{ cql, params }              # final query + typed parameters
+```
+
+#### Stage 1 — Build the DataLayer struct
+
+For resources, let Ash build the struct from the DSL:
 
 ```elixir
-# In IEx
-alias AshScylla.DataLayer.QueryBuilder
+alias AshScylla.DataLayer
 
-# Build a query struct and inspect
-query = %AshScylla.DataLayer{
-  resource: MyApp.User,
-  repo: MyApp.Repo,
-  table: "users",
-  filters: [%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}],
-  limit: 10
+query = DataLayer.resource_to_query(MyApp.User, MyApp.Domain)
+# %AshScylla.DataLayer{resource: MyApp.User, repo: MyApp.Repo, table: "users", ...}
+```
+
+For ad-hoc queries (tests, scripts), build the struct manually:
+
+```elixir
+query = %DataLayer{
+  resource: MyApp.User,     # or nil for resource-less queries
+  repo: MyApp.Repo,         # or nil
+  table: "users",            # required
+  filters: [],
+  sorts: [],
+  limit: nil,
+  select: nil,
+  tenant: nil
 }
+```
+
+#### Stage 2 — Add filters, sorts, limit
+
+Filters use Ash `filter/3` format. Each filter is a map with `operator`,
+`left`, and `right` keys:
+
+```elixir
+# Equality
+%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}
+
+# Comparison
+%{operator: :gt, left: %{name: :age}, right: %{value: 18}}
+%{operator: :>=, left: %{name: :age}, right: %{value: 18}}
+%{operator: :<, left: %{name: :age}, right: %{value: 65}}
+%{operator: :<=, left: %{name: :age}, right: %{value: 65}}
+
+# IN clause
+%{operator: :in, left: %{name: :status}, right: %{value: ["active", "pending"]}}
+
+# IS NULL
+%{operator: :is_nil, left: %{name: :email}, right: true}
+
+# AND / OR (nested)
+%{
+  op: :and,
+  left: %{operator: :eq, left: %{name: :status}, right: %{value: "active"}},
+  right: %{operator: :>=, left: %{name: :age}, right: %{value: 18}}
+}
+
+%{
+  op: :or,
+  left: %{operator: :eq, left: %{name: :status}, right: %{value: "active"}},
+  right: %{operator: :eq, left: %{name: :status}, right: %{value: "pending"}}
+}
+```
+
+Add to the query struct:
+
+```elixir
+query = query
+|> DataLayer.filter(%{operator: :eq, left: %{name: :status}, right: %{value: "active"}})
+|> DataLayer.filter(email == "user@example.com")   # Ash DSL syntax also works
+|> DataLayer.sort(:name, :asc)
+|> DataLayer.limit(10)
+|> DataLayer.select([:id, :name, :email])
+```
+
+#### Stage 3 — Build and inspect the CQL
+
+```elixir
+alias AshScylla.DataLayer.QueryBuilder
 
 {cql, params} = QueryBuilder.build_optimized_query(query)
 IO.puts(cql)
-# → SELECT * FROM users WHERE status = ? LIMIT ?
+# → SELECT id, name, email FROM users WHERE status = ? AND email = ? ORDER BY name ASC LIMIT ?
+IO.inspect(params)
+# → [{"text", "active"}, {"text", "user@example.com"}, {"int", 10}]
+```
+
+#### Execute the query
+
+Pass the `{cql, params}` result directly to `Xandra.execute/4`:
+
+```elixir
+{:ok, conn} = Xandra.start_link(nodes: ["127.0.0.1:9042"])
+
+{cql, params} = QueryBuilder.build_optimized_query(query)
+{:ok, %Xandra.Page{content: rows}} = Xandra.execute(conn, cql, params, consistency: :one)
+
+Xandra.stop(conn)
+```
+
+#### Common query patterns
+
+```elixir
+# ── Primary key lookup (most efficient) ────────────────────────────────────
+query = %DataLayer{
+  table: "users",
+  filters: [%{operator: :eq, left: %{name: :id}, right: %{value: user_id}}]
+}
+# → SELECT * FROM users WHERE id = ?
+
+# ── Secondary index lookup ──────────────────────────────────────────────────
+query = %DataLayer{
+  table: "users",
+  filters: [%{operator: :eq, left: %{name: :email}, right: %{value: "a@b.com"}}]
+}
+# → SELECT * FROM users WHERE email = ?
+
+# ── Range query on clustering columns ───────────────────────────────────────
+query = %DataLayer{
+  table: "events",
+  filters: [
+    %{operator: :eq, left: %{name: :user_id}, right: %{value: user_id}},
+    %{operator: :>=, left: %{name: :event_id}, right: %{value: ~U[2024-01-01 00:00:00Z]}}
+  ]
+}
+# → SELECT * FROM events WHERE user_id = ? AND event_id >= ?
+
+# ── COUNT aggregate ────────────────────────────────────────────────────────
+query = %DataLayer{
+  table: "users",
+  filters: [%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}],
+  aggregates: [%{kind: :count, name: :total}]
+}
+# → SELECT count(*) FROM users WHERE status = ?
+
+# ── DISTINCT on partition key ───────────────────────────────────────────────
+query = %DataLayer{
+  table: "users",
+  distinct: [:status]
+}
+# → SELECT DISTINCT status FROM users
+
+# ── Token-based keyset pagination ───────────────────────────────────────────
+query = %DataLayer{
+  table: "users",
+  keyset: page_token,     # opaque token from previous page
+  limit: 25
+}
+# → SELECT * FROM users LIMIT ?  (with page_state sent to Xandra)
+
+# ── IN clause ───────────────────────────────────────────────────────────────
+query = %DataLayer{
+  table: "users",
+  filters: [%{operator: :in, left: %{name: :id}, right: %{value: [id1, id2, id3]}}]
+}
+# → SELECT * FROM users WHERE id IN (?, ?, ?)
+```
+
+#### Using the full Ash pipeline
+
+The most common path is through Ash actions, which handle everything:
+
+```elixir
+# Create — generates INSERT CQL internally
+{:ok, user} = Ash.create(MyApp.User, %{name: "Alice", email: "alice@example.com"})
+
+# Read with filters — generates SELECT CQL
+users =
+  MyApp.User
+  |> Ash.Query.filter(status == "active")
+  |> Ash.Query.sort(:name)
+  |> Ash.Query.limit(10)
+  |> Ash.read!()
+
+# Update — generates UPDATE CQL
+{:ok, updated} =
+  user
+  |> Ash.Changeset.for_update(:update, %{name: "Alice Smith"})
+  |> Ash.update()
+
+# Delete — generates DELETE CQL
+:ok = Ash.destroy(user)
+```
+
+To see the CQL that Ash generates, enable debug logging or use the
+`AshScylla.Telemetry` span handler:
+
+```elixir
+:telemetry.attach(
+  "ash-scylla-logger",
+  [:ash_scylla, :query, :stop],
+  fn _event, measure, _meta, _config ->
+    IO.puts("Query took #{System.convert_time_unit(measure.duration, :native, :millisecond)}ms")
+  end,
+  nil
+)
 ```
 
 ### Run Benchmarks
@@ -466,9 +802,20 @@ podman inspect --format='{{.State.Health.Status}}' ash_scylla_test
 
 ### "Keyspace does not exist"
 
+```bash
+mix ash_scylla.setup
+```
+
+### "OFFSET not supported"
+
+AshScylla raises an error when you try to use offset queries. Use keyset pagination instead:
+
 ```elixir
-# In IEx
-MyApp.Repo.create_keyspace()
+# Instead of offset
+MyApp.User |> Ash.Query.offset(10)  # ❌ Raises error
+
+# Use keyset pagination with limit
+MyApp.User |> Ash.Query.limit(10)  # ✅
 ```
 
 ### Tests fail with timeout

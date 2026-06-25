@@ -140,6 +140,26 @@ defmodule AshScylla.DataLayer.PipelineTest do
     end
   end
 
+  defp ensure_pipeline_schema(conn) do
+    case wait_for_cql(conn, 15) do
+      :ok ->
+        {:ok, _} =
+          Xandra.execute(
+            conn,
+            "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}"
+          )
+
+        {:ok, _} =
+          Xandra.execute(
+            conn,
+            "CREATE TABLE IF NOT EXISTS ash_scylla_test.users (id UUID PRIMARY KEY, name TEXT, email TEXT, age INT, status TEXT, created_at TIMESTAMP)"
+          )
+
+      {:error, reason} ->
+        raise "ScyllaDB not ready for ensure_pipeline_schema: #{inspect(reason)}"
+    end
+  end
+
   # ── Setup: ensure schema exists ─────────────────────────────────────────────
 
   setup_all do
@@ -200,10 +220,11 @@ defmodule AshScylla.DataLayer.PipelineTest do
     case Map.fetch(context, :scylla) do
       {:ok, :direct} ->
         conn = connect_with_retry(direct_host(), direct_port(), 5)
+        ensure_pipeline_schema(conn)
         %{conn: conn}
 
       _ ->
-        :ok
+        %{conn: nil}
     end
   end
 
@@ -313,7 +334,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
 
       {cql, params} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "LIMIT ?"
-      assert 25 in params
+      assert {"int", 25} in params
     end
 
     test "generates SELECT with ORDER BY" do
@@ -355,7 +376,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
       refute cql =~ "ORDER BY"
       assert cql =~ "LIMIT ?"
       assert "active" in params
-      assert 10 in params
+      assert {"int", 10} in params
 
       # Test with a filter on a non-indexed column — ORDER BY should be preserved
       query_no_idx = %DataLayer{

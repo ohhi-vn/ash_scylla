@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mix ash_scylla.migrate` now discovers and executes schema files from `priv/migrations` before resource migrations
 - **`mix ash_scylla.gen` repurposed** — now generates schema migration files from Ash DSL resource definitions (was resource template generator). Scans project for `AshScylla.DataLayer` resources and produces `priv/migrations/` files with `CREATE TABLE`/`CREATE INDEX` CQL
 - **`mix ash_scylla.new_template`** — new name for the old `mix ash_scylla.gen` resource template generation (`mix ash_scylla.new_template User name:string`)
+- Added `AshScylla.DataLayer.QueryOptimizer` module with per-query consistency, timeout, paging hints, and speculative retry policy configuration
+- Added `AshScylla.DataLayer.Collection` module for LIST/SET/MAP encoding, CQL generation, and CONTAINS filters
+- Added `AshScylla.DataLayer.Compression` module for application-level compression (LZ4, Snappy, Deflate, Zstd)
+- Added `AshScylla.DataLayer.Udt` module for User Defined Type encoding/decoding
+- Added `AshScylla.DataLayer.SchemaMigration` for automatic schema diff and migration
+- Added `AshScylla.Release` module for production migration tasks without Mix installed
+- Added `AshScylla.MixHelpers` for shared resource/repo discovery across Mix tasks
+- Added `mix ash_scylla.gen.repo` task for generating Repo modules
+- Added `AshScylla.Application` module with `:ash_scylla_repo_cache` ETS table
 
 ### Fixed
 - `run_query/2`: `FilterValidator` is now skipped when `allow_filtering` is enabled on the resource — previously the validator raised before the query builder could append `ALLOW FILTERING`, making the DSL option dead code

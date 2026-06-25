@@ -40,8 +40,6 @@ AshScylla provides structured error handling for ScyllaDB-specific errors. It ca
 
 ## Error Types
 
-### Available Error Categories
-
 | Error Type | Description | When It Occurs |
 |------------|-------------|----------------|
 | `:syntax_error` | Invalid CQL syntax | Malformed CQL queries |
@@ -67,11 +65,11 @@ AshScylla provides structured error handling for ScyllaDB-specific errors. It ca
 case AshScylla.DataLayer.run_query(query, resource) do
   {:ok, results} ->
     {:ok, results}
-    
+
   {:error, %AshScylla.Error.ScyllaError{} = error} ->
     # Log the detailed error
     Logger.error("Database error: #{AshScylla.Error.format_error(error)}")
-    
+
     # Check if we should retry
     if AshScylla.Error.retryable?(error) do
       delay = AshScylla.Error.retry_delay(error)
@@ -79,7 +77,7 @@ case AshScylla.DataLayer.run_query(query, resource) do
     else
       {:error, error}
     end
-    
+
   {:error, error} ->
     # Handle other errors
     {:error, error}
@@ -91,10 +89,10 @@ end
 ```elixir
 %AshScylla.Error.ScyllaError{
   type: :overloaded,           # Error category (atom)
-  reason: "..."               # Original error reason
-  message: "..."              # Human-readable message
-  suggestion: "..."           # Actionable suggestion
-  original_error: %Xandra...  # Original Xandra error
+  reason: "...",               # Original error reason
+  message: "...",              # Human-readable message
+  suggestion: "...",           # Actionable suggestion
+  original_error: %Xandra...   # Original Xandra error
 }
 ```
 
@@ -122,7 +120,7 @@ end
 | `:connection_timeout` | ✅ Yes | 2000 |
 | `:timeout` | ✅ Yes | 500 |
 | `:connection_closed` | ✅ Yes | 1000 |
-| `:connection_error` | ✅ Yes | 1000 |
+| `:connection_error` | ✅ Yes | 2000 |
 | `:syntax_error` | ❌ No | - |
 | `:schema_error` | ❌ No | - |
 | `:unauthorized` | ❌ No | - |
@@ -134,24 +132,24 @@ end
 ```elixir
 defmodule MyApp.Database do
   @max_retries 3
-  
+
   def execute_with_retry(operation, retries \\ 0) do
     case operation.() do
       {:ok, result} ->
         {:ok, result}
-        
+
       {:error, %AshScylla.Error.ScyllaError{} = error} ->
         if AshScylla.Error.retryable?(error) and retries < @max_retries do
           delay = AshScylla.Error.retry_delay(error)
           # Add exponential backoff
           sleep_time = delay * :math.pow(2, retries)
           Process.sleep(round(sleep_time))
-          
+
           execute_with_retry(operation, retries + 1)
         else
           {:error, error}
         end
-        
+
       {:error, error} ->
         {:error, error}
     end
@@ -230,7 +228,7 @@ IO.puts(formatted)
 ```
 
 **Solution:**
-- Run migrations: `AshScylla.Migrator.run!(MyApp.Repo.nodes(), ["CREATE TABLE IF NOT EXISTS ..."])`
+- Run migrations: `mix ash_scylla.migrate`
 - Verify table name in resource configuration
 - Check keyspace configuration
 
@@ -267,7 +265,7 @@ IO.puts(formatted)
 
 ### 6. Record Not Found
 
-When `fetch_by_primary_key` returns an empty result set (no matching record), AshScylla now returns a structured `ScyllaError` instead of crashing:
+When `fetch_by_primary_key` returns an empty result set (no matching record), AshScylla returns a structured `ScyllaError` instead of crashing:
 
 ```elixir
 {:error, %AshScylla.Error.ScyllaError{
@@ -276,18 +274,18 @@ When `fetch_by_primary_key` returns an empty result set (no matching record), As
 }}
 ```
 
-This prevents `MatchError` crashes when a record is deleted between the insert and fetch operations.
+This prevents `MatchError` crashes when a record is deleted between operations.
 
 ### 7. Aggregate Query Empty Results
 
-When `run_aggregate_query` returns an empty result set from ScyllaDB, it now gracefully returns `0` for the count instead of crashing with a `MatchError`:
+When `run_aggregate_query` returns an empty result set from ScyllaDB, it gracefully returns `0` for the count instead of crashing:
 
 ```elixir
 # Empty result from COUNT query returns 0
 {:ok, %{total: 0}} = DataLayer.run_aggregate_query(query, [%{kind: :count, name: :total}], resource)
 ```
 
-### 9. ALLOW FILTERING / Schema Error (Non-Indexed Column Filter)
+### 8. ALLOW FILTERING / Schema Error (Non-Indexed Column Filter)
 
 ```
 %AshScylla.Error.ScyllaError{
@@ -330,23 +328,36 @@ When `allow_filtering` is enabled, the `FilterValidator` is skipped and `ALLOW F
 - Check if replicas are available
 - Verify replication factor in keyspace
 
+### 10. CQL Injection Prevention
+
+AshScylla sanitizes all CQL identifiers through `AshScylla.Identifier`:
+
+```elixir
+AshScylla.Identifier.sanitize!("users; DROP TABLE users")
+# => ** (ArgumentError) Invalid CQL identifier: "users; DROP TABLE users"
+```
+
+All table names, column names, keyspace names, and index names are validated before interpolation into CQL strings.
+
 ---
 
 ## Testing Error Handling
 
-AshScylla includes comprehensive tests for error handling in `test/ash_scylla/error_test.exs`:
+AshScylla includes comprehensive tests for error handling:
 
 ```bash
 # Run error handling tests
-mix test test/ash_scylla/error_test.exs
+mix test test/unit/error/
 ```
 
 ### Test Coverage
 
-- ✅ 14 tests covering all error types
-- ✅ Tests for retry logic
-- ✅ Tests for error formatting
-- ✅ Tests for error categorization
+- All error types and categorization
+- Retry logic with backoff
+- Error formatting
+- Connection error subclassification
+- Filter validation (ALLOW FILTERING prevention)
+- CQL injection prevention (identifier sanitization)
 
 ---
 
@@ -355,10 +366,10 @@ mix test test/ash_scylla/error_test.exs
 ### 1. Always Handle Errors
 
 ```elixir
-# ❌ Bad: Not handling errors
+# Bad: Not handling errors
 Ash.create(resource)
 
-# ✅ Good: Proper error handling
+# Good: Proper error handling
 case Ash.create(resource) do
   {:ok, result} -> result
   {:error, error} -> handle_error(error)
@@ -392,10 +403,10 @@ Database error occurred:
 ```elixir
 def handle_database_error(%AshScylla.Error.ScyllaError{} = error) do
   %{message: message, suggestion: suggestion} = error
-  
+
   """
   A database error occurred: #{message}
-  
+
   What you can do: #{suggestion}
   """
 end
@@ -407,8 +418,8 @@ end
 
 For detailed API documentation, see:
 
-- `AshScylla.Error` - Unified error handling interface
-- `AshScylla.Error.ScyllaError` - ScyllaDB-specific error types
+- `AshScylla.Error` — Unified error handling interface
+- `AshScylla.Error.ScyllaError` — ScyllaDB-specific error types
 
 ```elixir
 # Get help in IEx

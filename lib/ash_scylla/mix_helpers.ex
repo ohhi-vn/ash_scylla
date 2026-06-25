@@ -3,7 +3,21 @@ defmodule AshScylla.MixHelpers do
   Shared helper functions for AshScylla Mix tasks.
 
   Provides resource/repo discovery, CLI option handling, and file scanning
-  used by `ash_scylla.gen`, `ash_scylla.migrate`, and other tasks.
+  used by `ash_scylla.gen`, `ash_scylla.migrate`, `ash_scylla.new_template`,
+  `ash_scylla.setup`, and `ash_scylla.gen.repo`.
+
+  ## Discovery
+
+  Resources are discovered by:
+  1. Reading `:ash_domains` app env config
+  2. Calling `Ash.Domain.Info.resources/1` on each domain
+  3. Filtering to modules using `AshScylla.DataLayer`
+  4. Falling back to scanning `lib/**/*.ex` files
+
+  ## Umbrella Support
+
+  `project_apps/0` returns the current app plus all umbrella children,
+  enabling resource discovery in umbrella projects.
   """
 
   @doc """

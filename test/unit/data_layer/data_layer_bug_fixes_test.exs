@@ -10,7 +10,6 @@ defmodule AshScylla.DataLayer.BugFixesTest do
   use ExUnit.Case, async: false
 
   alias AshScylla.DataLayer
-  alias AshScylla.Error.ScyllaError
 
   import AshScylla.DataLayer.Types, only: [uuid_string_to_binary: 1]
 
@@ -266,7 +265,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
           %{id: "550e8400-e29b-41d4-a716-446655440001", name: "Alice"}
         )
 
-      assert {:ok, _record} = DataLayer.destroy(AtomResource, changeset)
+      assert :ok = DataLayer.destroy(AtomResource, changeset)
 
       assert_receive {:ash_scylla_query, delete_query, params, _opts}
       assert delete_query == "DELETE FROM bug_items WHERE id = ?"
@@ -280,7 +279,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       id = "550e8400-e29b-41d4-a716-446655440001"
       changeset = changeset(%{id: id})
 
-      assert {:ok, _record} = DataLayer.destroy(AtomResource, changeset)
+      assert :ok = DataLayer.destroy(AtomResource, changeset)
 
       assert_receive {:ash_scylla_query, delete_query, params, _opts}
       assert delete_query == "DELETE FROM bug_items WHERE id = ?"

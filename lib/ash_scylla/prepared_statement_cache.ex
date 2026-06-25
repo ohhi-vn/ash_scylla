@@ -16,9 +16,10 @@ defmodule AshScylla.PreparedStatementCache do
   @moduledoc """
   ETS-based prepared statement cache for ScyllaDB/Cassandra queries.
 
-  Caches prepared statements keyed by query hash to eliminate repeated
-  query parsing overhead on ScyllaDB. This is especially impactful for
-  high-throughput workloads where the same queries are executed repeatedly.
+  Caches prepared statements keyed by `{repo, cql, keyspace, opts}` to
+  eliminate repeated query parsing overhead on ScyllaDB. This is especially
+  impactful for high-throughput workloads where the same queries are executed
+  repeatedly.
 
   All ETS operations are routed through the GenServer to avoid race
   conditions when multiple processes access the cache concurrently.
@@ -39,6 +40,12 @@ defmodule AshScylla.PreparedStatementCache do
   Or start manually:
 
       AshScylla.PreparedStatementCache.start_link([])
+
+  ## Limits
+
+  - Max cache size: 10,000 entries
+  - Cleanup interval: 5 minutes
+  - Registered globally as `{:global, __MODULE__}` by default
   """
 
   use GenServer

@@ -13,30 +13,41 @@
 # limitations under the License.
 
 defmodule AshScylla.Connection do
-  require Logger
-
   @moduledoc """
-  Direct Xandra connection wrapper for AshScylla.
+  GenServer wrapper for Xandra connections.
 
-  Replaces the Exandra/Ecto.Repo pattern. Manages a Xandra connection
-  process and provides query/prepare operations.
-
-  Supports both single-node (`Xandra.start_link/1`) and multi-node
-  (`Xandra.Cluster.start_link/1`) connections.
+  Provides a process-based connection to ScyllaDB/Cassandra via Xandra,
+  supporting both single-node and cluster connection modes.
 
   ## Usage
 
-  Single-node connection:
+      {:ok, pid} = AshScylla.Connection.start_link(nodes: ["127.0.0.1:9042"])
+      AshScylla.Connection.query(pid, "SELECT * FROM system.local", [])
+      AshScylla.Connection.stop(pid)
 
-      # In your application supervision tree:
+  ## Options
+
+  - `:name` — Register the connection under a name (for `get_conn/1`)
+  - `:nodes` — List of ScyllaDB nodes
+  - `:keyspace` — Default keyspace for the connection
+  - `:connect_timeout` — TCP connection timeout in ms (default: 5000)
+
+  ## Cluster Mode
+
+  When multiple nodes are provided, Xandra.Cluster is used for
+  automatic node discovery and load balancing.
+
+  ### Single-node connection
+
       children = [
         {AshScylla.Connection, name: MyApp.Scylla, nodes: ["127.0.0.1:9042"], keyspace: "my_app"}
       ]
 
-      # Or start manually:
       {:ok, conn} = AshScylla.Connection.start_link(nodes: ["127.0.0.1:9042"], keyspace: "my_app")
 
-  Multi-node cluster connection (all nodes must use the same port):
+  ### Multi-node cluster connection
+
+  All nodes must use the same port:
 
       children = [
         {AshScylla.Connection,
@@ -46,23 +57,7 @@ defmodule AshScylla.Connection do
           pool_size: 10}
       ]
 
-  ## Options
-
-  All options are passed through to `Xandra.start_link/1` (single node) or
-  `Xandra.Cluster.start_link/1` (multiple nodes). Key options:
-
-  - `:name` - Register the connection under this name (required for supervised start)
-  - `:nodes` - List of nodes, e.g. `["127.0.0.1:9042"]` or `[{"127.0.0.1", 9042}]`
-  - `:keyspace` - Keyspace to USE on connect
-  - `:pool_size` - Number of connections per node (cluster mode, default: 1)
-  - `:connect_timeout` - Connection timeout in milliseconds (default: 5000)
-  - `:autodiscovered_nodes_port` - Port for autodiscovered peers (default: 9042).
-    When using a cluster with a non-standard port, this is auto-detected from
-    the first node if all nodes share the same port.
-  - `:sync_connect` - Wait for at least one connection before returning.
-    Set to `false` for async connect (default: 5000ms timeout in cluster mode).
-
-  ## Cluster Mode
+  ### Cluster Mode Details
 
   When multiple nodes are provided, `AshScylla.Connection` uses `Xandra.Cluster`
   for load balancing and fault tolerance.
@@ -74,6 +69,7 @@ defmodule AshScylla.Connection do
   If nodes have different ports, `AshScylla.Connection` falls back to a
   single-node connection to the first node and logs a warning.
   """
+  require Logger
 
   use GenServer
 

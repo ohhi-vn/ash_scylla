@@ -539,7 +539,7 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
     test "returns :ok unchanged" do
       changeset = %Ash.Changeset{attributes: %{id: "test-id"}}
       result = DataLayer.destroy(Resource, changeset)
-      assert match?({:ok, _}, result)
+      assert :ok = result
     end
   end
 

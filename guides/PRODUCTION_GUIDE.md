@@ -36,7 +36,7 @@ This guide covers running AshScylla in production against a ScyllaDB cluster. To
 **Assumptions:**
 - Familiarity with ScyllaDB concepts (nodes, racks, datacenters, vnodes)
 - Basic Kubernetes knowledge (for the K8s section)
-- Ash Framework basics (see [USAGE_GUIDE.md](../guides/USAGE_GUIDE.md))
+- Ash Framework basics (see [USAGE_GUIDE.md](USAGE_GUIDE.md))
 
 ---
 

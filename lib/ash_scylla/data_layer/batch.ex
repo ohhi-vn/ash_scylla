@@ -38,10 +38,15 @@ defmodule AshScylla.DataLayer.Batch do
         {"INSERT INTO users (id, name) VALUES (?, ?)", [id1, "Alice"]},
         {"INSERT INTO users (id, name) VALUES (?, ?)", [id2, "Bob"]}
       ]
-      DataLayer.Batch.batch_insert(repo, statements)
+      AshScylla.DataLayer.Batch.batch_insert(repo, statements)
 
       # Async partition-aware batch
-      DataLayer.Batch.batch_insert_async(repo, statements, max_concurrency: 8)
+      AshScylla.DataLayer.Batch.batch_insert_async(repo, statements, max_concurrency: 8)
+
+  ## Consistency
+
+  Batch operations use `:all` consistency by default. Override with
+  `consistency:` option.
   """
 
   require Logger
@@ -196,14 +201,14 @@ defmodule AshScylla.DataLayer.Batch do
 
           raise ArgumentError,
                 "Invalid batch statement: #{inspect(invalid)}. Expected {query_string, params_list}"
+        else
+          queries = Enum.map(statements, fn {query, _} -> query end)
+          all_params = Enum.flat_map(statements, fn {_, params} -> params end)
+          batch_query = "BEGIN BATCH #{Enum.join(queries, "; ")} APPLY BATCH;"
+
+          Logger.debug("AshScylla: Built batch query with #{length(statements)} statements")
+          repo.query(batch_query, all_params, opts)
         end
-
-        queries = Enum.map(statements, fn {query, _} -> query end)
-        all_params = Enum.flat_map(statements, fn {_, params} -> params end)
-        batch_query = "BEGIN BATCH #{Enum.join(queries, "; ")} APPLY BATCH;"
-
-        Logger.debug("AshScylla: Built batch query with #{length(statements)} statements")
-        repo.query(batch_query, all_params, opts)
     end
   end
 

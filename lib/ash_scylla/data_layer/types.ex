@@ -19,6 +19,25 @@ defmodule AshScylla.DataLayer.Types do
   Centralizes the canonical type-to-CQL-string mappings used across
   `AshScylla.Migration`, `AshScylla.DataLayer.Udt`, and
   `AshScylla.DataLayer.Collection`.
+
+  ## Type Mapping
+
+  The canonical mapping resolves Ash DSL types to CQL types:
+
+  | Ash Type | CQL Type |
+  |----------|----------|
+  | `:string` | TEXT |
+  | `:integer` | BIGINT |
+  | `:uuid` | UUID |
+  | `:boolean` | BOOLEAN |
+  | `:utc_datetime` | TIMESTAMP |
+  | `:decimal` | DECIMAL |
+  | `:float` | DOUBLE |
+  | `:binary` | BLOB |
+  | `:date` | DATE |
+  | `:time` | TIME |
+
+  Unknown types fall back to `TEXT`.
   """
 
   @cql_type_mapping %{

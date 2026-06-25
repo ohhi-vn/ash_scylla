@@ -1,6 +1,6 @@
 # AshScylla Usage Guide
 
-> **Complete guide to using AshScylla with ScyllaDB/Apache Cassandra**
+> **Comprehensive usage guide for AshScylla**
 
 ---
 
@@ -17,6 +17,7 @@
 9. [Performance Tips](#performance-tips)
 10. [Common Patterns](#common-patterns)
 11. [Troubleshooting](#troubleshooting)
+12. [Additional Resources](#additional-resources)
 
 ---
 
@@ -24,60 +25,73 @@
 
 ### Complete Setup Example
 
-**1. Create a Repo (`lib/my_app/repo.ex`):**
+**1. Add to your dependencies:**
 
 ```elixir
+# mix.exs
+def deps do
+  [
+    {:ash_scylla, "~> 0.12.0"}
+  ]
+end
+```
+
+**2. Create a Repo:**
+
+```elixir
+# lib/my_app/repo.ex
 defmodule MyApp.Repo do
   use AshScylla.Repo,
     otp_app: :my_app
 end
 ```
 
-**2. Configure the Repo (`config/config.exs`):**
+**3. Configure the Repo:**
 
 ```elixir
+# config/config.exs
+import Config
+
 config :my_app, MyApp.Repo,
   nodes: ["127.0.0.1:9042"],
   keyspace: "my_app_dev",
-  pool_size: 10,
-  request_timeout: 120_000
+  pool_size: 10
 ```
 
-**3. Create a Domain (`lib/my_app/domain.ex`):**
+**4. Add to supervision tree:**
 
 ```elixir
-defmodule MyApp.Domain do
-  use Ash.Domain
-
-  resources do
-    resource MyApp.User
-    resource MyApp.Post
-  end
-end
+# lib/my_app/application.ex
+children = [
+  MyApp.Repo,
+  # ...
+]
 ```
 
-4. Generate a Resource Template:
+**5. Generate a Resource:**
 
 ```bash
-mix ash_scylla.new_template User user_id:uuid, name:string, age:int
+mix ash_scylla.new_template User name:string, email:string
 ```
 
-This creates `lib/my_app/resources/user.ex` with a starter template. Then customize it:
-
-Or define resources manually (`lib/my_app/resources/user.ex`):
+Or define it manually:
 
 ```elixir
+# lib/my_app/resources/user.ex
 defmodule MyApp.User do
   use Ash.Resource,
     data_layer: AshScylla.DataLayer,
     domain: MyApp.Domain
 
+  ash_scylla do
+    table "users"
+    consistency :quorum
+  end
+
   attributes do
     uuid_primary_key :id
     attribute :name, :string
     attribute :email, :string
-    attribute :age, :integer
-    attribute :status, :string, constraints: [one_of: ["active", "inactive"]]
   end
 
   actions do
@@ -86,17 +100,47 @@ defmodule MyApp.User do
 end
 ```
 
-**5. Initialize Database:**
+**6. Create a Domain:**
 
 ```elixir
-# Create keyspace
-MyApp.Repo.create_keyspace()
+# lib/my_app/domain.ex
+defmodule MyApp.Domain do
+  use Ash.Domain
 
-# Run migrations
-AshScylla.Migrator.run!(MyApp.Repo.nodes(), [
-  AshScylla.Migration.create_table_cql(MyApp.User),
-  "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)"
-])
+  resources do
+    resource MyApp.User
+  end
+end
+```
+
+**7. Create Keyspace and Tables:**
+
+```bash
+# Generate schema migration from Ash DSL
+mix ash_scylla.gen --dev
+
+# Run migrations (includes schema files from priv/migrations)
+mix ash_scylla.migrate
+```
+
+**8. Start Using It:**
+
+```elixir
+# Create
+{:ok, user} = Ash.create(MyApp.User, %{name: "John", email: "john@example.com"})
+
+# Read
+users = MyApp.User
+  |> Ash.Query.filter(email == "john@example.com")
+  |> Ash.read!()
+
+# Update
+{:ok, updated} = user
+  |> Ash.Changeset.for_update(:update, %{name: "John Doe"})
+  |> Ash.update()
+
+# Delete
+:ok = Ash.destroy(user)
 ```
 
 ---
@@ -112,28 +156,32 @@ defmodule MyApp.Product do
     domain: MyApp.Domain
 
   ash_scylla do
-    table "products"                    # Custom table name
-    keyspace "my_keyspace"               # Custom keyspace
-    consistency :quorum                  # Consistency level
-    ttl 7200                            # TTL in seconds
+    table "products"
+    keyspace "custom_keyspace"
+    consistency :quorum
+    ttl 3600
+    lwt true
+    allow_filtering false
 
     # Secondary indexes
-    secondary_index :sku
-    secondary_index [:category, :brand]
+    secondary_index :category
+    secondary_index [:brand, :price]
 
     # Materialized views
     materialized_view :products_by_category,
       primary_key: [:category, :id],
-      include_columns: [:name, :price, :brand]
+      include_columns: [:name, :price]
+
+    # Per-action consistency
+    per_action_consistency read: :one, create: :quorum
   end
 
   attributes do
     uuid_primary_key :id
     attribute :name, :string
-    attribute :sku, :string
-    attribute :price, :decimal
     attribute :category, :string
     attribute :brand, :string
+    attribute :price, :decimal
   end
 
   actions do
@@ -147,7 +195,12 @@ end
 ```elixir
 defmodule MyApp.OrderItem do
   use Ash.Resource,
-    data_layer: AshScylla.DataLayer
+    data_layer: AshScylla.DataLayer,
+    domain: MyApp.Domain
+
+  ash_scylla do
+    table "order_items"
+  end
 
   attributes do
     attribute :order_id, :uuid, primary_key?: true
@@ -162,93 +215,60 @@ end
 
 ## Generating Resources
 
-AshScylla includes a Mix task to quickly scaffold a new resource:
-
-```bash
-mix ash_scylla.new_template MyResource user_id:uuid, name:string, age:int
-```
-
-This generates a file at `lib/<app>/resources/my_resource.ex` containing:
-
-```elixir
-defmodule MyApp.User do
-  use Ash.Resource,
-    data_layer: AshScylla.DataLayer,
-    repo: MyApp.Repo
-
-  attributes do
-    uuid_primary_key :id
-    attribute :user_id, :uuid
-    attribute :name, :string
-    attribute :age, :integer
-  end
-
-  actions do
-    defaults [:create, :read, :update, :destroy]
-  end
-end
-```
-
 ### Command Format
 
 ```bash
-mix ash_scylla.new_template <ResourceName> <attr1>:<type1>, <attr2>:<type2>, ...
+mix ash_scylla.new_template ResourceName field1:type1, field2:type2
 ```
-
-- **ResourceName** — an Elixir module alias (e.g. `User`, `Blog.Post`)
-- **Attributes** — comma-separated `name:type` pairs
 
 ### Options
 
-| Flag | Description |
-|------|-------------|
-| `--domain <Module>` | Domain module to include. Auto-prefixes the resource name (e.g. `--domain MyApp.Domain` with name `User` produces `MyApp.Domain.User`). |
-| `--resource <Module>` | Fully-qualified resource module name. Overrides the positional name argument entirely. |
+| Option | Description |
+|--------|-------------|
+| `--domain` | Domain module (auto-prefixes resource name) |
+| `--resource` | Fully-qualified resource module name |
 
 ### Supported Types
 
-Any valid Ash type is accepted. Common choices:
-
-| Type | CQL mapping |
-|------|-------------|
-| `:uuid` | UUID |
+| Ash Type | CQL Type |
+|----------|----------|
 | `:string` | TEXT |
-| `:integer` (or `:int`) | BIGINT |
+| `:integer` | BIGINT |
+| `:uuid` | UUID |
 | `:boolean` | BOOLEAN |
-| `:utc_datetime` | TIMESTAMP |
-| `:date` | DATE |
 | `:float` | DOUBLE |
 | `:decimal` | DECIMAL |
+| `:date` | DATE |
+| `:time` | TIME |
+| `:utc_datetime` | TIMESTAMP |
+| `:naive_datetime` | TIMESTAMP |
+| `:binary` | BLOB |
 
 ### Examples
 
 ```bash
-# Simple resource (no domain)
-mix ash_scylla.new_template User email:string, name:string, age:int
+# Simple resource
+mix ash_scylla.new_template User user_id:uuid, name:string, age:int
 
-# Resource with domain — module becomes MyApp.Domain.User
+# With domain
 mix ash_scylla.new_template User name:string --domain MyApp.Domain
 
-# Resource with fully-qualified name — module becomes MyApp.Games.User
-mix ash_scylla.new_template User name:string --resource MyApp.Games.User
-
-# With module nesting
-mix ash_scylla.new_template Blog.Post title:string, body:string, published:boolean
-
-# Many attributes
-mix ash_scylla.new_template Sensor sensor_id:uuid, temperature:float, location:string, recorded_at:utc_datetime
+# Fully-qualified name
+mix ash_scylla.new_template User name:string --resource MyApp.Domain.User
 ```
 
 ### Generated Output with `--domain`
 
-When `--domain` is provided, the generated resource includes the `domain` option:
-
-```elixir
+```ruby
+# lib/my_app/resources/user.ex
 defmodule MyApp.Domain.User do
   use Ash.Resource,
     data_layer: AshScylla.DataLayer,
-    repo: MyApp.Repo,
     domain: MyApp.Domain
+
+  ash_scylla do
+    table "users"
+  end
 
   attributes do
     uuid_primary_key :id
@@ -257,19 +277,6 @@ defmodule MyApp.Domain.User do
 
   actions do
     defaults [:create, :read, :update, :destroy]
-  end
-end
-```
-
-After generating, add the resource to your domain and customize with primary keys, actions, and ScyllaDB-specific options:
-
-```elixir
-# Already configured with domain when using --domain flag:
-defmodule MyApp.Domain do
-  use Ash.Domain
-
-  resources do
-    resource MyApp.Domain.User
   end
 end
 ```
@@ -281,63 +288,60 @@ end
 ### Create
 
 ```elixir
-# Simple create
-{:ok, user} = MyApp.User
-  |> Ash.Changeset.for_create(:create, %{
-    name: "John Doe",
-    email: "john@example.com",
-    age: 30
-  })
+# Single record
+{:ok, user} = Ash.create(MyApp.User, %{name: "Alice", email: "alice@example.com"})
+
+# With changeset
+{:ok, user} =
+  MyApp.User
+  |> Ash.Changeset.for_create(:create, %{name: "Alice", email: "alice@example.com"})
   |> Ash.create()
 
-# Bulk create (uses BATCH internally)
-users_data = [
-  %{name: "Alice", email: "alice@example.com"},
-  %{name: "Bob", email: "bob@example.com"}
-]
-
-{:ok, users} = users_data
-  |> Enum.map(fn attrs -> Ash.Changeset.for_create(MyApp.User, :create, attrs) end)
-  |> Ash.bulk_create(MyApp.User, :create)
+# Bulk create (uses BATCH)
+{:ok, users} = Ash.bulk_create(user_data_list, MyApp.User, :create)
 ```
 
 ### Read
 
 ```elixir
-# Read all
-users = MyApp.User |> Ash.read()
+# All records
+users = Ash.read(MyApp.User)
 
-# Read one by primary key
-{:ok, user} = MyApp.User
-  |> Ash.Query.filter(id == "some-uuid")
+# With filter
+{:ok, user} =
+  MyApp.User
+  |> Ash.Query.filter(email == "alice@example.com")
   |> Ash.read_one()
 
-# Read with filters
-active_users = MyApp.User
-  |> Ash.Query.filter(status == "active" and age >= 18)
-  |> Ash.read()
-
-# Select specific fields
-names = MyApp.User
-  |> Ash.Query.select([:name, :email])
-  |> Ash.read()
+# With domain
+users = MyApp.Domain.read_users!()
 ```
 
 ### Update
 
 ```elixir
-{:ok, updated_user} = user
-  |> Ash.Changeset.for_update(:update, %{
-    name: "John Smith",
-    age: 31
-  })
+# Single record
+{:ok, updated} =
+  user
+  |> Ash.Changeset.for_update(:update, %{name: "Alice Smith"})
   |> Ash.update()
+
+# Bulk update (via query)
+MyApp.User
+|> Ash.Query.filter(status: "pending")
+|> Ash.update!(%{status: "active"})
 ```
 
 ### Delete
 
 ```elixir
-:ok = user |> Ash.destroy()
+# Single record
+:ok = Ash.destroy(user)
+
+# Bulk delete (via query)
+MyApp.User
+|> Ash.Query.filter(status: "inactive")
+|> Ash.destroy!()
 ```
 
 ---
@@ -346,119 +350,110 @@ names = MyApp.User
 
 ### Filter Operators
 
-| Operator | Description | Example |
-|----------|-------------|---------|
-| `==` | Equality | `age == 30` |
-| `!=` | Not equal | `status != "inactive"` |
-| `>` | Greater than | `age > 18` |
-| `>=` | Greater or equal | `age >= 21` |
-| `<` | Less than | `price < 100` |
-| `<=` | Less or equal | `price <= 50` |
-| `in` | In list | `status in ["active", "pending"]` |
+| Operator | Example |
+|----------|---------|
+| `==` | `Ash.Query.filter(email == "user@example.com")` |
+| `!=` | `Ash.Query.filter(status != "inactive")` |
+| `>` | `Ash.Query.filter(age > 18)` |
+| `>=` | `Ash.Query.filter(price >= 100)` |
+| `<` | `Ash.Query.filter(age < 65)` |
+| `<=` | `Ash.Query.filter(price <= 50)` |
+| `in` | `Ash.Query.filter(status in ["active", "pending"])` |
+| `contains` | `Ash.Query.filter(tags contains "elixir")` |
+| `is_nil` | `Ash.Query.filter(email is_nil true)` |
 
 ### Combining Filters
 
 ```elixir
-# AND conditions
-users = MyApp.User
-  |> Ash.Query.filter(status == "active" and age >= 18)
-  |> Ash.read()
+# AND (default)
+MyApp.User
+|> Ash.Query.filter(status: "active")
+|> Ash.Query.filter(age > 18)
 
-# OR conditions (use multiple queries for complex cases)
-active_or_admin = MyApp.User
-  |> Ash.Query.filter(status == "active" or role == "admin")
-  |> Ash.read()
+# OR (rewritten to IN where possible)
+import Ash.Query
+MyApp.User
+|> Ash.Query.filter(status == "active" or status == "pending")
 ```
 
 ### Sorting and Pagination
 
 ```elixir
-# Sort by single field
-users = MyApp.User
-  |> Ash.Query.sort(:name)
-  |> Ash.read()
+# Sort by clustering column (within partition)
+MyApp.User
+|> Ash.Query.sort(:name, :asc)
+|> Ash.read!()
 
-# Sort by multiple fields
-users = MyApp.User
-  |> Ash.Query.sort([:status, :name])
-  |> Ash.read()
+# Keyset pagination (default, recommended)
+MyApp.User
+|> Ash.Query.limit(10)
+|> Ash.read!()
 
-# Limit results
-recent_users = MyApp.User
-  |> Ash.Query.sort(inserted_at: :desc)
-  |> Ash.Query.limit(10)
-  |> Ash.read()
+# Offset raises an error
+MyApp.User
+|> Ash.Query.offset(10)
+# => ** (RuntimeError) OFFSET is not supported in ScyllaDB/Cassandra. Use keyset pagination instead.
 ```
 
 ---
 
 ## Data Modeling Best Practices
 
-### 1. Query-First Design 🎯
+### 1. Query-First Design
 
-Design tables around your queries, not the other way around:
+Design your tables around your queries:
 
 ```elixir
-# Query: "Get all posts by author"
-defmodule MyApp.Post do
+defmodule MyApp.User do
   attributes do
-    attribute :author_id, :uuid, primary_key?: true  # Partition key
-    attribute :post_id, :uuid, primary_key?: true     # Clustering key
-    attribute :title, :string
-    attribute :content, :string
+    attribute :email, :string, primary_key?: true  # Partition key
+    attribute :name, :string
   end
 end
 
-# Efficient query by partition key
-posts = MyApp.Post
-  |> Ash.Query.filter(author_id == "author-uuid")
-  |> Ash.read()
+# Query by partition key (efficient)
+MyApp.User
+|> Ash.Query.filter(email == "user@example.com")
+|> Ash.read_one()
 ```
 
-### 2. Denormalization is Normal 📦
+### 2. Denormalization is Normal
 
-Duplicate data to support different query patterns:
+Duplicate data across tables for different query patterns:
 
 ```elixir
-# Table 1: Posts by author
 defmodule MyApp.PostByAuthor do
   attributes do
     attribute :author_id, :uuid, primary_key?: true
     attribute :post_id, :uuid, primary_key?: true
     attribute :title, :string
-    attribute :author_name, :string  # Denormalized
+    attribute :content, :string
   end
 end
 
-# Table 2: Posts by date (different query pattern)
 defmodule MyApp.PostByDate do
   attributes do
     attribute :date, :date, primary_key?: true
     attribute :post_id, :uuid, primary_key?: true
     attribute :title, :string
-    attribute :author_name, :string
+    attribute :author_name, :string  # Denormalized
   end
 end
 ```
 
-### 3. Choosing Partition Keys 🔑
+### 3. Choosing Partition Keys
 
-**Good partition keys:**
-- High cardinality (many unique values)
-- Evenly distributed
-- Match your query patterns
+- **High cardinality**: Distribute data evenly
+- **Query patterns**: Support your most common queries
+- **Avoid hotspots**: Don't use low-cardinality partition keys
 
 ```elixir
-# Good: UUID has high cardinality
+# Good: User ID has high cardinality
 attribute :user_id, :uuid, primary_key?: true
 
-# Good: email is unique and high cardinality
-attribute :email, :string, primary_key?: true
+# Avoid: Status has low cardinality (creates hotspots)
+attribute :status, :string, primary_key?: true  # Don't do this
 ```
-
-**Avoid:**
-- Low cardinality (status, type, boolean)
-- Timestamps (creates hotspots)
 
 ---
 
@@ -480,30 +475,19 @@ defmodule MyApp.CachedData do
 end
 ```
 
-**Consistency Level Guide:**
-
-| Level | Description | Use Case |
-|-------|-------------|----------|
-| `:any` | Any node response | Fastest, lowest consistency |
-| `:one` | At least one replica | Fast reads/writes |
-| `:quorum` | Majority of replicas | Balanced speed/consistency |
-| `:all` | All replicas | Strongest consistency, slowest |
+Available levels: `:any`, `:one`, `:two`, `:three`, `:quorum`, `:all`, `:local_quorum`
 
 ### TTL (Time To Live)
 
 ```elixir
 defmodule MyApp.Session do
-  use Ash.Resource,
-    data_layer: AshScylla.DataLayer
-
   ash_scylla do
-    ttl 3600  # Expire after 1 hour (in seconds)
+    ttl 3600  # Expire after 1 hour
   end
 
   attributes do
-    uuid_primary_key :id
-    attribute :token, :string
-    attribute :user_id, :uuid
+    attribute :user_id, :uuid, primary_key?: true
+    attribute :data, :string
   end
 end
 ```
@@ -513,10 +497,9 @@ end
 ```elixir
 defmodule MyApp.User do
   attributes do
-    uuid_primary_key :id
-    attribute :name, :string
-    attribute :tags, {:array, :string}      # LIST type
-    attribute :metadata, :map               # MAP type
+    attribute :tags, {:array, :string}  # LIST<TEXT>
+    attribute :scores, {:array, :integer}  # LIST<BIGINT>
+    attribute :metadata, :map  # MAP<TEXT, TEXT>
   end
 end
 ```
@@ -526,22 +509,14 @@ end
 ```elixir
 defmodule MyApp.User do
   ash_scylla do
-    # Single column index
-    secondary_index :email
-
-    # Composite index
-    secondary_index [:name, :age]
-
-    # Custom index name
-    secondary_index :status, name: "idx_user_status"
+    secondary_index :email                    # Single column
+    secondary_index [:name, :age]             # Multi-column (separate indexes)
+    secondary_index :status, name: "idx_status"  # Custom name
   end
 end
 ```
 
-**Important Notes:**
-- Best for low-cardinality columns
-- Equality checks only (`==`)
-- Adds overhead to writes
+> **Note:** ScyllaDB OSS doesn't support multi-column secondary indexes. AshScylla generates separate single-column indexes.
 
 ### Materialized Views
 
@@ -552,12 +527,18 @@ defmodule MyApp.User do
       primary_key: [:email, :id],
       include_columns: [:name, :age],
       clustering_order: [id: :desc]
-
-    materialized_view :users_by_age,
-      primary_key: [:age, :id],
-      include_columns: [:name, :email]
   end
 end
+```
+
+Generates:
+```sql
+CREATE MATERIALIZED VIEW IF NOT EXISTS users_by_email
+AS SELECT id, email, name, age
+FROM users
+WHERE email IS NOT NULL AND id IS NOT NULL
+PRIMARY KEY (email, id)
+WITH CLUSTERING ORDER BY (id DESC)
 ```
 
 ---
@@ -566,53 +547,85 @@ end
 
 ### Creating Tables
 
-Use `AshScylla.Migrator` to execute raw CQL directly:
+Use `mix ash_scylla.gen` to generate schema migrations from your Ash DSL:
+
+```bash
+# Auto-generate with timestamp-based name
+mix ash_scylla.gen --dev
+
+# With specific module name
+mix ash_scylla.gen AddUserTable
+
+# For a specific resource
+mix ash_scylla.gen --resource MyApp.User
+```
+
+This creates files in `priv/migrations/`:
 
 ```elixir
-# Create keyspace first
-MyApp.Repo.create_keyspace()
+# priv/migrations/20260615155440_schema.ex
+defmodule MyApp.Migrations.Schema20260615155440 do
+  use AshScylla.Schema
 
-# Create tables and indexes
-AshScylla.Migrator.run!(MyApp.Repo.nodes(), [
-  """
-  CREATE TABLE IF NOT EXISTS users (
-    id UUID PRIMARY KEY,
-    name TEXT,
-    email TEXT,
-    age BIGINT,
-    status TEXT,
-    tags LIST<TEXT>,
-    metadata MAP<TEXT, TEXT>
-  )
-  """,
-  "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)",
-  "CREATE INDEX IF NOT EXISTS idx_users_status ON users (status)"
-])
+  def change do
+    [
+      %AshScylla.Schema{
+        domain: MyApp.Domain,
+        resources: [
+          %AshScylla.Schema.Resource{
+            name: :users,
+            statements: [
+              "CREATE TABLE IF NOT EXISTS users (id UUID PRIMARY KEY, name TEXT, email TEXT)",
+              "CREATE INDEX IF NOT EXISTS idx_users_email ON users (email)"
+            ]
+          }
+        ]
+      }
+    ]
+  end
+end
 ```
 
 ### Using AshScylla.Migration Helpers
 
 ```elixir
-# Generate CQL from resource definitions
-AshScylla.Migrator.run!(MyApp.Repo.nodes(), [
-  AshScylla.Migration.create_table_cql(MyApp.User),
-  AshScylla.Migration.create_secondary_indexes_cql(MyApp.User)
-] |> List.flatten())
+defmodule MyApp.Repo.Migrations.CreateUsers do
+  def change do
+    AshScylla.Migration.create_table_cql(MyApp.User)
+    |> then(&AshScylla.Migrator.run!/3)
+  end
+end
 ```
 
 ### Creating User Defined Types
 
 ```elixir
-AshScylla.Migrator.run!(MyApp.Repo.nodes(), [
-  """
-  CREATE TYPE IF NOT EXISTS address (
-    street TEXT,
-    city TEXT,
-    state TEXT,
-    zip TEXT
-  )
-  """
-])
+defmodule MyApp.Repo.Migrations.CreateAddressType do
+  def change do
+    AshScylla.Migration.create_type("address",
+      city: :text,
+      street: :text,
+      zip: :text
+    )
+    |> then(&AshScylla.Migrator.run!/3)
+  end
+end
+```
+
+### Running Migrations
+
+```bash
+# Migrate all resources and schema files
+mix ash_scylla.migrate
+
+# Migrate specific resource
+mix ash_scylla.migrate --resource MyApp.User
+
+# Dry run (show statements without executing)
+mix ash_scylla.migrate --dry-run
+
+# Only schema files from priv/migrations
+mix ash_scylla.migrate --schemas-only
 ```
 
 ---
@@ -622,17 +635,15 @@ AshScylla.Migrator.run!(MyApp.Repo.nodes(), [
 ### 1. Use Appropriate Consistency Levels
 
 ```elixir
-# Fast reads for non-critical data
 defmodule MyApp.PageView do
   ash_scylla do
-    consistency :one
+    consistency :one  # Fast writes, eventual consistency is fine
   end
 end
 
-# Strong consistency for critical data
 defmodule MyApp.FinancialTransaction do
   ash_scylla do
-    consistency :quorum
+    consistency :quorum  # Strong consistency required
   end
 end
 ```
@@ -641,34 +652,47 @@ end
 
 ```elixir
 config :my_app, MyApp.Repo,
-  nodes: ["scylla-1:9042", "scylla-2:9042"],
-  pool_size: 50,                    # Connections per node
-  request_timeout: 300_000,         # 5 minutes for complex queries
+  pool_size: 50,                # Connections per node
+  request_timeout: 300_000,     # Query timeout (ms)
   connect_timeout: 10_000
 ```
 
-**Pool Size Guidelines:**
-- Development: 5-10
-- Production: 25-100 (based on load)
+**Pool Size Formula:**
+```
+pool_size = num_nodes * num_cores_per_node
+```
 
 ### 3. Avoid Expensive Queries
 
-```elixir
-# DON'T: Full table scan without partition key
-MyApp.User |> Ash.read()  # Inefficient
-
-# DO: Query by partition key
-MyApp.User
-  |> Ash.Query.filter(email == "user@example.com")
-  |> Ash.read()
-```
+- Use primary key queries when possible
+- Create secondary indexes for non-primary key queries
+- Use materialized views for alternative query patterns
+- Avoid ALLOW FILTERING (raises error by default)
+- Use BATCH statements for multiple operations
 
 ### 4. Batch Operations
 
 ```elixir
-# Use bulk_create for multiple inserts
-{:ok, _users} = user_data_list
-  |> Ash.bulk_create(MyApp.User, :create)
+# Synchronous batch
+statements = [
+  {"INSERT INTO users (id, name) VALUES (?, ?)", [id1, "Alice"]},
+  {"INSERT INTO users (id, name) VALUES (?, ?)", [id2, "Bob"]}
+]
+AshScylla.DataLayer.Batch.batch_insert(repo, statements)
+
+# Async partition-aware batch (recommended for large datasets)
+AshScylla.DataLayer.Batch.batch_insert_async(repo, statements, max_concurrency: 8)
+```
+
+### 5. Prepared Statement Caching
+
+Enable for high-throughput workloads:
+
+```elixir
+children = [
+  AshScylla.PreparedStatementCache,
+  # ...
+]
 ```
 
 ---
@@ -680,48 +704,52 @@ MyApp.User
 ```elixir
 defmodule MyApp.Metric do
   use Ash.Resource,
-    data_layer: AshScylla.DataLayer
+    data_layer: AshScylla.DataLayer,
+    domain: MyApp.Domain
 
-  attributes do
-    attribute :metric_name, :string, primary_key?: true
-    attribute :timestamp, :utc_datetime, primary_key?: true
-    attribute :value, :float
-    attribute :tags, :map
+  ash_scylla do
+    table "metrics"
   end
 
-  actions do
-    defaults [:create, :read, :update, :destroy]
+  attributes do
+    attribute :sensor_id, :uuid, primary_key?: true
+    attribute :timestamp, :utc_datetime, primary_key?: true
+    attribute :value, :float
+    attribute :unit, :string
   end
 end
 
-# Query last 24 hours
-metrics = MyApp.Metric
-  |> Ash.Query.filter(
-    metric_name == "cpu_usage" and
-    timestamp >= ~U[2024-01-01 00:00:00Z] and
-    timestamp <= ~U[2024-01-02 00:00:00Z]
-  )
-  |> Ash.Query.sort(timestamp: :desc)
-  |> Ash.read()
+# Query recent metrics
+MyApp.Metric
+|> Ash.Query.filter(sensor_id: sensor_id)
+|> Ash.Query.sort(timestamp: :desc)
+|> Ash.Query.limit(100)
+|> Ash.read!()
 ```
 
 ### Counters with Materialized Views
 
 ```elixir
-# Main table
 defmodule MyApp.PageView do
   attributes do
-    attribute :page_id, :string, primary_key?: true
-    attribute :view_date, :date, primary_key?: true
-    attribute :count, :integer
+    attribute :page_id, :uuid, primary_key?: true
+    attribute :user_id, :uuid
+    attribute :viewed_at, :utc_datetime
   end
 end
 
-# Aggregated view
 defmodule MyApp.PageViewCount do
+  use Ash.Resource,
+    data_layer: AshScylla.DataLayer,
+    domain: MyApp.Domain
+
+  ash_scylla do
+    table "page_view_counts"
+  end
+
   attributes do
-    attribute :page_id, :string, primary_key?: true
-    attribute :total_views, :integer
+    attribute :page_id, :uuid, primary_key?: true
+    attribute :count, :integer
   end
 end
 ```
@@ -732,101 +760,48 @@ end
 
 ### Common Issues
 
-**1. Connection Refused**
-```
-** (RuntimeError) Could not connect to ScyllaDB at 127.0.0.1:9042
-```
-- Ensure ScyllaDB is running: `podman ps`
-- Check connection settings in `config/config.exs`
-- Verify firewall/network settings
-
-**2. NoHostAvailableError**
-```
-** (Xandra.NoHostAvailableError) All hosts down
-```
-- Check if ScyllaDB node is accessible
-- Verify `nodes` configuration
-- Check ScyllaDB logs: `podman logs <container_id>`
-
-**3. Invalid Query / Syntax Error**
-```
-** (Xandra.Error) Invalid syntax in CQL query
-```
-- Check CQL syntax in custom queries
-- Verify table/column names exist
-- Run migrations via `AshScylla.Migrator.run!/3`
-
-**4. Read Timeout**
-```
-** (Xandra.Error) Request timed out
-```
-- Increase `request_timeout` in repo config
-- Optimize slow queries
-- Check ScyllaDB performance
-
-**5. Secondary Index Not Used / ALLOW FILTERING Error**
-```
-Cannot execute this query as it might involve data filtering and thus may have unpredictable performance. If you want to execute this query despite the performance unpredictability, use ALLOW FILTERING
-```
-
-This error means you're filtering on a column that is neither part of the primary key nor has a secondary index. You have three options:
-
-**Option A (Recommended): Add a secondary index**
-```elixir
-ash_scylla do
-  secondary_index :game_id
-end
-```
-Then run migrations to create the index.
-
-**Option B: Use a materialized view** for the query pattern:
-```elixir
-ash_scylla do
-  materialized_view :members_by_game,
-    primary_key: [:game_id, :id]
-end
-```
-
-**Option C (NOT recommended for production): Enable `allow_filtering`**
-```elixir
-ash_scylla do
-  allow_filtering true
-end
-```
-This appends `ALLOW FILTERING` to queries, allowing ScyllaDB to execute them. However, this can cause **full table scans** and severe performance issues in production. Only use this for development or small datasets.
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| `Connection refused` | ScyllaDB not running | `podman-compose -f podman-compose.yml up -d` |
+| `Keyspace does not exist` | Keyspace not created | `mix ash_scylla.setup` or `mix ash_scylla.migrate --create-keyspace` |
+| `Table not found` | Migration not run | `mix ash_scylla.migrate` |
+| `Invalid filter` | Non-indexed column filter | Add `secondary_index` or enable `allow_filtering` |
+| `OFFSET not supported` | Used offset query | Use keyset pagination instead |
+| `timeout` | Query too slow | Increase `request_timeout`, add indexes, optimize query |
 
 ### Debugging Tips
 
-**Enable Query Logging:**
+```bash
+# Check ScyllaDB is running
+podman ps
 
-```elixir
-# In config/dev.exs
-config :logger, level: :debug
+# Check ScyllaDB logs
+podman logs ash_scylla_test
 
-# Or in IEx
-Logger.configure(level: :debug)
-```
+# Verify connection
+iex -S mix
+iex> {:ok, conn} = Xandra.start_link(nodes: ["scylla:9042"])
+iex> Xandra.execute(conn, "SELECT release_version FROM system.local")
 
-**Check Generated CQL:**
-
-```elixir
-# Use AshScylla.DataLayer.QueryBuilder to inspect queries
-query = AshScylla.DataLayer.QueryBuilder.build_optimized_query(data_layer_struct)
-IO.inspect(query, label: "Generated CQL")
-```
-
-**Test Connection:**
-
-```elixir
-# In IEx
-MyApp.Repo.query("SELECT release_version FROM system.local")
+# Inspect generated CQL
+iex> alias AshScylla.DataLayer.QueryBuilder
+iex> query = %AshScylla.DataLayer{resource: MyApp.User, repo: MyApp.Repo, table: "users", filters: [%{operator: :eq, left: %{name: :email}, right: %{value: "test@example.com"}}]}
+iex> QueryBuilder.build_optimized_query(query)
 ```
 
 ---
 
 ## Additional Resources
 
-- [Ash Framework Documentation](https://ash-hq.org/docs)
-- [ScyllaDB Documentation](https://docs.scylladb.com/)
-- [Xandra GitHub](https://github.com/whatyouhide/xandra)
-- [CQL Reference](https://docs.scylladb.com/cql/)
+- **[Development Guide](DEV_GUIDE.md)** — Dev container setup and development workflow
+- **[Production Guide](PRODUCTION_GUIDE.md)** — Multi-node cluster deployment and operations
+- **[Implementation Summary](IMPLEMENTATION_SUMMARY.md)** — Technical architecture details
+- **[Error Handling](ERROR_HANDLING.md)** — Error types and handling strategies
+- **[Changelog](CHANGELOG.md)** — Version history and release notes
+- **[API Documentation](https://hexdocs.pm/ash_scylla)** — Module documentation
+
+---
+
+## License
+
+Apache License 2.0 - see [LICENSE](LICENSE) file for details.

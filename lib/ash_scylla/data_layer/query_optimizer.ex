@@ -33,6 +33,15 @@ defmodule AshScylla.DataLayer.QueryOptimizer do
         page_size: 100,
         speculative_retry: :99percentile
       ])
+
+  ## Valid Consistency Levels
+
+  `:any`, `:one`, `:two`, `:three`, `:quorum`, `:all`,
+  `:local_quorum`, `:each_quorum`, `:serial`, `:local_serial`, `:local_one`
+
+  ## Speculative Retry Policies
+
+  `:none`, `:99percentile`, `:custom`
   """
 
   require Logger

@@ -21,6 +21,15 @@ defmodule AshScylla.DataLayer.Udt do
 
   ScyllaDB UDTs are represented as tuples in Xandra. A UDT
   `{field1_val, field2_val}` maps to a map `%{field1: val1, field2: val2}`.
+
+  ## Encoding
+
+  UDTs are encoded as tuples ordered by their schema field definition.
+  The schema is derived from the resource's `@dsl` UDT configuration.
+
+  ## Decoding
+
+  Tuples are decoded back to maps using field names from the UDT schema.
   """
 
   @type udt_field_spec :: {atom(), atom()}

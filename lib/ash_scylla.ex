@@ -44,6 +44,14 @@ defmodule AshScylla do
       use Ash.Resource,
         data_layer: AshScylla.DataLayer,
         repo: MyApp.Repo
+
+  ## Top-Level Functions
+
+  - `verify/2` — Verify repo connection, keyspace, and resource tables
+  - `verify!/2` — Same as `verify/2` but raises on failure
+  - `migrate/2` — Run migrations for all resources
+  - `create_keyspace/2` — Create the configured keyspace
+  - `version/0` — Return the AshScylla version string
   """
 
   defp build_verify_report(

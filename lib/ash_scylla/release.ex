@@ -61,6 +61,17 @@ defmodule AshScylla.Release do
       config :my_app, MyApp.Repo,
         nodes: ["127.0.0.1:9042"],
         keyspace: "my_app_prod"
+
+  ## Migration Flow
+
+  `migrate/3` auto-discovers resources via `AshScylla.MixHelpers.find_all_resources/0`,
+  then calls `AshScylla.DataLayer.SchemaMigration.plan/2` and `migrate/2` for each.
+  Supports `:dry_run`, `:create_keyspace`, and `:resources` options.
+
+  ## Rollback
+
+  CQL has no transactional DDL rollback. The `rollback/3` function logs a
+  warning — users must implement custom rollback logic (DROP TABLE, etc.).
   """
 
   require Logger

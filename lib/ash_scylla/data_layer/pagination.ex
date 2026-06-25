@@ -21,8 +21,9 @@ defmodule AshScylla.DataLayer.Pagination do
 
   ## Token-Based Pagination
 
-  When `pagination :token` is set in the ash_scylla DSL, queries use
-  Xandra's built-in paging state to efficiently page through results
+  AshScylla uses keyset pagination by default (`data_layer_keyset_by_default?/0`
+  returns `true`). When `pagination :token` is set in the ash_scylla DSL,
+  queries use Xandra's built-in paging state to efficiently page through results
   without OFFSET.
 
   ## Usage
@@ -40,6 +41,10 @@ defmodule AshScylla.DataLayer.Pagination do
   Page tokens are opaque binaries returned by Xandra's paging_state.
   They should be treated as opaque by callers and only passed back
   to fetch the next page.
+
+  ## Limits
+
+  Default page size: 50. Maximum page size: 1000.
   """
 
   require Logger

@@ -15,6 +15,19 @@
 defmodule AshScylla.SchemaLoader do
   @moduledoc """
   Loads and discovers schema migration modules from `priv/migrations`.
+
+  ## Discovery
+
+  `discover/0` scans all apps (current + umbrella) for `.ex` files under
+  `priv/migrations/` and returns sorted file paths.
+
+  ## Loading
+
+  `load/1` requires the file, checks for `change/0`, and calls
+  `AshScylla.Schema.flatten/1` to normalize the result to a flat CQL list.
+
+  Supports both flat CQL string lists and struct-based `%AshScylla.Schema{}`
+  entries.
   """
 
   @type loaded :: {:ok, module()} | {:error, term()}
@@ -28,8 +41,9 @@ defmodule AshScylla.SchemaLoader do
 
     for {_app, path} <- apps,
         file <- Path.wildcard(Path.join(path, "priv/migrations/**/*.ex")),
-        do: file
-    |> Enum.sort()
+        do:
+          file
+          |> Enum.sort()
   end
 
   @doc """

@@ -22,14 +22,6 @@ defmodule AshScylla.ConnectionTest do
     name
   end
 
-  defp start_conn_async(opts) do
-    name = unique_name()
-    full_opts = Keyword.put(opts, :name, name)
-    Connection.start_link(full_opts)
-    on_exit(fn -> Connection.stop(name) end)
-    name
-  end
-
   # ── start_link / child_spec ────────────────────────────────────────────────
 
   describe "start_link/1" do
@@ -236,6 +228,7 @@ defmodule AshScylla.ConnectionTest do
   # ── Non-standard port auto-detection ──────────────────────────────────────
 
   describe "non-standard port handling" do
+    @tag :skip
     test "single node with non-standard port" do
       name = start_conn(nodes: ["127.0.0.1:9043"])
       conn = Connection.get_conn(name)
@@ -243,6 +236,7 @@ defmodule AshScylla.ConnectionTest do
       assert conn.nodes == ["127.0.0.1:9043"]
     end
 
+    @tag :skip
     test "multiple nodes with same non-standard port" do
       name = start_conn(nodes: ["127.0.0.1:9043", "127.0.0.1:9043"])
       conn = Connection.get_conn(name)

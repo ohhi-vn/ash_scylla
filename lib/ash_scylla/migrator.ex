@@ -21,26 +21,27 @@ defmodule AshScylla.Migrator do
 
   ## Usage
 
-      # Start a temporary connection for migrations:
+  Start a temporary connection for migrations:
+
       AshScylla.Migrator.run("127.0.0.1:9042", [
-        \"\"\"
-        CREATE KEYSPACE IF NOT EXISTS my_app
-        WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}
-        \"\"\",
-        \"\"\"
-        CREATE TABLE IF NOT EXISTS my_app.users (
-          id UUID PRIMARY KEY,
-          name TEXT
-        )
-        \"\"\"
+        "CREATE KEYSPACE IF NOT EXISTS my_app " <>
+        "WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}",
+        "CREATE TABLE IF NOT EXISTS my_app.users (id UUID PRIMARY KEY, name TEXT)"
       ])
 
-  ## In a Mix task or release task:
+  In a Mix task or release task:
 
       AshScylla.Migrator.run!(nodes, statements,
         keyspace: "my_app",
         connect_timeout: 10_000
       )
+
+  ## Functions
+
+  - `run/3` — Start temp connection, execute statements, stop connection
+  - `run!/3` — Same as `run/3` but raises on error
+  - `run_on/2` — Execute against an existing named connection
+  - `run_on!/2` — Same as `run_on/2` but raises on error
   """
 
   require Logger

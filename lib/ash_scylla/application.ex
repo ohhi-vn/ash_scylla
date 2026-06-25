@@ -13,7 +13,13 @@
 # limitations under the License.
 
 defmodule AshScylla.Application do
-  @moduledoc false
+  @moduledoc """
+  Application callback for AshScylla.
+
+  Creates the `:ash_scylla_repo_cache` ETS table used by `AshScylla.Repo`
+  for prepared statement caching and repo configuration look-up.
+  Starts the top-level `AshScylla.Supervisor`.
+  """
 
   use Application
 

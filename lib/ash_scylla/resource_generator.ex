@@ -1,6 +1,19 @@
 defmodule AshScylla.ResourceGenerator do
   @moduledoc """
   Generates starter Ash Resource modules for AshScylla.
+
+  Used by `mix ash_scylla.new_template` to scaffold resource files under
+  `lib/<app>/resources/<resource>.ex`.
+
+  ## Arguments
+
+  Accepts a resource name (optionally domain-prefixed) and a comma-separated
+  list of `name:type` attribute pairs.
+
+  ## Options
+
+  - `:domain` — Domain module to include in the generated resource
+  - `:resource` — Fully-qualified resource module name (overrides positional)
   """
 
   @resource_name_regex ~r/^[A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*$/
@@ -255,6 +268,7 @@ defmodule AshScylla.ResourceGenerator do
       case pk_attrs do
         [] ->
           {[], attributes}
+
         [pk | rest] ->
           {[pk], rest ++ regular_attrs}
       end
@@ -275,6 +289,7 @@ defmodule AshScylla.ResourceGenerator do
       case pk_attrs do
         [{name, _type}] ->
           "PRIMARY KEY (#{name})"
+
         [] ->
           ""
       end

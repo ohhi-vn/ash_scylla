@@ -38,6 +38,11 @@ defmodule AshScylla.DataLayer.Compression do
 
       # Generate table compression CQL
       AshScylla.DataLayer.Compression.table_compression_cql(:lz4)
+
+  ## Threshold
+
+  Compression is only applied to values larger than 1024 bytes by default.
+  Adjust with the `:threshold` option.
   """
 
   @default_threshold 1024

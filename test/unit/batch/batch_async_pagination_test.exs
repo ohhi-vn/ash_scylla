@@ -62,11 +62,13 @@ defmodule AshScylla.DataLayer.AsyncBatchTest do
 
   describe "batch_insert_async/3" do
     setup do
-      case TrackingRepo.start_link() do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
+      # Ensure a fresh Agent is running for each test
+      case Process.whereis(TrackingRepo) do
+        nil -> :ok
+        pid -> Agent.stop(pid)
       end
 
+      {:ok, _pid} = TrackingRepo.start_link()
       :ok
     end
 

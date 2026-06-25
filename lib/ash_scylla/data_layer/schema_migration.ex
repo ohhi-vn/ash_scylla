@@ -34,6 +34,14 @@ defmodule AshScylla.DataLayer.SchemaMigration do
 
       # Check what would change without executing
       AshScylla.DataLayer.SchemaMigration.plan(MyApp.User, repo)
+
+  ## Migration Flow
+
+  1. Fetch live table/index/view schema from `system_schema`
+  2. Compare against Ash resource attributes and DSL config
+  3. Generate `CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ADD`,
+     `CREATE INDEX IF NOT EXISTS`, `CREATE MATERIALIZED VIEW IF NOT EXISTS`
+  4. Execute via `AshScylla.Migrator.run!/3`
   """
 
   require Logger

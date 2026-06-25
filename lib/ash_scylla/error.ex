@@ -20,6 +20,16 @@ defmodule AshScylla.Error do
 
   This module provides a unified interface for error handling across the AshScylla
   library, including ScyllaDB-specific errors, configuration errors, and query errors.
+
+  ## Functions
+
+  - `wrap_xandra_error/1` — Convert Xandra errors to `ScyllaError`
+  - `format_error/1` — Format any error for display
+  - `retryable?/1` — Check if an error is retryable
+  - `retry_delay/1` — Get suggested retry delay in milliseconds
+
+  See `AshScylla.Error.ScyllaError` for the structured error type with
+  categorization and suggestions.
   """
 
   require Logger

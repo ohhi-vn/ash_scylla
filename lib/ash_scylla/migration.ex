@@ -39,6 +39,16 @@ defmodule AshScylla.Migration do
   This function reads compile-time module attributes set by the Ash resource DSL.
   For runtime use, prefer `Ash.Resource.Info.attributes/1` combined with
   `AshScylla.DataLayer.Dsl.table/1`.
+
+  ## Functions
+
+  - `create_table_cql/1` — Generate `CREATE TABLE IF NOT EXISTS` CQL
+  - `create_secondary_indexes_cql/1` — Generate `CREATE INDEX IF NOT EXISTS` CQL
+  - `create_type/2` — Generate `CREATE TYPE IF NOT EXISTS` CQL
+  - `drop_type/1` — Generate `DROP TYPE IF NOT EXISTS` CQL
+  - `alter_type_cql/3` — Generate `ALTER TYPE` CQL (add/rename fields)
+  - `quote_name/1` — Safely quote CQL identifiers
+  - `ash_type_to_cql_type/2` — Convert Ash type to CQL type string
   """
 
   @doc """
@@ -253,9 +263,9 @@ defmodule AshScylla.Migration do
 
   # Quotes an identifier for use in CQL, protecting reserved words.
   @spec quote_name(atom() | String.t()) :: String.t()
-  defp quote_name(name) when is_atom(name), do: quote_name(Atom.to_string(name))
+  def quote_name(name) when is_atom(name), do: quote_name(Atom.to_string(name))
 
-  defp quote_name(name) when is_binary(name) do
+  def quote_name(name) when is_binary(name) do
     if String.contains?(name, "\"") do
       # Escape embedded double quotes by doubling them (CQL standard)
       escaped = String.replace(name, "\"", "\"\"")

@@ -34,6 +34,11 @@ defmodule AshScylla.DataLayer.FilterValidator do
   - IN filter with list values
   - Base filter validation
   - Ash error type integration for better error messages
+
+  ## Skip Condition
+
+  The validator is skipped when `allow_filtering` is enabled on the resource
+  DSL. A warning is logged at runtime in that case.
   """
 
   alias Ash.Resource.Info

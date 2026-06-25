@@ -35,6 +35,13 @@ defmodule AshScylla.DataLayer.Collection do
 
       # Generate a CONTAINS filter
       AshScylla.DataLayer.Collection.contains_cql(:users, :tags, "search_tag")
+
+  ## Xandra Encoding
+
+  - LIST → Elixir list (preserves order, allows duplicates)
+  - SET → Elixir MapSet (unordered, unique)
+  - MAP → Elixir map (key-value pairs)
+  - Frozen → Tuple (immutable, stored as single blob)
   """
 
   @doc """

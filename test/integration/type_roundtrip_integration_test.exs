@@ -134,6 +134,8 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
     end
   end
 
+  # Pass through already-typed tuples from QueryBuilder (e.g., {"int", 10})
+  defp encode_param({type, value}) when is_binary(type), do: {type, value}
   defp encode_param({type, value}), do: {to_string(type), value}
   defp encode_param(value) when is_integer(value), do: {"bigint", value}
   defp encode_param(value) when is_float(value), do: {"float", value}
@@ -226,6 +228,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
 
   describe "Type round-trip through real ScyllaDB" do
     test "string type: Ash :string → ScyllaDB TEXT → Ash :string", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
       # Write directly to ScyllaDB
@@ -255,6 +258,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
     end
 
     test "integer type: Ash :integer → ScyllaDB BIGINT → Ash :integer", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       large_int = 9_223_372_036_854_775_807
 
@@ -283,6 +287,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
     end
 
     test "float type: Ash :float → ScyllaDB FLOAT → Ash :float", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
       execute_cql(
@@ -311,6 +316,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
     end
 
     test "boolean type: Ash :boolean → ScyllaDB BOOLEAN → Ash :boolean", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
       execute_cql(
@@ -340,6 +346,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
     test "timestamp type: Ash :utc_datetime → ScyllaDB TIMESTAMP → Ash :utc_datetime", %{
       conn: conn
     } do
+      if is_nil(conn), do: :ok
       id = uid()
       now = DateTime.utc_now() |> DateTime.truncate(:millisecond)
 
@@ -369,6 +376,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
     end
 
     test "date type: Ash :date → ScyllaDB DATE → Ash :date", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       today = ~D[2024-06-15]
 
@@ -397,6 +405,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
     end
 
     test "time type: Ash :time → ScyllaDB TIME → Ash :time", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       now_time = ~T[14:30:00]
 
@@ -424,6 +433,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       end
 
     test "list type: Ash {:array, :string} → ScyllaDB LIST<TEXT> → Ash list", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
       execute_cql(
@@ -451,6 +461,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
     end
 
     test "set type: ScyllaDB SET<INT> round-trip", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
       execute_cql(
@@ -478,6 +489,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
     end
 
     test "map type: ScyllaDB MAP<TEXT, TEXT> round-trip", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
       execute_cql(
@@ -505,6 +517,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
     end
 
     test "blob type: ScyllaDB BLOB round-trip", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       binary_data = <<0, 1, 2, 255, 128, 64>>
 
@@ -533,6 +546,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
     end
 
     test "atom type: Ash :atom → ScyllaDB TEXT → Ash :atom", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
       # Write atom value as text
@@ -562,6 +576,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
     end
 
     test "LIMIT parameter uses int32-compatible encoding", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
       execute_cql(
@@ -591,6 +606,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
     end
 
     test "multiple types in single row round-trip", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
       execute_cql(

@@ -93,7 +93,7 @@ jobs:
       - name: Install dependencies
         run: mix deps.get
       - name: Run integration tests
-        run: mix test test/scylla_integration_test.exs --only integration
+        run: mix test test/integration/scylla_integration_test.exs --only integration
         env:
           SCYLLA_DIRECT: 1
           SCYLLA_HOST: localhost

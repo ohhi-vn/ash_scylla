@@ -206,6 +206,8 @@ defmodule AshScylla.ScyllaIntegrationTest do
     end
   end
 
+  # Pass through already-typed tuples from QueryBuilder (e.g., {"int", 10})
+  defp encode_param({type, value}) when is_binary(type), do: {type, value}
   defp encode_param({:timestamp, value}), do: {"timestamp", value}
   defp encode_param({:float, value}), do: {"float", value}
   defp encode_param({:double, value}), do: {"double", value}
@@ -386,19 +388,22 @@ defmodule AshScylla.ScyllaIntegrationTest do
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "basic connectivity" do
-    test "system.local", %{conn: c} do
-      assert xq(c, "SELECT now() FROM system.local").num_rows == 1
+    test "system.local", %{conn: conn} do
+      if is_nil(conn), do: :ok
+      assert xq(conn, "SELECT now() FROM system.local").num_rows == 1
     end
 
-    test "keyspace exists", %{conn: c} do
-      assert xq(c, "SELECT keyspace_name FROM system_schema.keyspaces WHERE keyspace_name = ?", [
+    test "keyspace exists", %{conn: conn} do
+      if is_nil(conn), do: :ok
+      assert xq(conn, "SELECT keyspace_name FROM system_schema.keyspaces WHERE keyspace_name = ?", [
                "ash_scylla_test"
              ]).num_rows == 1
     end
 
-    test "tables exist", %{conn: c} do
+    test "tables exist", %{conn: conn} do
+      if is_nil(conn), do: :ok
       tables =
-        xq(c, "SELECT table_name FROM system_schema.tables WHERE keyspace_name = ?", [
+        xq(conn, "SELECT table_name FROM system_schema.tables WHERE keyspace_name = ?", [
           "ash_scylla_test"
         ]).rows
         |> MapSet.new(&hd/1)
@@ -406,10 +411,10 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert "users" in tables and "events" in tables and "counters" in tables
     end
 
-    test "indexes exist", %{conn: c} do
+    test "indexes exist", %{conn: conn} do
+      if is_nil(conn), do: :ok
       names =
-        xq(
-          c,
+        xq(conn,
           "SELECT index_name FROM system_schema.indexes WHERE keyspace_name = ? AND table_name = ?",
           ["ash_scylla_test", "users"]
         ).rows
@@ -425,66 +430,70 @@ defmodule AshScylla.ScyllaIntegrationTest do
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "CRUD operations" do
-    test "insert and select", %{conn: c} do
+    test "insert and select", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
-      xq(
-        c,
+      xq(conn,
         "INSERT INTO ash_scylla_test.users (id, name, email, age, status) VALUES (?, ?, ?, ?, ?)",
         [id, "Alice", "alice@example.com", 30, "active"]
       )
 
-      [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+      [row] = rows_to_maps(xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
       assert row["name"] == "Alice"
       assert row["email"] == "alice@example.com"
       assert row["age"] == 30
       assert row["status"] == "active"
     end
 
-    test "insert and select simple", %{conn: c} do
+    test "insert and select simple", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
-      xq(c, "INSERT INTO ash_scylla_test.users (id, name, age) VALUES (?, ?, ?)", [id, "Bob", 25])
+      xq(conn, "INSERT INTO ash_scylla_test.users (id, name, age) VALUES (?, ?, ?)", [id, "Bob", 25])
 
       [row] =
-        rows_to_maps(xq(c, "SELECT name, age FROM ash_scylla_test.users WHERE id = ?", [id]))
+        rows_to_maps(xq(conn, "SELECT name, age FROM ash_scylla_test.users WHERE id = ?", [id]))
 
       assert row["name"] == "Bob"
       assert row["age"] == 25
     end
 
-    test "update specific columns", %{conn: c} do
+    test "update specific columns", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
-      xq(c, "INSERT INTO ash_scylla_test.users (id, name, age) VALUES (?, ?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.users (id, name, age) VALUES (?, ?, ?)", [
         id,
         "Charlie",
         25
       ])
 
-      xq(c, "UPDATE ash_scylla_test.users SET age = ? WHERE id = ?", [26, id])
-      [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+      xq(conn, "UPDATE ash_scylla_test.users SET age = ? WHERE id = ?", [26, id])
+      [row] = rows_to_maps(xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
       assert row["age"] == 26
       assert row["name"] == "Charlie"
     end
 
-    test "delete a record", %{conn: c} do
+    test "delete a record", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
-      xq(c, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?)", [id, "Delete Me"])
-      xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
-      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
+      xq(conn, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?)", [id, "Delete Me"])
+      xq(conn, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
+      assert xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
     end
 
-    test "insert with timestamp fields", %{conn: c} do
+    test "insert with timestamp fields", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       now = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
 
-      xq(c, "INSERT INTO ash_scylla_test.users (id, name, created_at) VALUES (?, ?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.users (id, name, created_at) VALUES (?, ?, ?)", [
         id,
         "Time User",
         {:timestamp, now}
       ])
 
-      assert xq(c, "SELECT created_at FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows ==
+      assert xq(conn, "SELECT created_at FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows ==
                1
     end
   end
@@ -494,25 +503,25 @@ defmodule AshScylla.ScyllaIntegrationTest do
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "round-trip CRUD" do
-    test "full lifecycle: insert -> select -> update -> select -> delete", %{conn: c} do
+    test "full lifecycle: insert -> select -> update -> select -> delete", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
       # Insert
-      xq(
-        c,
+      xq(conn,
         "INSERT INTO ash_scylla_test.users (id, name, email, age, status) VALUES (?, ?, ?, ?, ?)",
         [id, "Alice", "alice@example.com", 30, "active"]
       )
 
       # Select and verify insert
-      [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+      [row] = rows_to_maps(xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
       assert row["name"] == "Alice"
       assert row["email"] == "alice@example.com"
       assert row["age"] == 30
       assert row["status"] == "active"
 
       # Update
-      xq(c, "UPDATE ash_scylla_test.users SET name = ?, age = ?, status = ? WHERE id = ?", [
+      xq(conn, "UPDATE ash_scylla_test.users SET name = ?, age = ?, status = ? WHERE id = ?", [
         "Alice Updated",
         31,
         "inactive",
@@ -520,7 +529,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
       ])
 
       # Select and verify update
-      [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+      [row] = rows_to_maps(xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
       assert row["name"] == "Alice Updated"
       assert row["age"] == 31
       assert row["status"] == "inactive"
@@ -528,125 +537,121 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert row["email"] == "alice@example.com"
 
       # Delete
-      xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
+      xq(conn, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
 
       # Select and verify deletion
-      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
+      assert xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
     end
 
     test "round-trip with secondary index: insert -> query by index -> update -> re-query -> delete",
-         %{
-           conn: c
-         } do
+         %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       email = "roundtrip_#{id}@example.com"
 
       # Insert
-      xq(
-        c,
+      xq(conn,
         "INSERT INTO ash_scylla_test.users (id, name, email, age, status) VALUES (?, ?, ?, ?, ?)",
         [id, "Bob", email, 25, "active"]
       )
 
       # Query by secondary index (email)
       [row] =
-        rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE email = ?", [email]))
+        rows_to_maps(xq(conn, "SELECT * FROM ash_scylla_test.users WHERE email = ?", [email]))
 
       assert row["name"] == "Bob"
       assert row["id"] == id
 
       # Update indexed column
       new_email = "updated_#{id}@example.com"
-      xq(c, "UPDATE ash_scylla_test.users SET email = ? WHERE id = ?", [new_email, id])
+      xq(conn, "UPDATE ash_scylla_test.users SET email = ? WHERE id = ?", [new_email, id])
 
       # Old email should no longer find the record
-      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE email = ?", [email]).num_rows == 0
+      assert xq(conn, "SELECT * FROM ash_scylla_test.users WHERE email = ?", [email]).num_rows == 0
 
       # New email should find the record
       [row] =
-        rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE email = ?", [new_email]))
+        rows_to_maps(xq(conn, "SELECT * FROM ash_scylla_test.users WHERE email = ?", [new_email]))
 
       assert row["name"] == "Bob"
       assert row["id"] == id
 
       # Delete
-      xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
+      xq(conn, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
 
-      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE email = ?", [new_email]).num_rows ==
+      assert xq(conn, "SELECT * FROM ash_scylla_test.users WHERE email = ?", [new_email]).num_rows ==
                0
     end
 
-    test "round-trip with partial insert (null columns)", %{conn: c} do
+    test "round-trip with partial insert (null columns)", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
       # Insert with only required fields
-      xq(c, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?)", [id, "Sparse"])
+      xq(conn, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?)", [id, "Sparse"])
 
       # Select — null columns should be absent
-      [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+      [row] = rows_to_maps(xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
       assert row["name"] == "Sparse"
       assert row["id"] == id
 
       # Update to fill in previously null columns
-      xq(c, "UPDATE ash_scylla_test.users SET email = ?, age = ? WHERE id = ?", [
+      xq(conn, "UPDATE ash_scylla_test.users SET email = ?, age = ? WHERE id = ?", [
         "sparse@example.com",
         40,
         id
       ])
 
       # Select and verify all columns
-      [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+      [row] = rows_to_maps(xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
       assert row["name"] == "Sparse"
       assert row["email"] == "sparse@example.com"
       assert row["age"] == 40
 
       # Delete
-      xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
-      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
+      xq(conn, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
+      assert xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
     end
 
-    test "round-trip with timestamp: insert -> select -> update timestamp -> select -> delete", %{
-      conn: c
-    } do
+    test "round-trip with timestamp: insert -> select -> update timestamp -> select -> delete",
+         %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       ts1 = DateTime.utc_now() |> DateTime.to_unix(:millisecond)
 
       # Insert with timestamp
-      xq(
-        c,
+      xq(conn,
         "INSERT INTO ash_scylla_test.users (id, name, created_at) VALUES (?, ?, ?)",
         [id, "TimeUser", {:timestamp, ts1}]
       )
 
       # Select and verify timestamp exists
-      [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+      [row] = rows_to_maps(xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
       assert row["name"] == "TimeUser"
       assert row["created_at"] != nil
 
       # Update name, keep timestamp
-      xq(c, "UPDATE ash_scylla_test.users SET name = ? WHERE id = ?", ["TimeUser V2", id])
+      xq(conn, "UPDATE ash_scylla_test.users SET name = ? WHERE id = ?", ["TimeUser V2", id])
 
       # Select and verify both fields
-      [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+      [row] = rows_to_maps(xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
       assert row["name"] == "TimeUser V2"
       assert row["created_at"] != nil
 
       # Delete
-      xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
-      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
+      xq(conn, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
+      assert xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
     end
 
     test "round-trip with status index: insert -> filter by status -> update status -> re-filter -> delete",
-         %{
-           conn: c
-         } do
+         %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       # Use unique test name to avoid pollution from other tests
       test_name = "StatusTest_#{String.slice(id, 0, 8)}"
 
       # Insert with unique name
-      xq(
-        c,
+      xq(conn,
         "INSERT INTO ash_scylla_test.users (id, name, status) VALUES (?, ?, ?)",
         [id, test_name, "active"]
       )
@@ -654,65 +659,61 @@ defmodule AshScylla.ScyllaIntegrationTest do
       # Filter by status index and find our record by unique name
       # Secondary indexes in ScyllaDB are eventually consistent;
       # first verify the row exists via primary key then wait for index
-      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 1,
+      assert xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 1,
              "Row was not inserted successfully"
 
-      assert await_secondary_index(
-               c,
+      assert await_secondary_index(conn,
                "SELECT * FROM ash_scylla_test.users WHERE status = ?",
                ["active"],
                id
              )
 
       # Update status
-      xq(c, "UPDATE ash_scylla_test.users SET status = ? WHERE id = ?", ["archived", id])
+      xq(conn, "UPDATE ash_scylla_test.users SET status = ? WHERE id = ?", ["archived", id])
 
       # Old status should not find it (check by unique name)
       rows =
-        rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE status = ?", ["active"]))
+        rows_to_maps(xq(conn, "SELECT * FROM ash_scylla_test.users WHERE status = ?", ["active"]))
 
       refute Enum.any?(rows, fn r -> r["name"] == test_name end)
 
       # New status should find it (secondary index may need time for the update)
-      assert await_secondary_index(
-               c,
+      assert await_secondary_index(conn,
                "SELECT * FROM ash_scylla_test.users WHERE status = ?",
                ["archived"],
                id
              )
 
       # Delete
-      xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
-      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
+      xq(conn, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
+      assert xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
     end
 
     test "round-trip with status index: insert -> filter by status -> update status -> re-filter -> delete does not leak records to other status queries",
-         %{
-           conn: c
-         } do
+         %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       test_name = "LeakTest_#{String.slice(id, 0, 8)}"
 
-      xq(
-        c,
+      xq(conn,
         "INSERT INTO ash_scylla_test.users (id, name, status) VALUES (?, ?, ?)",
         [id, test_name, "flagged"]
       )
 
       # Wait for the index to catch up
-      assert await_secondary_index(
-               c,
+      assert await_secondary_index(conn,
                "SELECT * FROM ash_scylla_test.users WHERE status = ?",
                ["flagged"],
                id
              )
 
       # Delete
-      xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
-      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
+      xq(conn, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
+      assert xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
     end
 
-    test "multiple round-trips in sequence on different records", %{conn: c} do
+    test "multiple round-trips in sequence on different records", %{conn: conn} do
+      if is_nil(conn), do: :ok
       # Create 5 records, update them all, verify, then delete them all
       records =
         Enum.map(1..5, fn i ->
@@ -722,8 +723,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
       # Insert all
       Enum.each(records, fn {id, name, email, age, status} ->
-        xq(
-          c,
+        xq(conn,
           "INSERT INTO ash_scylla_test.users (id, name, email, age, status) VALUES (?, ?, ?, ?, ?)",
           [id, name, email, age, status]
         )
@@ -731,14 +731,14 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
       # Verify all exist
       Enum.each(records, fn {id, name, _email, age, _status} ->
-        [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+        [row] = rows_to_maps(xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
         assert row["name"] == name
         assert row["age"] == age
       end)
 
       # Update all
       Enum.each(records, fn {id, _name, _email, age, _status} ->
-        xq(c, "UPDATE ash_scylla_test.users SET age = ?, status = ? WHERE id = ?", [
+        xq(conn, "UPDATE ash_scylla_test.users SET age = ?, status = ? WHERE id = ?", [
           age + 100,
           "updated",
           id
@@ -747,41 +747,43 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
       # Verify all updated
       Enum.each(records, fn {id, _name, _email, age, _status} ->
-        [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
+        [row] = rows_to_maps(xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]))
         assert row["age"] == age + 100
         assert row["status"] == "updated"
       end)
 
       # Delete all
       Enum.each(records, fn {id, _, _, _, _} ->
-        xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
+        xq(conn, "DELETE FROM ash_scylla_test.users WHERE id = ?", [id])
       end)
 
       # Verify all deleted
       Enum.each(records, fn {id, _, _, _, _} ->
-        assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
+        assert xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
       end)
     end
 
-    test "delete non-existent record is a no-op", %{conn: c} do
+    test "delete non-existent record is a no-op", %{conn: conn} do
+      if is_nil(conn), do: :ok
       fake_id = uid()
       # First verify the record doesn't exist
-      before_count = xq(c, "SELECT count(*) FROM ash_scylla_test.users").num_rows
+      before_count = xq(conn, "SELECT count(*) FROM ash_scylla_test.users").num_rows
       # Deleting a non-existent record should not raise
-      xq(c, "DELETE FROM ash_scylla_test.users WHERE id = ?", [fake_id])
+      xq(conn, "DELETE FROM ash_scylla_test.users WHERE id = ?", [fake_id])
       # Count should remain the same
-      after_count = xq(c, "SELECT count(*) FROM ash_scylla_test.users").num_rows
+      after_count = xq(conn, "SELECT count(*) FROM ash_scylla_test.users").num_rows
       assert before_count == after_count
     end
 
-    test "update non-existent record is a no-op", %{conn: c} do
+    test "update non-existent record is a no-op", %{conn: conn} do
+      if is_nil(conn), do: :ok
       fake_id = uid()
       # First verify the record doesn't exist
-      before_count = xq(c, "SELECT count(*) FROM ash_scylla_test.users").num_rows
+      before_count = xq(conn, "SELECT count(*) FROM ash_scylla_test.users").num_rows
       # Updating a non-existent record should not raise
-      xq(c, "UPDATE ash_scylla_test.users SET name = ? WHERE id = ?", ["Ghost", fake_id])
+      xq(conn, "UPDATE ash_scylla_test.users SET name = ? WHERE id = ?", ["Ghost", fake_id])
       # Count should remain the same
-      after_count = xq(c, "SELECT count(*) FROM ash_scylla_test.users").num_rows
+      after_count = xq(conn, "SELECT count(*) FROM ash_scylla_test.users").num_rows
       assert before_count == after_count
     end
   end
@@ -793,7 +795,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
   describe "complex queries" do
     setup context do
       case Map.fetch(context, :conn) do
-        {:ok, c} when not is_nil(c) ->
+        {:ok, conn} when not is_nil(conn) ->
           Enum.each(1..20, fn i ->
             id = uid()
 
@@ -804,8 +806,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
                 true -> "inactive"
               end
 
-            xq(
-              c,
+            xq(conn,
               "INSERT INTO ash_scylla_test.users (id, name, email, status, age) VALUES (?, ?, ?, ?, ?)",
               [id, "User#{i}", "user#{i}@test.com", status, 20 + i]
             )
@@ -816,74 +817,78 @@ defmodule AshScylla.ScyllaIntegrationTest do
       end
     end
 
-    test "filter by email index", %{conn: c} do
+    test "filter by email index", %{conn: conn} do
+      if is_nil(conn), do: :ok
       rows =
         rows_to_maps(
-          xq(c, "SELECT * FROM ash_scylla_test.users WHERE email = ?", ["user5@test.com"])
+          xq(conn, "SELECT * FROM ash_scylla_test.users WHERE email = ?", ["user5@test.com"])
         )
 
       assert length(rows) >= 1
       assert Enum.any?(rows, fn row -> row["name"] == "User5" end)
     end
 
-    test "filter by status index", %{conn: c} do
+    test "filter by status index", %{conn: conn} do
+      if is_nil(conn), do: :ok
       rows =
-        rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE status = ?", ["active"]))
+        rows_to_maps(xq(conn, "SELECT * FROM ash_scylla_test.users WHERE status = ?", ["active"]))
 
       assert length(rows) > 0
       Enum.each(rows, fn row -> assert row["status"] == "active" end)
     end
 
-    test "filter by age index", %{conn: c} do
-      rows = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.users WHERE age = ?", [25]))
+    test "filter by age index", %{conn: conn} do
+      if is_nil(conn), do: :ok
+      rows = rows_to_maps(xq(conn, "SELECT * FROM ash_scylla_test.users WHERE age = ?", [25]))
       assert length(rows) >= 1
       Enum.each(rows, fn row -> assert row["age"] == 25 end)
     end
 
-    test "filter by status with LIMIT", %{conn: c} do
+    test "filter by status with LIMIT", %{conn: conn} do
+      if is_nil(conn), do: :ok
       rows =
         rows_to_maps(
-          xq(c, "SELECT * FROM ash_scylla_test.users WHERE status = ? LIMIT 5", ["active"])
+          xq(conn, "SELECT * FROM ash_scylla_test.users WHERE status = ? LIMIT 5", ["active"])
         )
 
       assert length(rows) <= 5
       Enum.each(rows, fn row -> assert row["status"] == "active" end)
     end
 
-    test "IN clause", %{conn: c} do
+    test "IN clause", %{conn: conn} do
+      if is_nil(conn), do: :ok
       ids = Enum.map(1..3, fn _ -> uid() end)
 
       Enum.each(
         ids,
-        &xq(c, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?)", [&1, "IN Test"])
+        &xq(conn, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?)", [&1, "IN Test"])
       )
 
-      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id IN (?, ?, ?)", ids).num_rows == 3
+      assert xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id IN (?, ?, ?)", ids).num_rows == 3
     end
 
-    test "clustering key range", %{conn: c} do
+    test "clustering key range", %{conn: conn} do
+      if is_nil(conn), do: :ok
       user_id = uid()
 
       Enum.each(1..5, fn i ->
-        xq(
-          c,
+        xq(conn,
           "INSERT INTO ash_scylla_test.events (user_id, event_type, event_id, payload) VALUES (?, ?, now(), ?)",
           [user_id, "click", "e#{i}"]
         )
       end)
 
-      assert xq(
-               c,
+      assert xq(conn,
                "SELECT * FROM ash_scylla_test.events WHERE user_id = ? AND event_type = ? LIMIT 3",
                [user_id, "click"]
              ).num_rows == 3
     end
 
-    test "materialized view", %{conn: c} do
+    test "materialized view", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
-      xq(
-        c,
+      xq(conn,
         "INSERT INTO ash_scylla_test.users (id, name, email, age, status) VALUES (?, ?, ?, ?, ?)",
         [id, "MV User", "mv@test.com", 40, "active"]
       )
@@ -892,7 +897,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
       rows =
         rows_to_maps(
-          xq(c, "SELECT * FROM ash_scylla_test.users_by_email WHERE email = ?", ["mv@test.com"])
+          xq(conn, "SELECT * FROM ash_scylla_test.users_by_email WHERE email = ?", ["mv@test.com"])
         )
 
       assert length(rows) >= 1
@@ -905,28 +910,30 @@ defmodule AshScylla.ScyllaIntegrationTest do
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "TTL support" do
-    test "insert with short TTL and verify expiry", %{conn: c} do
+    test "insert with short TTL and verify expiry", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
-      xq(c, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?) USING TTL 2", [
+      xq(conn, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?) USING TTL 2", [
         id,
         "Short Lived"
       ])
 
-      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 1
+      assert xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 1
       Process.sleep(3000)
-      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
+      assert xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 0
     end
 
-    test "insert with long TTL persists", %{conn: c} do
+    test "insert with long TTL persists", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
-      xq(c, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?) USING TTL 3600", [
+      xq(conn, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?) USING TTL 3600", [
         id,
         "Long Lived"
       ])
 
-      assert xq(c, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 1
+      assert xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id]).num_rows == 1
     end
   end
 
@@ -935,17 +942,17 @@ defmodule AshScylla.ScyllaIntegrationTest do
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "counter operations" do
-    test "increment and decrement counters", %{conn: c} do
+    test "increment and decrement counters", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
-      xq(
-        c,
+      xq(conn,
         "UPDATE ash_scylla_test.counters SET views = views + 1, likes = likes + 1 WHERE id = ?",
         [id]
       )
 
-      xq(c, "UPDATE ash_scylla_test.counters SET views = views + 5 WHERE id = ?", [id])
-      [row] = rows_to_maps(xq(c, "SELECT * FROM ash_scylla_test.counters WHERE id = ?", [id]))
+      xq(conn, "UPDATE ash_scylla_test.counters SET views = views + 5 WHERE id = ?", [id])
+      [row] = rows_to_maps(xq(conn, "SELECT * FROM ash_scylla_test.counters WHERE id = ?", [id]))
       assert row["views"] == 6
       assert row["likes"] == 1
     end
@@ -957,6 +964,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
   describe "concurrent read/write simulation" do
     test "50 concurrent writers insert distinct records", %{conn: _conn} do
+      if is_nil(_conn), do: :ok
       host = direct_host()
       port = direct_port()
 
@@ -986,6 +994,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
     end
 
     test "concurrent readers and writers", %{conn: _conn} do
+      if is_nil(_conn), do: :ok
       host = direct_host()
       port = direct_port()
 
@@ -1015,6 +1024,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
     end
 
     test "concurrent reads on same secondary index query", %{conn: _conn} do
+      if is_nil(_conn), do: :ok
       host = direct_host()
       port = direct_port()
       {:ok, setup_conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
@@ -1048,6 +1058,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
     end
 
     test "concurrent event writes to same partition", %{conn: _conn} do
+      if is_nil(_conn), do: :ok
       host = direct_host()
       port = direct_port()
       user_id = uid()
@@ -1077,6 +1088,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
     end
 
     test "mixed CRUD operations under concurrent load", %{conn: _conn} do
+      if is_nil(_conn), do: :ok
       host = direct_host()
       port = direct_port()
       {:ok, setup_conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
@@ -1137,14 +1149,14 @@ defmodule AshScylla.ScyllaIntegrationTest do
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "DataLayer query struct against real DB" do
-    test "build_optimized_query produces valid CQL", %{conn: c} do
+    test "build_optimized_query produces valid CQL", %{conn: conn} do
+      if is_nil(conn), do: :ok
       alias AshScylla.DataLayer
       alias AshScylla.DataLayer.QueryBuilder
 
       id = uid()
 
-      xq(
-        c,
+      xq(conn,
         "INSERT INTO ash_scylla_test.users (id, name, email, status, age) VALUES (?, ?, ?, ?, ?)",
         [id, "DL Test", "dl@test.com", "active", 35]
       )
@@ -1168,14 +1180,15 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert cql =~ "WHERE"
       assert cql =~ "LIMIT ?"
       assert "active" in params
-      assert 10 in params
+      assert {"int", 10} in params
 
       encoded = Enum.map(params, &encode_param/1)
-      {:ok, result} = Xandra.execute(c, cql, encoded)
+      {:ok, result} = Xandra.execute(conn, cql, encoded)
       assert length(result.content) >= 1
     end
 
-    test "build_optimized_query with IN operator", %{conn: c} do
+    test "build_optimized_query with IN operator", %{conn: conn} do
+      if is_nil(conn), do: :ok
       alias AshScylla.DataLayer
       alias AshScylla.DataLayer.QueryBuilder
 
@@ -1183,7 +1196,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
       Enum.each(
         ids,
-        &xq(c, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?)", [&1, "IN Test"])
+        &xq(conn, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?)", [&1, "IN Test"])
       )
 
       query = %DataLayer{
@@ -1201,7 +1214,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
       {cql, params} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "IN"
       assert length(params) == 3
-      assert xq(c, cql, params).num_rows == 3
+      assert xq(conn, cql, params).num_rows == 3
     end
   end
 
@@ -1210,11 +1223,10 @@ defmodule AshScylla.ScyllaIntegrationTest do
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "raw value filters against real DB" do
-    setup %{conn: c} do
+    setup %{conn: conn} do
       base_id = uid()
 
-      xq(
-        c,
+      xq(conn,
         "INSERT INTO ash_scylla_test.users (id, name, email, status, age, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         [base_id, "Raw Test", "raw@test.com", "active", 30, ~U[2025-06-15 10:00:00Z]]
       )
@@ -1222,14 +1234,14 @@ defmodule AshScylla.ScyllaIntegrationTest do
       %{base_id: base_id}
     end
 
-    test "uuid equality + datetime range filter executes successfully", %{conn: c} do
+    test "uuid equality + datetime range filter executes successfully", %{conn: conn} do
+      if is_nil(conn), do: :ok
       alias AshScylla.DataLayer
       alias AshScylla.DataLayer.QueryBuilder
 
       user_id = uid()
 
-      xq(
-        c,
+      xq(conn,
         "INSERT INTO ash_scylla_test.users (id, name, email, status, age, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         [user_id, "Range Test", "range@test.com", "active", 25, ~U[2025-06-17 12:00:00Z]]
       )
@@ -1280,11 +1292,12 @@ defmodule AshScylla.ScyllaIntegrationTest do
       {cql2, params2} = QueryBuilder.build_optimized_query(query2)
 
       encoded = Enum.map(params2, &encode_param/1)
-      {:ok, result} = Xandra.execute(c, cql2 <> " ALLOW FILTERING", encoded)
+      {:ok, result} = Xandra.execute(conn, cql2 <> " ALLOW FILTERING", encoded)
       assert length(result.content) >= 1
     end
 
-    test "raw datetime equality filter executes successfully", %{conn: c} do
+    test "raw datetime equality filter executes successfully", %{conn: conn} do
+      if is_nil(conn), do: :ok
       alias AshScylla.DataLayer
       alias AshScylla.DataLayer.QueryBuilder
 
@@ -1305,11 +1318,12 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
       {cql, params} = QueryBuilder.build_optimized_query(query)
       encoded = Enum.map(params, &encode_param/1)
-      {:ok, result} = Xandra.execute(c, cql <> " ALLOW FILTERING", encoded)
+      {:ok, result} = Xandra.execute(conn, cql <> " ALLOW FILTERING", encoded)
       assert length(result.content) >= 1
     end
 
-    test "raw IN list filter executes successfully", %{conn: c} do
+    test "raw IN list filter executes successfully", %{conn: conn} do
+      if is_nil(conn), do: :ok
       alias AshScylla.DataLayer
       alias AshScylla.DataLayer.QueryBuilder
 
@@ -1330,17 +1344,18 @@ defmodule AshScylla.ScyllaIntegrationTest do
       {cql, params} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "IN"
       encoded = Enum.map(params, &encode_param/1)
-      {:ok, result} = Xandra.execute(c, cql <> " ALLOW FILTERING", encoded)
+      {:ok, result} = Xandra.execute(conn, cql <> " ALLOW FILTERING", encoded)
       assert length(result.content) >= 1
     end
 
-    test "raw is_nil filter executes successfully", %{conn: c} do
+    test "raw is_nil filter executes successfully", %{conn: conn} do
+      if is_nil(conn), do: :ok
       alias AshScylla.DataLayer
       alias AshScylla.DataLayer.QueryBuilder
 
       null_id = uid()
 
-      xq(c, "INSERT INTO ash_scylla_test.users (id, name, status, age) VALUES (?, ?, ?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.users (id, name, status, age) VALUES (?, ?, ?, ?)", [
         null_id,
         "Null Email",
         "active",
@@ -1366,21 +1381,21 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
       # Some ScyllaDB versions reject IS NULL on non-primary-key columns.
       # Fall back to executing a simple known-working query to verify the record exists.
-      result = xq(c, "SELECT id, name FROM ash_scylla_test.users WHERE id = ?", [null_id])
+      result = xq(conn, "SELECT id, name FROM ash_scylla_test.users WHERE id = ?", [null_id])
       assert result.num_rows >= 1
       [row] = rows_to_maps(result)
       assert row["name"] == "Null Email"
     end
 
-    test "nested AND/OR with raw values executes successfully", %{conn: c} do
+    test "nested AND/OR with raw values executes successfully", %{conn: conn} do
+      if is_nil(conn), do: :ok
       alias AshScylla.DataLayer
       alias AshScylla.DataLayer.QueryBuilder
 
       # Insert a record that will match the filter
       match_id = uid()
 
-      xq(
-        c,
+      xq(conn,
         "INSERT INTO ash_scylla_test.users (id, name, status, created_at) VALUES (?, ?, ?, ?)",
         [
           match_id,
@@ -1414,12 +1429,12 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
       {cql, params} = QueryBuilder.build_optimized_query(query)
       encoded = Enum.map(params, &encode_param/1)
-      {:ok, result} = Xandra.execute(c, cql <> " ALLOW FILTERING", encoded)
+      {:ok, result} = Xandra.execute(conn, cql <> " ALLOW FILTERING", encoded)
 
       # The AND filter may return 0 rows if the timestamp doesn't match.
       # Verify the record was inserted as a fallback.
       if length(result.content) == 0 do
-        verify = xq(c, "SELECT id, name FROM ash_scylla_test.users WHERE id = ?", [match_id])
+        verify = xq(conn, "SELECT id, name FROM ash_scylla_test.users WHERE id = ?", [match_id])
         assert verify.num_rows >= 1
       end
     end
@@ -1472,10 +1487,9 @@ defmodule AshScylla.ScyllaIntegrationTest do
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "type conversion round-trip" do
-    setup %{conn: c} do
+    setup %{conn: conn} do
       # Create a dedicated type-roundtrip table covering all major CQL types
-      xq(
-        c,
+      xq(conn,
         """
         CREATE TABLE IF NOT EXISTS ash_scylla_test.type_roundtrip (
           id UUID PRIMARY KEY,
@@ -1499,18 +1513,19 @@ defmodule AshScylla.ScyllaIntegrationTest do
         """
       )
 
-      xq(c, "TRUNCATE ash_scylla_test.type_roundtrip")
+      xq(conn, "TRUNCATE ash_scylla_test.type_roundtrip")
 
       :ok
     end
 
-    test "TEXT round-trip preserves string type", %{conn: c} do
+    test "TEXT round-trip preserves string type", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       value = "Hello, Scylla!"
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, text_val) VALUES (?, ?)", [id, value])
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id, text_val) VALUES (?, ?)", [id, value])
 
-      result = xq(c, "SELECT text_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+      result = xq(conn, "SELECT text_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
 
       rows = rows_to_maps(result)
       assert [row | _] = rows
@@ -1518,12 +1533,13 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert row["text_val"] == value
     end
 
-    test "INT round-trip preserves integer type", %{conn: c} do
+    test "INT round-trip preserves integer type", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       value = 42
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, int_val) VALUES (?, ?)", [id, value])
-      result = xq(c, "SELECT int_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id, int_val) VALUES (?, ?)", [id, value])
+      result = xq(conn, "SELECT int_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
 
       rows = rows_to_maps(result)
       assert [row | _] = rows
@@ -1531,16 +1547,17 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert row["int_val"] == 42
     end
 
-    test "BIGINT round-trip preserves large integer type", %{conn: c} do
+    test "BIGINT round-trip preserves large integer type", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       value = 9_007_199_254_740_991
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, bigint_val) VALUES (?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id, bigint_val) VALUES (?, ?)", [
         id,
         {:bigint, value}
       ])
 
-      result = xq(c, "SELECT bigint_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+      result = xq(conn, "SELECT bigint_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
 
       rows = rows_to_maps(result)
       assert [row | _] = rows
@@ -1548,16 +1565,17 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert row["bigint_val"] == 9_007_199_254_740_991
     end
 
-    test "FLOAT round-trip preserves float type", %{conn: c} do
+    test "FLOAT round-trip preserves float type", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       value = 3.14
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, float_val) VALUES (?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id, float_val) VALUES (?, ?)", [
         id,
         {:float, value}
       ])
 
-      result = xq(c, "SELECT float_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+      result = xq(conn, "SELECT float_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
 
       rows = rows_to_maps(result)
       assert [row | _] = rows
@@ -1565,16 +1583,17 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert abs(row["float_val"] - 3.14) < 0.001
     end
 
-    test "DOUBLE round-trip preserves double type", %{conn: c} do
+    test "DOUBLE round-trip preserves double type", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       value = 2.718281828459045
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, double_val) VALUES (?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id, double_val) VALUES (?, ?)", [
         id,
         {:double, value}
       ])
 
-      result = xq(c, "SELECT double_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+      result = xq(conn, "SELECT double_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
 
       rows = rows_to_maps(result)
       assert [row | _] = rows
@@ -1582,15 +1601,16 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert row["double_val"] == 2.718281828459045
     end
 
-    test "BOOLEAN round-trip preserves boolean type", %{conn: c} do
+    test "BOOLEAN round-trip preserves boolean type", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, boolean_val) VALUES (?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id, boolean_val) VALUES (?, ?)", [
         id,
         true
       ])
 
-      result = xq(c, "SELECT boolean_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+      result = xq(conn, "SELECT boolean_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
 
       rows = rows_to_maps(result)
       assert [row | _] = rows
@@ -1598,17 +1618,18 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert is_boolean(row["boolean_val"])
     end
 
-    test "TIMESTAMP round-trip preserves DateTime type", %{conn: c} do
+    test "TIMESTAMP round-trip preserves DateTime type", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       dt = ~U[2024-06-15 10:30:00Z]
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, timestamp_val) VALUES (?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id, timestamp_val) VALUES (?, ?)", [
         id,
         {:timestamp, dt}
       ])
 
       result =
-        xq(c, "SELECT timestamp_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+        xq(conn, "SELECT timestamp_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
 
       rows = rows_to_maps(result)
       assert [row | _] = rows
@@ -1620,16 +1641,17 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert val.day == 15
     end
 
-    test "DATE round-trip preserves Date type", %{conn: c} do
+    test "DATE round-trip preserves Date type", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       date = ~D[2024-01-15]
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, date_val) VALUES (?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id, date_val) VALUES (?, ?)", [
         id,
         {:date, date}
       ])
 
-      result = xq(c, "SELECT date_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+      result = xq(conn, "SELECT date_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
 
       rows = rows_to_maps(result)
       assert [row | _] = rows
@@ -1639,16 +1661,17 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert val == ~D[2024-01-15]
     end
 
-    test "TIME round-trip preserves Time type", %{conn: c} do
+    test "TIME round-trip preserves Time type", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       time = ~T[14:30:00]
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, time_val) VALUES (?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id, time_val) VALUES (?, ?)", [
         id,
         {:time, time}
       ])
 
-      result = xq(c, "SELECT time_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+      result = xq(conn, "SELECT time_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
 
       rows = rows_to_maps(result)
       assert [row | _] = rows
@@ -1660,15 +1683,16 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert val.second == 0
     end
 
-    test "INET round-trip preserves tuple type", %{conn: c} do
+    test "INET round-trip preserves tuple type", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, inet_val) VALUES (?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id, inet_val) VALUES (?, ?)", [
         id,
         {:inet, {192, 168, 1, 1}}
       ])
 
-      result = xq(c, "SELECT inet_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+      result = xq(conn, "SELECT inet_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
 
       rows = rows_to_maps(result)
       assert [row | _] = rows
@@ -1678,16 +1702,17 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert val == {192, 168, 1, 1}
     end
 
-    test "BLOB round-trip preserves binary type", %{conn: c} do
+    test "BLOB round-trip preserves binary type", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       blob = <<0, 1, 2, 255, 128, 64>>
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, blob_val) VALUES (?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id, blob_val) VALUES (?, ?)", [
         id,
         {:blob, blob}
       ])
 
-      result = xq(c, "SELECT blob_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+      result = xq(conn, "SELECT blob_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
 
       rows = rows_to_maps(result)
       assert [row | _] = rows
@@ -1697,16 +1722,17 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert val == <<0, 1, 2, 255, 128, 64>>
     end
 
-    test "SMALLINT round-trip preserves integer type", %{conn: c} do
+    test "SMALLINT round-trip preserves integer type", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       value = 32_767
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, smallint_val) VALUES (?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id, smallint_val) VALUES (?, ?)", [
         id,
         {:smallint, value}
       ])
 
-      result = xq(c, "SELECT smallint_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+      result = xq(conn, "SELECT smallint_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
 
       rows = rows_to_maps(result)
       assert [row | _] = rows
@@ -1716,16 +1742,17 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert val == 32_767
     end
 
-    test "TINYINT round-trip preserves integer type", %{conn: c} do
+    test "TINYINT round-trip preserves integer type", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       value = 127
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, tinyint_val) VALUES (?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id, tinyint_val) VALUES (?, ?)", [
         id,
         {:tinyint, value}
       ])
 
-      result = xq(c, "SELECT tinyint_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+      result = xq(conn, "SELECT tinyint_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
 
       rows = rows_to_maps(result)
       assert [row | _] = rows
@@ -1735,16 +1762,17 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert val == 127
     end
 
-    test "LIST<TEXT> round-trip preserves list type", %{conn: c} do
+    test "LIST<TEXT> round-trip preserves list type", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       value = ["a", "b", "c"]
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, list_val) VALUES (?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id, list_val) VALUES (?, ?)", [
         id,
         {:list, value}
       ])
 
-      result = xq(c, "SELECT list_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+      result = xq(conn, "SELECT list_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
 
       rows = rows_to_maps(result)
       assert [row | _] = rows
@@ -1754,16 +1782,17 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert val == ["a", "b", "c"]
     end
 
-    test "MAP<TEXT, TEXT> round-trip preserves map type", %{conn: c} do
+    test "MAP<TEXT, TEXT> round-trip preserves map type", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
       value = %{"key1" => "val1", "key2" => "val2"}
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, map_val) VALUES (?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id, map_val) VALUES (?, ?)", [
         id,
         {:map, value}
       ])
 
-      result = xq(c, "SELECT map_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+      result = xq(conn, "SELECT map_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
 
       rows = rows_to_maps(result)
       assert [row | _] = rows
@@ -1774,15 +1803,16 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert val["key2"] == "val2"
     end
 
-    test "SET<INT> round-trip preserves list type", %{conn: c} do
+    test "SET<INT> round-trip preserves list type", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, set_val) VALUES (?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id, set_val) VALUES (?, ?)", [
         id,
         {:set, MapSet.new([1, 2, 3])}
       ])
 
-      result = xq(c, "SELECT set_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+      result = xq(conn, "SELECT set_val FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
 
       rows = rows_to_maps(result)
       assert [row | _] = rows
@@ -1792,10 +1822,11 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert Enum.sort(val |> MapSet.new() |> MapSet.to_list()) == [1, 2, 3]
     end
 
-    test "NULL values round-trip preserves nil type", %{conn: c} do
+    test "NULL values round-trip preserves nil type", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id, text_val) VALUES (?, ?)", [
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id, text_val) VALUES (?, ?)", [
         id,
         "non-null"
       ])
@@ -1803,11 +1834,10 @@ defmodule AshScylla.ScyllaIntegrationTest do
       # Insert another row with all NULLs for various types
       id2 = uid()
 
-      xq(c, "INSERT INTO ash_scylla_test.type_roundtrip (id) VALUES (?)", [id2])
+      xq(conn, "INSERT INTO ash_scylla_test.type_roundtrip (id) VALUES (?)", [id2])
 
       result =
-        xq(
-          c,
+        xq(conn,
           "SELECT int_val, bigint_val, float_val, double_val, boolean_val, text_val FROM ash_scylla_test.type_roundtrip WHERE id = ?",
           [id2]
         )
@@ -1822,11 +1852,11 @@ defmodule AshScylla.ScyllaIntegrationTest do
       assert row["text_val"] == nil
     end
 
-    test "all types in a single row round-trip", %{conn: c} do
+    test "all types in a single row round-trip", %{conn: conn} do
+      if is_nil(conn), do: :ok
       id = uid()
 
-      xq(
-        c,
+      xq(conn,
         """
         INSERT INTO ash_scylla_test.type_roundtrip (
           id, text_val, int_val, bigint_val, float_val, double_val,
@@ -1849,7 +1879,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
         ]
       )
 
-      result = xq(c, "SELECT * FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
+      result = xq(conn, "SELECT * FROM ash_scylla_test.type_roundtrip WHERE id = ?", [id])
 
       rows = rows_to_maps(result)
       assert [row | _] = rows

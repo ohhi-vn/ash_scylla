@@ -201,12 +201,31 @@ defmodule AshScylla.DataLayer.TypePipelineTest do
       assert 42 in get_raw_values(insert_params)
     end
 
-    test "sends boolean as raw value" do
+    test "sends boolean as {type, value} tuple" do
       cs = changeset(%{bool_val: true})
       assert {:ok, _} = DataLayer.create(TypeTestResource, cs)
 
       assert_receive {:ash_scylla_query, _insert_query, insert_params, _opts}
-      assert true in get_raw_values(insert_params)
+      assert {"boolean", true} in insert_params
+    end
+
+    test "sends false boolean as {type, value} tuple" do
+      cs = changeset(%{bool_val: false})
+      assert {:ok, _} = DataLayer.create(TypeTestResource, cs)
+
+      assert_receive {:ash_scylla_query, _insert_query, insert_params, _opts}
+      assert {"boolean", false} in insert_params
+    end
+
+    test "boolean tuple prevents CaseClauseError from text encoding" do
+      cs = changeset(%{bool_val: false})
+      assert {:ok, _} = DataLayer.create(TypeTestResource, cs)
+
+      assert_receive {:ash_scylla_query, _insert_query, insert_params, _opts}
+      # The type tag must be "boolean", not "text" — otherwise Xandra would
+      # encode the raw false as the string "false" and ScyllaDB raises CaseClauseError.
+      refute {"text", "false"} in insert_params
+      assert {"boolean", false} in insert_params
     end
 
     test "sends string as raw value" do

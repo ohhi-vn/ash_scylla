@@ -44,6 +44,13 @@ defmodule AshScylla.DataLayer.MaterializedView do
       WHERE email IS NOT NULL AND id IS NOT NULL
       PRIMARY KEY (email, id)
       WITH CLUSTERING ORDER BY (id ASC)
+
+  ## Options
+
+  - `:primary_key` — Required. The primary key columns for the view.
+  - `:include_columns` — Additional columns to include (besides PK).
+  - `:clustering_order` — Clustering column ordering (e.g., `[id: :desc]`).
+  - `:where_clause` — Custom WHERE clause for NOT NULL constraints.
   """
 
   @type t :: %{

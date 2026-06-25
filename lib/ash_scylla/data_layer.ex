@@ -373,7 +373,7 @@ defmodule AshScylla.DataLayer do
     repo = repo(resource)
 
     case do_delete(changeset, resource, repo) do
-      :ok -> {:ok, changeset.data}
+      :ok -> :ok
       {:error, _} = error -> error
     end
   end
@@ -1816,7 +1816,9 @@ defmodule AshScylla.DataLayer do
     {cql_type, value}
   end
 
-  defp wrap_typed(value, _key, _cql_types) when is_boolean(value), do: value
+  defp wrap_typed(value, _key, _cql_types) when is_boolean(value) do
+    {"boolean", value}
+  end
 
   defp wrap_typed(value, key, cql_types) when is_atom(value) do
     cql_type = Map.get(cql_types, key) || Map.get(cql_types, to_string(key), "text")
