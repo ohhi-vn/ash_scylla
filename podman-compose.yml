@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   scylladb:
-    image: docker.io/scylladb/scylla:5.4
+    image: docker.io/scylladb/scylla:latest
     container_name: ash_scylla_dev
     ports:
       - "9042:9042"

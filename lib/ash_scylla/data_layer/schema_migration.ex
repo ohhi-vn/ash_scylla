@@ -371,6 +371,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
   def generate_new_indexes(resource, live_indexes) do
     table_name = get_table_name(resource)
     resource_indexes = Dsl.secondary_indexes(resource)
+    unindexable = unindexable_columns(resource)
 
     existing_index_names =
       live_indexes
@@ -380,6 +381,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
     resource_indexes
     |> Enum.filter(fn idx ->
       idx.columns
+      |> Enum.reject(fn col -> col in unindexable end)
       |> Enum.all?(fn col ->
         index_name = if idx.name, do: "#{idx.name}_#{col}", else: "idx_#{table_name}_#{col}"
         not MapSet.member?(existing_index_names, index_name)
@@ -388,7 +390,9 @@ defmodule AshScylla.DataLayer.SchemaMigration do
     |> Enum.flat_map(fn idx ->
       # ScyllaDB OSS doesn't support multi-column secondary indexes.
       # Generate a separate single-column index per column.
+      # Skip the sole partition key column — already indexed by the partitioner.
       idx.columns
+      |> Enum.reject(fn col -> col in unindexable end)
       |> Enum.map(fn col ->
         index_name =
           if idx.name do
@@ -435,6 +439,28 @@ defmodule AshScylla.DataLayer.SchemaMigration do
       "\"#{escaped}\""
     else
       "\"#{name}\""
+    end
+  end
+
+  @spec unindexable_columns(module()) :: [atom()]
+  defp unindexable_columns(resource) do
+    try do
+      pk_attrs =
+        resource
+        |> Ash.Resource.Info.attributes()
+        |> Enum.filter(& &1.primary_key?)
+
+      # ScyllaDB forbids secondary indexes on the sole partition key column
+      # because it's already indexed by the partitioner. When AshScylla gains
+      # support for composite partition keys, revisit this to allow indexing
+      # individual components of a composite partition key.
+      case pk_attrs do
+        [sole_partition_key] -> [sole_partition_key.name]
+        _ -> []
+      end
+    rescue
+      # Plain test modules (not Ash resources) have no primary key metadata
+      _ -> []
     end
   end
 

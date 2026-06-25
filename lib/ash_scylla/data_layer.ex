@@ -1153,11 +1153,16 @@ defmodule AshScylla.DataLayer do
 
   @spec autogenerate_value(map()) :: term()
   defp autogenerate_value(attr) do
-    case attr.type do
-      UUID -> generate_uuid()
-      :uuid -> generate_uuid()
-      Ash.Type.Integer -> nil
-      _ -> nil
+    cond do
+      attr.type && function_exported?(attr.type, :generator, 1) ->
+        constraints = Map.get(attr, :constraints, [])
+        attr.type.generator(constraints) |> Enum.at(0)
+
+      attr.type in [UUID, :uuid, Ash.Type.UUID, :uuid_v7] ->
+        generate_uuid()
+
+      true ->
+        nil
     end
   end
 
@@ -1174,9 +1179,16 @@ defmodule AshScylla.DataLayer do
 
   @spec autogenerate_attribute?(map()) :: boolean()
   defp autogenerate_attribute?(attr) do
-    case Map.fetch(attr, :autogenerate?) do
-      {:ok, value} -> value
-      :error -> is_function(Map.get(attr, :default))
+    cond do
+      Map.get(attr, :autogenerate?) == true ->
+        true
+
+      attr.type && function_exported?(attr.type, :autogenerate_enabled?, 0) &&
+          attr.type.autogenerate_enabled?() ->
+        true
+
+      true ->
+        is_function(Map.get(attr, :default))
     end
   end
 

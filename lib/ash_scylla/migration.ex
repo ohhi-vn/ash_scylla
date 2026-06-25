@@ -183,12 +183,15 @@ defmodule AshScylla.Migration do
 
       indexes ->
         table_name = get_table_name(resource)
+        unindexable = unindexable_columns(resource)
 
         indexes
         |> Enum.flat_map(fn idx ->
           # ScyllaDB OSS doesn't support multi-column secondary indexes.
           # Generate a separate single-column index per column.
+          # Skip the sole partition key column — already indexed by the partitioner.
           idx.columns
+          |> Enum.reject(fn col -> col in unindexable end)
           |> Enum.map(fn col ->
             index_name =
               if idx.name do
@@ -218,6 +221,28 @@ defmodule AshScylla.Migration do
   @spec drop_secondary_index_cql(module(), String.t()) :: String.t()
   def drop_secondary_index_cql(_resource, index_name) do
     "DROP INDEX IF EXISTS #{index_name}"
+  end
+
+  @spec unindexable_columns(module()) :: [atom()]
+  defp unindexable_columns(resource) do
+    try do
+      pk_attrs =
+        resource
+        |> Ash.Resource.Info.attributes()
+        |> Enum.filter(& &1.primary_key?)
+
+      # ScyllaDB forbids secondary indexes on the sole partition key column
+      # because it's already indexed by the partitioner. When AshScylla gains
+      # support for composite partition keys, revisit this to allow indexing
+      # individual components of a composite partition key.
+      case pk_attrs do
+        [sole_partition_key] -> [sole_partition_key.name]
+        _ -> []
+      end
+    rescue
+      # Plain test modules (not Ash resources) have no primary key metadata
+      _ -> []
+    end
   end
 
   @spec get_table_name(module()) :: String.t()

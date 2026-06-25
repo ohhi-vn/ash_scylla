@@ -771,6 +771,102 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
   end
 
   # ============================================================================
+  # Reserved keyword quoting (cql_identifier/1)
+  # ============================================================================
+
+  defmodule ReservedKeywordDistinctResource do
+    @moduledoc false
+    use Ash.Resource,
+      domain: nil,
+      data_layer: AshScylla.DataLayer
+
+    import AshScylla.DataLayer.Dsl
+
+    ash_scylla do
+      repo(AshScylla.TestRepo)
+      table("messages")
+      secondary_index(:order)
+    end
+
+    attributes do
+      uuid_primary_key(:id)
+      attribute(:order, :string, public?: true)
+      attribute(:status, :string, public?: true)
+    end
+
+    actions do
+      defaults([:create, :read, :update, :destroy])
+    end
+  end
+
+  describe "build_select_clause uses cql_identifier for reserved keywords" do
+    test "columns with reserved keyword names are quoted" do
+      # 'order' is a reserved keyword in ScyllaDB/CQL
+      # Without quoting, this would cause: ScyllaError: no viable alternative at input 'order'
+      query = %DataLayer{
+        resource: nil,
+        repo: nil,
+        table: "messages",
+        filters: [],
+        sorts: [],
+        limit: nil,
+        offset: nil,
+        select: [:id, :order, :status],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      # The 'order' column must be quoted to avoid ScyllaDB error
+      assert String.contains?(cql, "\"order\""),
+             "Reserved keyword 'order' must be quoted in SELECT clause. Got: #{cql}"
+
+      assert cql == "SELECT id, \"order\", status FROM messages"
+    end
+
+    test "all columns are quoted when they are reserved keywords" do
+      query = %DataLayer{
+        resource: nil,
+        repo: nil,
+        table: "t",
+        filters: [],
+        sorts: [],
+        limit: nil,
+        offset: nil,
+        select: [:select, :from, :where],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      assert String.contains?(cql, "\"select\"")
+      assert String.contains?(cql, "\"from\"")
+      assert String.contains?(cql, "\"where\"")
+    end
+
+    test "DISTINCT columns with reserved keywords are quoted" do
+      {:ok, query} =
+        DataLayer.distinct(
+          %DataLayer{
+            resource: ReservedKeywordDistinctResource,
+            repo: nil,
+            table: "messages",
+            filters: [],
+            sorts: [],
+            limit: nil,
+            offset: nil,
+            select: nil,
+            tenant: nil
+          },
+          [:id],
+          ReservedKeywordDistinctResource
+        )
+
+      assert query.select == [:id]
+    end
+  end
+
+  # ============================================================================
   # can_use_secondary_index?/2
   # ============================================================================
 

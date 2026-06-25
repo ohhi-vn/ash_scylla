@@ -196,11 +196,11 @@ defmodule AshScylla.DataLayer.QueryBuilder do
 
   defp build_select_clause(_table, columns, nil, aggregates)
        when is_list(columns) and (aggregates == nil or aggregates == []) do
-    {Enum.map_join(columns, ", ", &"#{&1}"), []}
+    {Enum.map_join(columns, ", ", &cql_identifier/1), []}
   end
 
   defp build_select_clause(_table, nil, distinct_columns, nil) when is_list(distinct_columns) do
-    cols = Enum.map_join(distinct_columns, ", ", &"#{&1}")
+    cols = Enum.map_join(distinct_columns, ", ", &cql_identifier/1)
     {"DISTINCT #{cols}", []}
   end
 
@@ -210,26 +210,26 @@ defmodule AshScylla.DataLayer.QueryBuilder do
       aggregates
       |> Enum.map(fn
         %{kind: :count, name: name, field: nil} ->
-          {"COUNT(*) AS #{name}", []}
+          {"COUNT(*) AS #{cql_identifier(name)}", []}
 
         %{kind: :count, name: name, field: field} ->
-          {"COUNT(#{field}) AS #{name}", []}
+          {"COUNT(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
 
         %{kind: :sum, name: name, field: field} ->
-          {"SUM(#{field}) AS #{name}", []}
+          {"SUM(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
 
         %{kind: :avg, name: name, field: field} ->
-          {"AVG(#{field}) AS #{name}", []}
+          {"AVG(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
 
         %{kind: :min, name: name, field: field} ->
-          {"MIN(#{field}) AS #{name}", []}
+          {"MIN(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
 
         %{kind: :max, name: name, field: field} ->
-          {"MAX(#{field}) AS #{name}", []}
+          {"MAX(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
 
         %{kind: kind, name: name} ->
           Logger.warning("AshScylla: Unsupported aggregate kind: #{kind}")
-          {"COUNT(*) AS #{name}", []}
+          {"COUNT(*) AS #{cql_identifier(name)}", []}
       end)
       |> Enum.reduce({"", []}, fn {c, p}, {acc_c, acc_p} ->
         {[acc_c, ", ", c], acc_p ++ p}
@@ -246,31 +246,32 @@ defmodule AshScylla.DataLayer.QueryBuilder do
 
   defp build_select_clause(_table, columns, nil, aggregates)
        when is_list(columns) and is_list(aggregates) and length(aggregates) > 0 do
-    col_clause = Enum.map_join(columns, ", ", &"#{&1}")
+    col_clause = Enum.map_join(columns, ", ", &cql_identifier/1)
 
     {agg_clause, params} =
       aggregates
       |> Enum.map(fn
         %{kind: :count, name: name, field: nil} ->
-          {"COUNT(*) AS #{name}", []}
+          {"COUNT(*) AS #{cql_identifier(name)}", []}
 
         %{kind: :count, name: name, field: field} ->
-          {"COUNT(#{field}) AS #{name}", []}
+          {"COUNT(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
 
         %{kind: :sum, name: name, field: field} ->
-          {"SUM(#{field}) AS #{name}", []}
+          {"SUM(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
 
         %{kind: :avg, name: name, field: field} ->
-          {"AVG(#{field}) AS #{name}", []}
+          {"AVG(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
 
         %{kind: :min, name: name, field: field} ->
-          {"MIN(#{field}) AS #{name}", []}
+          {"MIN(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
 
         %{kind: :max, name: name, field: field} ->
-          {"MAX(#{field}) AS #{name}", []}
+          {"MAX(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
 
-        %{kind: _kind, name: name} ->
-          {"COUNT(*) AS #{name}", []}
+        %{kind: kind, name: name} ->
+          Logger.warning("AshScylla: Unsupported aggregate kind: #{kind}")
+          {"COUNT(*) AS #{cql_identifier(name)}", []}
       end)
       |> Enum.reduce({"", []}, fn {c, p}, {acc_c, acc_p} ->
         {[acc_c, ", ", c], acc_p ++ p}
@@ -419,7 +420,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
       when is_list(keys) and is_list(values) do
     token_op = if direction == :before, do: "<", else: ">"
 
-    key_list = Enum.map_join(keys, ", ", &"#{&1}")
+    key_list = Enum.map_join(keys, ", ", &cql_identifier/1)
     placeholder_list = Enum.map_join(Enum.to_list(1..length(values)), ", ", fn _ -> "?" end)
 
     {"WHERE TOKEN(#{key_list}) #{token_op} TOKEN(#{placeholder_list})", values}
@@ -823,15 +824,15 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   """
   @spec aggregate_to_cql(atom(), atom() | nil) :: String.t()
   def aggregate_to_cql(:count, nil), do: "COUNT(*)"
-  def aggregate_to_cql(:count, field), do: "COUNT(#{field})"
-  def aggregate_to_cql(:sum, field), do: "SUM(#{field})"
-  def aggregate_to_cql(:avg, field), do: "AVG(#{field})"
-  def aggregate_to_cql(:min, field), do: "MIN(#{field})"
-  def aggregate_to_cql(:max, field), do: "MAX(#{field})"
+  def aggregate_to_cql(:count, field), do: "COUNT(#{cql_identifier(field)})"
+  def aggregate_to_cql(:sum, field), do: "SUM(#{cql_identifier(field)})"
+  def aggregate_to_cql(:avg, field), do: "AVG(#{cql_identifier(field)})"
+  def aggregate_to_cql(:min, field), do: "MIN(#{cql_identifier(field)})"
+  def aggregate_to_cql(:max, field), do: "MAX(#{cql_identifier(field)})"
 
   def aggregate_to_cql(kind, field) do
     Logger.warning("AshScylla: Unsupported aggregate kind: #{kind}, falling back to COUNT")
-    if field, do: "COUNT(#{field})", else: "COUNT(*)"
+    if field, do: "COUNT(#{cql_identifier(field)})", else: "COUNT(*)"
   end
 
   # ============================================================================
@@ -847,11 +848,11 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   @spec build_contains_clause(String.t(), term(), :contains | :contains_key) ::
           {String.t(), list()}
   def build_contains_clause(column, value, :contains) do
-    {"#{column} CONTAINS ?", [value]}
+    {"#{cql_identifier(column)} CONTAINS ?", [value]}
   end
 
   def build_contains_clause(column, value, :contains_key) do
-    {"#{column} CONTAINS KEY ?", [value]}
+    {"#{cql_identifier(column)} CONTAINS KEY ?", [value]}
   end
 
   # ============================================================================
@@ -870,10 +871,76 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     {"#{left_cql} IN (#{placeholders})", values}
   end
 
+  # CQL reserved keywords that must be quoted when used as identifiers.
+  # Source: https://cassandra.apache.org/doc/latest/cassandra/cql/appendix.html#keywords
+  @cql_reserved_keywords MapSet.new([
+                           "add",
+                           "allow",
+                           "alter",
+                           "and",
+                           "apply",
+                           "asc",
+                           "authorize",
+                           "batch",
+                           "begin",
+                           "by",
+                           "columnfamily",
+                           "create",
+                           "delete",
+                           "desc",
+                           "describe",
+                           "drop",
+                           "entries",
+                           "execute",
+                           "from",
+                           "full",
+                           "grant",
+                           "if",
+                           "in",
+                           "index",
+                           "infinity",
+                           "insert",
+                           "into",
+                           "is",
+                           "keyspace",
+                           "limit",
+                           "materialized",
+                           "modify",
+                           "nan",
+                           "norecursive",
+                           "not",
+                           "null",
+                           "of",
+                           "on",
+                           "or",
+                           "order",
+                           "primary",
+                           "rename",
+                           "replace",
+                           "schema",
+                           "select",
+                           "set",
+                           "table",
+                           "to",
+                           "token",
+                           "truncate",
+                           "unlogged",
+                           "update",
+                           "use",
+                           "using",
+                           "view",
+                           "where",
+                           "with"
+                         ])
+
   defp cql_identifier(name) do
-    name
-    |> to_string()
-    |> Identifier.sanitize!()
+    name_str = name |> to_string() |> Identifier.sanitize!()
+
+    if MapSet.member?(@cql_reserved_keywords, String.downcase(name_str)) do
+      "\"#{name_str}\""
+    else
+      name_str
+    end
   end
 
   defp attribute_name(%{name: name}), do: name
