@@ -317,21 +317,11 @@ defmodule AshScylla.Connection do
     conn
   end
 
-  @valid_keyspace_regex ~r/^[a-zA-Z_][a-zA-Z0-9_]{0,47}$/
-
   @doc false
   @spec validate_keyspace!(String.t()) :: :ok | no_return()
-  def validate_keyspace!(keyspace) when is_binary(keyspace) do
-    unless Regex.match?(@valid_keyspace_regex, keyspace) do
-      raise ArgumentError,
-            "Invalid keyspace name: #{inspect(keyspace)}. Keyspace names must match #{@valid_keyspace_regex.source}"
-    end
-
-    :ok
-  end
-
   def validate_keyspace!(keyspace) do
-    raise ArgumentError, "Keyspace name must be a string, got: #{inspect(keyspace)}"
+    AshScylla.Identifier.validate_keyspace!(keyspace)
+    :ok
   end
 
   @doc """

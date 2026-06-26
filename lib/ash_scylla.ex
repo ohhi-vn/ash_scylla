@@ -123,7 +123,7 @@ defmodule AshScylla do
   defp normalize_nodes(nodes) when is_binary(nodes), do: normalize_nodes([nodes])
   defp normalize_nodes(nodes), do: {:error, {:invalid_nodes, nodes}}
 
-  @valid_keyspace_regex ~r/^[a-zA-Z_][a-zA-Z0-9_]{0,47}$/
+  # Uses AshScylla.Identifier.valid_keyspace_regex/0 for validation
 
   @spec resolve_keyspace(keyword(), keyword()) :: {:ok, String.t() | nil} | {:error, term()}
   defp resolve_keyspace(config, opts) do
@@ -137,7 +137,7 @@ defmodule AshScylla do
   defp validate_keyspace(nil), do: {:ok, nil}
 
   defp validate_keyspace(keyspace) when is_binary(keyspace) do
-    if Regex.match?(@valid_keyspace_regex, keyspace) do
+    if Regex.match?(AshScylla.Identifier.valid_keyspace_regex(), keyspace) do
       {:ok, keyspace}
     else
       {:error, {:invalid_keyspace, keyspace}}

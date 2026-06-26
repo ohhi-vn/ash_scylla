@@ -48,6 +48,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
 
   alias AshScylla.DataLayer.Dsl
   alias AshScylla.DataLayer.MaterializedView
+  alias AshScylla.DataLayer.SchemaUtils
   alias AshScylla.Migration
   alias AshScylla.Migrator
 
@@ -198,7 +199,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
   @spec fetch_table_schema(module(), module()) :: {:ok, map()} | {:error, term()}
   def fetch_table_schema(resource, repo) do
     keyspace = repo.keyspace()
-    table_name = get_table_name(resource)
+    table_name = SchemaUtils.get_table_name(resource)
 
     query = """
     SELECT * FROM system_schema.columns
@@ -232,8 +233,8 @@ defmodule AshScylla.DataLayer.SchemaMigration do
   """
   @spec fetch_indexes(module(), module()) :: {:ok, [map()]} | {:error, term()}
   def fetch_indexes(resource, repo) do
+    table_name = SchemaUtils.get_table_name(resource)
     keyspace = repo.keyspace()
-    table_name = get_table_name(resource)
 
     query = """
     SELECT * FROM system_schema.indexes
@@ -267,7 +268,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
   @spec fetch_materialized_views(module(), module()) :: {:ok, [map()]} | {:error, term()}
   def fetch_materialized_views(resource, repo) do
     keyspace = repo.keyspace()
-    table_name = get_table_name(resource)
+    table_name = SchemaUtils.get_table_name(resource)
 
     query = """
     SELECT * FROM system_schema.views
@@ -340,7 +341,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
   """
   @spec generate_add_columns(module(), [atom()]) :: [String.t()]
   def generate_add_columns(resource, columns) do
-    table_name = get_table_name(resource)
+    table_name = SchemaUtils.get_table_name(resource)
 
     attributes =
       resource
@@ -358,7 +359,8 @@ defmodule AshScylla.DataLayer.SchemaMigration do
 
         attr ->
           type_str = attr.type |> Migration.ash_type_to_cql_type(attr.constraints)
-          "ALTER TABLE #{quote_name(table_name)} ADD #{quote_name(col_name)} #{type_str}"
+
+          "ALTER TABLE #{AshScylla.Identifier.quote_name(table_name)} ADD #{AshScylla.Identifier.quote_name(col_name)} #{type_str}"
       end
     end)
     |> Enum.reject(&is_nil/1)
@@ -369,9 +371,9 @@ defmodule AshScylla.DataLayer.SchemaMigration do
   """
   @spec generate_new_indexes(module(), [map()]) :: [String.t()]
   def generate_new_indexes(resource, live_indexes) do
-    table_name = get_table_name(resource)
+    table_name = SchemaUtils.get_table_name(resource)
     resource_indexes = Dsl.secondary_indexes(resource)
-    unindexable = unindexable_columns(resource)
+    unindexable = SchemaUtils.unindexable_columns(resource)
 
     existing_index_names =
       live_indexes
@@ -401,7 +403,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
             "idx_#{table_name}_#{col}"
           end
 
-        "CREATE INDEX IF NOT EXISTS #{index_name} ON #{quote_name(table_name)} (#{col})"
+        "CREATE INDEX IF NOT EXISTS #{index_name} ON #{AshScylla.Identifier.quote_name(table_name)} (#{col})"
       end)
     end)
   end
@@ -411,7 +413,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
   """
   @spec generate_new_views(module(), [map()]) :: [String.t()]
   def generate_new_views(resource, live_views) do
-    table_name = get_table_name(resource)
+    table_name = SchemaUtils.get_table_name(resource)
     resource_views = Dsl.materialized_views(resource)
 
     existing_view_names =
@@ -431,78 +433,14 @@ defmodule AshScylla.DataLayer.SchemaMigration do
     end)
   end
 
-  defp quote_name(name) when is_atom(name), do: quote_name(Atom.to_string(name))
-
-  defp quote_name(name) when is_binary(name) do
-    if String.contains?(name, "\"") do
-      escaped = String.replace(name, "\"", "\"\"")
-      "\"#{escaped}\""
-    else
-      "\"#{name}\""
-    end
-  end
-
-  @spec unindexable_columns(module()) :: [atom()]
-  defp unindexable_columns(resource) do
-    try do
-      pk_attrs =
-        resource
-        |> Ash.Resource.Info.attributes()
-        |> Enum.filter(& &1.primary_key?)
-
-      # ScyllaDB forbids secondary indexes on the sole partition key column
-      # because it's already indexed by the partitioner. When AshScylla gains
-      # support for composite partition keys, revisit this to allow indexing
-      # individual components of a composite partition key.
-      case pk_attrs do
-        [sole_partition_key] -> [sole_partition_key.name]
-        _ -> []
-      end
-    rescue
-      # Plain test modules (not Ash resources) have no primary key metadata
-      _ -> []
-    end
-  end
-
-  @spec get_table_name(module()) :: String.t()
-  defp get_table_name(resource) do
-    case Dsl.table(resource) do
-      nil ->
-        segments = Module.split(resource)
-
-        name =
-          if Ash.Resource.Info.domain(resource) do
-            segments
-            |> Enum.take(-2)
-            |> Enum.map(&Macro.underscore/1)
-            |> Enum.join("_")
-          else
-            segments
-            |> List.last()
-            |> Macro.underscore()
-          end
-
-        table_attr =
-          try do
-            Module.get_attribute(resource, :table)
-          rescue
-            ArgumentError -> nil
-          end
-
-        case table_attr do
-          nil -> name
-          "" -> name
-          table -> to_string(table)
-        end
-
-      name ->
-        to_string(name)
-    end
-  end
+  # Uses AshScylla.DataLayer.SchemaUtils for shared functions:
+  #   - get_table_name/1
+  #   - quote_name/1 (via AshScylla.Identifier.quote_name/1)
+  #   - unindexable_columns/1
 
   @spec generate_views(module()) :: [String.t()]
   defp generate_views(resource) do
-    table_name = get_table_name(resource)
+    table_name = SchemaUtils.get_table_name(resource)
     views = Dsl.materialized_views(resource)
 
     views

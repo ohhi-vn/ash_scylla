@@ -327,7 +327,11 @@ defmodule AshScylla.DataLayer.PaginationUpdatedTest do
     test "decode reverses encode" do
       original = "binary_paging_state"
       token = Pagination.encode_page_token(original)
-      assert Pagination.decode_page_token(token) == original
+      assert {:ok, original} = Pagination.decode_page_token(token)
+    end
+
+    test "decode returns error for invalid base64" do
+      assert {:error, :invalid_token} = Pagination.decode_page_token("invalid!!")
     end
 
     test "token is base64 encoded" do

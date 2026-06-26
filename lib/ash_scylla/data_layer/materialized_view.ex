@@ -73,7 +73,7 @@ defmodule AshScylla.DataLayer.MaterializedView do
 
     # Build column list (primary key columns + included columns)
     all_columns = Enum.uniq(primary_key ++ include_columns)
-    columns_str = all_columns |> Enum.map_join(", ", &quote_name/1)
+    columns_str = all_columns |> Enum.map_join(", ", &AshScylla.Identifier.quote_name/1)
 
     # Build WHERE clause for NOT NULL constraints
     not_null_clause =
@@ -81,7 +81,7 @@ defmodule AshScylla.DataLayer.MaterializedView do
         where_clause
       else
         primary_key
-        |> Enum.map_join(" AND ", &"#{quote_name(&1)} IS NOT NULL")
+        |> Enum.map_join(" AND ", &"#{AshScylla.Identifier.quote_name(&1)} IS NOT NULL")
       end
 
     # Build PRIMARY KEY definition
@@ -89,11 +89,11 @@ defmodule AshScylla.DataLayer.MaterializedView do
     pk_def =
       case primary_key do
         [partition_key] ->
-          "(#{quote_name(partition_key)})"
+          "(#{AshScylla.Identifier.quote_name(partition_key)})"
 
         [partition_key | clustering_keys] ->
           # Composite key: (partition_key, clustering_key1, clustering_key2, ...)
-          "((#{quote_name(partition_key)}), #{Enum.map_join(clustering_keys, ", ", &quote_name/1)})"
+          "((#{AshScylla.Identifier.quote_name(partition_key)}), #{Enum.map_join(clustering_keys, ", ", &AshScylla.Identifier.quote_name/1)})"
       end
 
     # Build CLUSTERING ORDER if specified
@@ -101,7 +101,9 @@ defmodule AshScylla.DataLayer.MaterializedView do
       if clustering_order != [] do
         order_str =
           clustering_order
-          |> Enum.map_join(", ", fn {col, dir} -> "#{quote_name(col)} #{dir}" end)
+          |> Enum.map_join(", ", fn {col, dir} ->
+            "#{AshScylla.Identifier.quote_name(col)} #{dir}"
+          end)
 
         " WITH CLUSTERING ORDER BY (#{order_str})"
       else
@@ -111,22 +113,13 @@ defmodule AshScylla.DataLayer.MaterializedView do
     """
     CREATE MATERIALIZED VIEW IF NOT EXISTS #{view_name}
     AS SELECT #{columns_str}
-    FROM #{quote_name(base_table)}
+    FROM #{AshScylla.Identifier.quote_name(base_table)}
     WHERE #{not_null_clause}
     PRIMARY KEY #{pk_def}#{clustering_order_clause}
     """
   end
 
-  defp quote_name(name) when is_atom(name), do: quote_name(Atom.to_string(name))
-
-  defp quote_name(name) when is_binary(name) do
-    if String.contains?(name, "\"") do
-      escaped = String.replace(name, "\"", "\"\"")
-      "\"#{escaped}\""
-    else
-      "\"#{name}\""
-    end
-  end
+  # Uses AshScylla.Identifier.quote_name/1 for all identifier quoting
 
   @doc """
   Generates CQL for dropping a materialized view.

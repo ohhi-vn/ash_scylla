@@ -133,8 +133,10 @@ defmodule AshScylla.Repo do
         ]
 
         with {:ok, _} <- AshScylla.Connection.start_link(conn_opts) do
+          quoted_keyspace = AshScylla.Identifier.quote_name(keyspace)
+
           query = """
-          CREATE KEYSPACE IF NOT EXISTS #{keyspace}
+          CREATE KEYSPACE IF NOT EXISTS #{quoted_keyspace}
           WITH REPLICATION = #{replication}
           """
 
@@ -176,18 +178,8 @@ defmodule AshScylla.Repo do
         __MODULE__.query(query, [], consistency: :quorum)
       end
 
-      @valid_keyspace_regex ~r/^[a-zA-Z_][a-zA-Z0-9_]{0,47}$/
-
       defp validate_keyspace!(keyspace) do
-        unless is_binary(keyspace) do
-          raise ArgumentError, "Keyspace name must be a string, got: #{inspect(keyspace)}"
-        end
-
-        unless Regex.match?(@valid_keyspace_regex, keyspace) do
-          raise ArgumentError,
-                "Invalid keyspace name: #{inspect(keyspace)}. Keyspace names must match #{@valid_keyspace_regex.source}"
-        end
-
+        AshScylla.Identifier.validate_keyspace!(keyspace)
         :ok
       end
 

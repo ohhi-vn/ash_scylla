@@ -54,6 +54,7 @@ defmodule AshScylla.DataLayer.Batch do
   alias Ash.Resource.Info
 
   @default_max_concurrency System.schedulers_online()
+  @default_max_statements_per_batch 500
 
   @doc """
   Executes a batch of INSERT statements.
@@ -110,36 +111,42 @@ defmodule AshScylla.DataLayer.Batch do
   def batch_insert_async(repo, statements, opts \\ []) do
     max_concurrency = Keyword.get(opts, :max_concurrency, @default_max_concurrency)
 
+    max_per_batch =
+      Keyword.get(opts, :max_statements_per_batch, @default_max_statements_per_batch)
+
     Logger.info(
       "AshScylla: Executing async batch insert with #{length(statements)} statements, " <>
-        "max_concurrency=#{max_concurrency}"
+        "max_concurrency=#{max_concurrency}, max_per_batch=#{max_per_batch}"
     )
 
-    # Group statements by partition key
-    grouped =
-      Enum.group_by(statements, fn {_query, params} ->
-        # Use the first param as a simple partition grouping heuristic
-        # For more sophisticated grouping, use partition_key/2
-        partition_key_hash(params)
-      end)
+    # Chunk statements into safe batch sizes to avoid exceeding ScyllaDB thresholds
+    chunked_statements = Enum.chunk_every(statements, max_per_batch)
 
-    group_count = map_size(grouped)
-    Logger.debug("AshScylla: Grouped into #{group_count} partition groups")
-
-    # Execute each group in parallel
+    # Execute each chunk in parallel, collecting results or stopping on first error
     results =
-      grouped
+      chunked_statements
       |> Task.async_stream(
-        fn {_pk, batch_statements} ->
-          build_batch_query(batch_statements, repo, opts)
+        fn chunk ->
+          grouped =
+            Enum.group_by(chunk, fn {_query, params} ->
+              partition_key_hash(params)
+            end)
+
+          # Execute each partition group within this chunk, stop on first error
+          Enum.reduce_while(grouped, {:ok, []}, fn {_pk, batch_statements}, {:ok, acc} ->
+            case build_batch_query(batch_statements, repo, opts) do
+              {:ok, result} -> {:cont, {:ok, [result | acc]}}
+              {:error, reason} -> {:halt, {:error, reason}}
+            end
+          end)
         end,
         max_concurrency: max_concurrency,
         ordered: false,
         on_timeout: :kill_task
       )
       |> Enum.reduce_while({:ok, []}, fn
-        {:ok, {:ok, result}}, {:ok, acc} ->
-          {:cont, {:ok, [result | acc]}}
+        {:ok, {:ok, chunk_results}}, {:ok, acc} ->
+          {:cont, {:ok, acc ++ chunk_results}}
 
         {:ok, {:error, reason}}, _acc ->
           {:halt, {:error, reason}}
@@ -149,10 +156,42 @@ defmodule AshScylla.DataLayer.Batch do
       end)
 
     case results do
-      {:ok, acc} -> {:ok, Enum.reverse(acc)}
+      {:ok, acc} -> {:ok, acc}
       {:error, _} = error -> error
     end
   end
+
+  @doc """
+  Splits a list of statements into chunks suitable for BATCH execution.
+
+  ScyllaDB has a configurable batch size threshold (default warn at 128KB,
+  fail at 256KB). Sending too many statements in a single BATCH will
+  cause performance degradation or outright failure. This function
+  chunks statements to stay within safe limits.
+
+  ## Options
+
+  - `:max_statements_per_batch` — Maximum statements per chunk (default: 500)
+
+  ## Examples
+
+      statements = [{"INSERT INTO users (id) VALUES (?)", [i}] <- 1..2000]
+      chunks = AshScylla.DataLayer.Batch.chunk_batch(statements)
+      # => 4 chunks of 500 statements each
+  """
+  @spec chunk_batch([{String.t(), list()}], keyword()) :: [[{String.t(), list()}]]
+  def chunk_batch(statements, opts \\ []) do
+    max_per_batch =
+      Keyword.get(opts, :max_statements_per_batch, @default_max_statements_per_batch)
+
+    Enum.chunk_every(statements, max_per_batch)
+  end
+
+  @doc """
+  Returns the default max statements per batch.
+  """
+  @spec default_max_statements_per_batch() :: pos_integer()
+  def default_max_statements_per_batch, do: @default_max_statements_per_batch
 
   @doc """
   Extracts the partition key values from a record for a given resource.

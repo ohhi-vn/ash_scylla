@@ -582,7 +582,7 @@ defmodule AshScylla.WorkloadTest do
       results = Task.await_many(tasks, 15_000)
       assert length(results) == 100
 
-      Enum.each(results, fn {original, token, decoded} ->
+      Enum.each(results, fn {original, token, {:ok, decoded}} ->
         assert is_binary(token)
         assert decoded == original
       end)

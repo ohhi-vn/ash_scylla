@@ -451,7 +451,8 @@ defmodule AshScylla.Migration do
   end
 
   def type_exists_cql(type_name) when is_binary(type_name) do
-    "SELECT type_name FROM system_schema.types WHERE type_name = '#{type_name}'"
+    sanitized = AshScylla.DataLayer.SchemaUtils.sanitize_type_name(type_name)
+    "SELECT type_name FROM system_schema.types WHERE type_name = '#{sanitized}'"
   end
 
   defp attribute_to_cql(attr_or_keyword) do

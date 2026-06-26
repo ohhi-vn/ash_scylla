@@ -95,14 +95,29 @@ defmodule AshScylla.DataLayer.Pagination do
 
     params = params ++ [page_size]
 
-    opts =
+    page_opts =
       if page_token do
-        page_state = Base.decode64!(page_token)
-        [page_size: page_size, paging_state: page_state]
+        case Base.decode64(page_token) do
+          {:ok, page_state} when is_binary(page_state) ->
+            [page_size: page_size, paging_state: page_state]
+
+          _ ->
+            nil
+        end
       else
         [page_size: page_size]
       end
 
+    case page_opts do
+      nil ->
+        {:error, :invalid_page_token}
+
+      opts ->
+        execute_page_query(repo, query, params, opts)
+    end
+  end
+
+  defp execute_page_query(repo, query, params, opts) do
     case repo.query(query, params, opts) do
       {:ok, %Xandra.Page{content: content, paging_state: nil}} ->
         rows = content || []
@@ -186,11 +201,18 @@ defmodule AshScylla.DataLayer.Pagination do
 
   @doc """
   Decodes a page token string back to a paging state binary.
+
+  Returns `{:ok, binary}` on success or `{:error, :invalid_token}` on failure.
   """
-  @spec decode_page_token(String.t()) :: binary()
+  @spec decode_page_token(String.t()) :: {:ok, binary()} | {:error, :invalid_token}
   def decode_page_token(page_token) when is_binary(page_token) do
-    Base.decode64!(page_token)
+    case Base.decode64(page_token) do
+      {:ok, binary} when is_binary(binary) -> {:ok, binary}
+      _ -> {:error, :invalid_token}
+    end
   end
+
+  def decode_page_token(_), do: {:error, :invalid_token}
 
   @doc """
   Returns the default page size.

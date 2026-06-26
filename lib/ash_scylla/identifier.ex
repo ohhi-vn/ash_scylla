@@ -46,6 +46,8 @@ defmodule AshScylla.Identifier do
 
   @valid_identifier ~r/^[a-zA-Z_][a-zA-Z0-9_]*$/
 
+  @valid_keyspace_regex ~r/^[a-zA-Z_][a-zA-Z0-9_]{0,47}$/
+
   @doc """
   Validates that the given string is a safe CQL identifier.
 
@@ -85,5 +87,71 @@ defmodule AshScylla.Identifier do
 
   def sanitize!(name) do
     raise ArgumentError, "Invalid CQL identifier: expected a string, got #{inspect(name)}"
+  end
+
+  @doc """
+  Returns the regex used to validate keyspace names.
+  """
+  @spec valid_keyspace_regex() :: Regex.t()
+  def valid_keyspace_regex, do: @valid_keyspace_regex
+
+  @doc """
+  Validates a keyspace name, raising if invalid.
+  """
+  @spec validate_keyspace!(String.t() | atom()) :: String.t() | no_return()
+  def validate_keyspace!(name) when is_atom(name), do: validate_keyspace!(Atom.to_string(name))
+
+  def validate_keyspace!(name) when is_binary(name) do
+    unless Regex.match?(@valid_keyspace_regex, name) do
+      raise ArgumentError,
+            "Invalid keyspace name: #{inspect(name)}. Keyspace names must match #{@valid_keyspace_regex.source}"
+    end
+
+    name
+  end
+
+  def validate_keyspace!(name) do
+    raise ArgumentError, "Keyspace name must be a string, got: #{inspect(name)}"
+  end
+
+  @doc """
+  Quotes a CQL identifier for safe interpolation into CQL strings.
+
+  Validates the identifier first, then wraps in double quotes.
+  Escapes embedded double quotes by doubling them per CQL spec.
+
+  Returns the quoted string, or raises `ArgumentError` if invalid.
+
+  ## Examples
+
+      iex> AshScylla.Identifier.quote_name("users")
+      "\"users\""
+
+      iex> AshScylla.Identifier.quote_name("my table")
+      ** (ArgumentError) Invalid CQL identifier: ...
+  """
+  @spec quote_name(atom() | String.t()) :: String.t() | no_return()
+  def quote_name(name) when is_atom(name), do: quote_name(Atom.to_string(name))
+
+  def quote_name(name) when is_binary(name) do
+    case validate(name) do
+      {:ok, _} -> do_quote_name(name)
+      {:error, reason} -> raise ArgumentError, reason
+    end
+  end
+
+  def quote_name(name) do
+    raise ArgumentError, "Invalid CQL identifier: expected string or atom, got #{inspect(name)}"
+  end
+
+  @doc false
+  @spec do_quote_name(String.t()) :: String.t()
+  def do_quote_name(name) do
+    if String.contains?(name, "\"") do
+      escaped = String.replace(name, "\"", "\"\"")
+      "\"#{escaped}\""
+    else
+      "\"#{name}\""
+    end
   end
 end

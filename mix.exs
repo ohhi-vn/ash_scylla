@@ -4,8 +4,8 @@ defmodule AshScylla.MixProject do
   def project do
     [
       app: :ash_scylla,
-      version: "0.12.1",
-      elixir: "~> 1.17",
+      version: "0.13.0",
+      elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       aliases: aliases(),
@@ -113,7 +113,7 @@ defmodule AshScylla.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ash, "~> 3.29"},
+      {:ash, "~> 3.0"},
       {:xandra, "~> 0.19"},
       {:decimal, "~> 3.1", override: true, only: [:dev, :test]},
       {:hackney, "~> 4.3", override: true, only: [:dev, :test]},

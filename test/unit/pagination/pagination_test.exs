@@ -28,7 +28,16 @@ defmodule AshScylla.PaginationTest do
     test "decodes base64 string to binary" do
       original = <<1, 2, 3, 4, 5>>
       encoded = Base.encode64(original)
-      assert Pagination.decode_page_token(encoded) == original
+      assert {:ok, original} = Pagination.decode_page_token(encoded)
+    end
+
+    test "returns error for invalid base64" do
+      assert {:error, :invalid_token} = Pagination.decode_page_token("not-valid-base64!!!")
+    end
+
+    test "returns error for non-binary input" do
+      assert {:error, :invalid_token} = Pagination.decode_page_token(nil)
+      assert {:error, :invalid_token} = Pagination.decode_page_token(123)
     end
   end
 
@@ -43,7 +52,11 @@ defmodule AshScylla.PaginationTest do
 
     test "builds query with WHERE clause and LIMIT" do
       {query, params} =
-        Pagination.build_paginated_query("users", [%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}], 20)
+        Pagination.build_paginated_query(
+          "users",
+          [%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}],
+          20
+        )
 
       assert query =~ "SELECT * FROM users"
       assert query =~ "WHERE"
@@ -67,7 +80,12 @@ defmodule AshScylla.PaginationTest do
 
     test "adds token clause with existing WHERE clause" do
       {query, params} =
-        Pagination.build_paginated_query("users", [%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}], "my_token", 10)
+        Pagination.build_paginated_query(
+          "users",
+          [%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}],
+          "my_token",
+          10
+        )
 
       assert query =~ "WHERE"
       assert query =~ "AND token() > ?"

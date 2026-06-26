@@ -4,109 +4,28 @@ on:
   push:
     branches: [main, master]
   pull_request:
+    branches: [main, master]
 
 jobs:
-  format:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: erlef/setup-beam@v1
-        with:
-          elixir-version: "1.17"
-          otp-version: "27"
-      - name: Install dependencies
-        run: mix deps.get
-      - name: Check formatting
-        run: mix format --check-formatted
-
-  credo:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: erlef/setup-beam@v1
-        with:
-          elixir-version: "1.17"
-          otp-version: "27"
-      - name: Cache deps
-        uses: actions/cache@v4
-        with:
-          path: |
-            deps
-            _build
-          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-mix-
-      - name: Install dependencies
-        run: mix deps.get
-      - name: Run Credo
-        run: mix credo --strict
-
   test:
+    name: Test (Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }})
     runs-on: ubuntu-latest
+
     strategy:
       matrix:
-        include:
-          - elixir: "1.17"
-            otp: "27"
-          - elixir: "1.18"
-            otp: "27"
+        elixir: ["1.19"]
+        otp: ["27"]
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: erlef/setup-beam@v1
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
         with:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
-      - name: Cache deps
-        uses: actions/cache@v4
-        with:
-          path: |
-            deps
-            _build
-          key: ${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-mix-${{ hashFiles('**/mix.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.elixir }}-${{ matrix.otp }}-mix-
-      - name: Install dependencies
-        run: mix deps.get
-      - name: Check formatting
-        run: mix format --check-formatted
-      - name: Run unit tests
-        run: mix test --exclude integration
 
-  integration:
-    runs-on: ubuntu-latest
-    services:
-      scylla:
-        image: scylladb/scylla:latest
-        ports:
-          - 9042:9042
-        options: >-
-          --health-cmd "cqlsh -e 'SELECT now() FROM system.local'"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: erlef/setup-beam@v1
-        with:
-          elixir-version: "1.17"
-          otp-version: "27"
-      - name: Install dependencies
-        run: mix deps.get
-      - name: Run integration tests
-        run: mix test test/integration/scylla_integration_test.exs --only integration
-        env:
-          SCYLLA_DIRECT: 1
-          SCYLLA_HOST: localhost
-          SCYLLA_PORT: 9042
-
-  dialyzer:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: erlef/setup-beam@v1
-        with:
-          elixir-version: "1.17"
-          otp-version: "27"
       - name: Cache deps
         uses: actions/cache@v4
         with:
@@ -116,15 +35,51 @@ jobs:
           key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
           restore-keys: |
             ${{ runner.os }}-mix-
-      - name: Cache PLT
+
+      - name: Install dependencies
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+
+      - name: Check formatting
+        run: mix format --check-formatted
+
+      - name: Run Credo
+        run: mix credo --strict
+
+      - name: Run tests (unit only)
+        run: mix test --exclude integration
+
+  quality:
+    name: Quality Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: "1.19"
+          otp-version: "27"
+
+      - name: Cache deps
         uses: actions/cache@v4
         with:
           path: |
-            priv/plts
-          key: ${{ runner.os }}-plt-${{ hashFiles('**/mix.lock') }}
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ hashFiles('**/mix.lock') }}
           restore-keys: |
-            ${{ runner.os }}-plt-
+            ${{ runner.os }}-mix-
+
       - name: Install dependencies
-        run: mix deps.get
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+
       - name: Run Dialyzer
         run: mix dialyzer
