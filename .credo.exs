@@ -6,7 +6,7 @@
         included: ["lib/", "test/"],
         excluded: []
       },
-      plugins: [],
+      plugins: [{ExDNA.Credo, []}],
       requires: [],
       strict: true,
       parse_timeout: 5000,
@@ -58,7 +58,7 @@
         {Credo.Check.Warning.UnusedPathOperation},
         {Credo.Check.Warning.UnusedRegexOperation},
         {Credo.Check.Warning.UnusedStringOperation},
-        {Credo.Check.Warning.UnusedTupleOperation},
+        {Credo.Check.Warning.UnusedTupleOperation}
 
         # Disabled by default but available
         # {Credo.Check.Design.DuplicatedCode},

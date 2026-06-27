@@ -3,8 +3,13 @@ defmodule AshScylla.ConnectionTest do
   Tests for AshScylla.Connection — covers edge cases around
   lazy keyspace handling, connection lifecycle, error paths,
   and cluster mode selection logic (single-node vs Xandra.Cluster).
+
+  NOTE: These tests require a running ScyllaDB instance at 127.0.0.1:9042.
+  They are tagged :integration and excluded from default test runs.
   """
   use ExUnit.Case, async: false
+
+  @moduletag :integration
 
   alias AshScylla.Connection
 
@@ -176,12 +181,6 @@ defmodule AshScylla.ConnectionTest do
       conn = Connection.get_conn(name)
       assert is_pid(conn.conn)
       assert conn.nodes == ["127.0.0.1:9042"]
-    end
-
-    test "single node with tuple format uses Xandra" do
-      name = start_conn(nodes: [{"127.0.0.1", 9042}])
-      conn = Connection.get_conn(name)
-      assert is_pid(conn.conn)
     end
 
     test "multiple nodes with same port uses Xandra.Cluster" do

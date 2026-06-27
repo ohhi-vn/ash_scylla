@@ -147,7 +147,7 @@ defmodule AshScylla.DataLayer.TypePipelineTest do
       map = DataLayer.attr_cql_type_map(TypeTestResource)
       assert map[:str_val] == "text"
       assert map[:int_val] == "bigint"
-      assert map[:float_val] == "float"
+      assert map[:float_val] == "double"
       assert map[:bool_val] == "boolean"
     end
 
@@ -180,16 +180,17 @@ defmodule AshScylla.DataLayer.TypePipelineTest do
   # ---------------------------------------------------------------------------
 
   describe "create/2 typed params" do
-    test "sends float as float (4 bytes), not double (8 bytes)" do
+    test "sends float as double (8 bytes) to match ScyllaDB DOUBLE columns" do
       cs = changeset(%{float_val: 1.5})
       assert {:ok, _} = DataLayer.create(TypeTestResource, cs)
 
       assert_receive {:ash_scylla_query, insert_query, insert_params, _opts}
       assert insert_query =~ "INSERT INTO type_test"
 
-      # Find the float_val param — must be {"float", 1.5}, not {"double", 1.5}
-      float_param = find_param_by_type(insert_params, "float")
-      assert float_param == {"float", 1.5}
+      # Find the float_val param — must be {"double", 1.5}, not {"float", 1.5}
+      # ScyllaDB DOUBLE columns require 8-byte encoding; 4-byte float would be rejected.
+      double_param = find_param_by_type(insert_params, "double")
+      assert double_param == {"double", 1.5}
     end
 
     test "sends integer as raw value (typed_params handles it)" do

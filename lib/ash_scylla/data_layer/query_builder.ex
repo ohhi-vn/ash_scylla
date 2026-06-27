@@ -205,7 +205,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   end
 
   defp build_select_clause(_table, nil, nil, aggregates)
-       when is_list(aggregates) and length(aggregates) > 0 do
+       when is_list(aggregates) and aggregates != [] do
     {agg_clause, params} =
       aggregates
       |> Enum.map(fn
@@ -245,7 +245,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   end
 
   defp build_select_clause(_table, columns, nil, aggregates)
-       when is_list(columns) and is_list(aggregates) and length(aggregates) > 0 do
+       when is_list(columns) and is_list(aggregates) and aggregates != [] do
     col_clause = Enum.map_join(columns, ", ", &cql_identifier/1)
 
     {agg_clause, params} =

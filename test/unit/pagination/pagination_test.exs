@@ -28,7 +28,7 @@ defmodule AshScylla.PaginationTest do
     test "decodes base64 string to binary" do
       original = <<1, 2, 3, 4, 5>>
       encoded = Base.encode64(original)
-      assert {:ok, original} = Pagination.decode_page_token(encoded)
+      assert {:ok, ^original} = Pagination.decode_page_token(encoded)
     end
 
     test "returns error for invalid base64" do

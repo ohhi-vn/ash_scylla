@@ -101,7 +101,7 @@ defmodule AshScylla.BatchPartitionGroupingTest do
 
       # Verify the batch was executed
       batches = GroupingRepo.get_batches()
-      assert length(batches) >= 1
+      assert batches != []
     end
 
     test "returns error when any batch fails" do

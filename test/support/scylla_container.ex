@@ -19,10 +19,14 @@ defmodule AshScylla.ScyllaContainer do
     %__MODULE__{
       image: "scylladb/scylla:5.4",
       cmd: [
-        "--smp", "1",
-        "--memory", "512M",
-        "--developer-mode", "1",
-        "--overprovisioned", "1"
+        "--smp",
+        "1",
+        "--memory",
+        "512M",
+        "--developer-mode",
+        "1",
+        "--overprovisioned",
+        "1"
       ],
       wait_timeout: 120_000
     }

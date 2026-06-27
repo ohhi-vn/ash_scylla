@@ -226,8 +226,7 @@ defmodule AshScylla.DataLayer.Types do
   def ash_type_to_cql_type({:tuple, element_types}, opts) when is_list(element_types) do
     inner =
       element_types
-      |> Enum.map(&ash_type_to_cql_type(&1, opts))
-      |> Enum.join(", ")
+      |> Enum.map_join(", ", &ash_type_to_cql_type(&1, opts))
 
     "TUPLE<#{inner}>"
   end

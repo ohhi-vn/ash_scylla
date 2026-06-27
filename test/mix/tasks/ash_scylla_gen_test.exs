@@ -12,15 +12,12 @@ defmodule Mix.Tasks.AshScylla.GenTest do
                 user_id: :uuid,
                 name: :string,
                 age: :integer
-              ],
-              []} =
+              ], []} =
                ResourceGenerator.parse_args(["MyResource", "user_id:uuid, name:string, age:int"])
     end
 
     test "parses domain-prefixed resource name" do
-      assert {:ok, :"MyApp.MyDomain.MyResource",
-              [name: :string],
-              []} =
+      assert {:ok, :"MyApp.MyDomain.MyResource", [name: :string], []} =
                ResourceGenerator.parse_args(["MyApp.MyDomain.MyResource", "name:string"])
     end
 
@@ -30,7 +27,8 @@ defmodule Mix.Tasks.AshScylla.GenTest do
     end
 
     test "returns error on empty args" do
-      assert {:error, "Usage: mix ash_scylla.new_template MyResource user_id:uuid, name:string, age:int"} =
+      assert {:error,
+              "Usage: mix ash_scylla.new_template MyResource user_id:uuid, name:string, age:int"} =
                ResourceGenerator.parse_args([])
     end
   end
@@ -228,7 +226,10 @@ defmodule Mix.Tasks.AshScylla.GenTest do
 
     test "writes file without domain when not provided" do
       unique = System.unique_integer([:positive])
-      file_path = Path.join(["lib", "ash_scylla", "resources", "test_no_domain_write_#{unique}.ex"])
+
+      file_path =
+        Path.join(["lib", "ash_scylla", "resources", "test_no_domain_write_#{unique}.ex"])
+
       File.rm(file_path)
 
       output =
@@ -261,7 +262,7 @@ defmodule Mix.Tasks.AshScylla.GenTest do
           MyApp.Repo
         )
 
-      assert length(statements) >= 1
+      assert statements != []
       table_cql = hd(statements)
       assert table_cql =~ "CREATE TABLE IF NOT EXISTS users"
       assert table_cql =~ "name TEXT"
@@ -444,7 +445,12 @@ defmodule Mix.Tasks.AshScylla.GenTest do
       output =
         capture_io(fn ->
           try do
-            Mix.Tasks.AshScylla.Gen.run(["--resource", "AshScylla.TestResource", "--force", "TestSchema"])
+            Mix.Tasks.AshScylla.Gen.run([
+              "--resource",
+              "AshScylla.TestResource",
+              "--force",
+              "TestSchema"
+            ])
           rescue
             _ -> :ok
           end
@@ -460,7 +466,12 @@ defmodule Mix.Tasks.AshScylla.GenTest do
       output =
         capture_io(fn ->
           try do
-            Mix.Tasks.AshScylla.Gen.run(["--resource", "AshScylla.TestResource", "--force", "DomainGrouped"])
+            Mix.Tasks.AshScylla.Gen.run([
+              "--resource",
+              "AshScylla.TestResource",
+              "--force",
+              "DomainGrouped"
+            ])
           rescue
             _ -> :ok
           end

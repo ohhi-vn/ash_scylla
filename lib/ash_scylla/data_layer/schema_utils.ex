@@ -123,8 +123,7 @@ defmodule AshScylla.DataLayer.SchemaUtils do
       if Ash.Resource.Info.domain(resource) do
         segments
         |> Enum.take(-2)
-        |> Enum.map(&Macro.underscore/1)
-        |> Enum.join("_")
+        |> Enum.map_join("_", &Macro.underscore/1)
       else
         segments
         |> List.last()

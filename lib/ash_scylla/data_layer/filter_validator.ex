@@ -361,7 +361,7 @@ defmodule AshScylla.DataLayer.FilterValidator do
                   "primary key or have a secondary index."
           end
 
-          if length(values) == 0 do
+          if values == [] do
             raise AshScylla.Error,
               message:
                 "IN filter on column `:#{col}` has an empty value list. " <>

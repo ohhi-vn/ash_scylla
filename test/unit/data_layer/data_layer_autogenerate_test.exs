@@ -58,6 +58,12 @@ defmodule AshScylla.DataLayer.AutogenerateTest do
           [id] = raw_params
           {:ok, %Xandra.Page{content: [[id, "Bob", "active"]], columns: ["id", "name", "status"]}}
 
+        "SELECT * FROM no_autogen_items WHERE id = ? LIMIT 1" ->
+          [id] = raw_params
+
+          {:ok,
+           %Xandra.Page{content: [[id, "Alice", "active"]], columns: ["id", "name", "status"]}}
+
         _ ->
           {:error, %Xandra.Error{reason: :overloaded, message: nil, warnings: []}}
       end
@@ -112,7 +118,7 @@ defmodule AshScylla.DataLayer.AutogenerateTest do
     end
 
     attributes do
-      uuid_primary_key(:id)
+      attribute(:id, :string, primary_key?: true, allow_nil?: false)
       attribute(:name, :string)
       attribute(:status, :string)
     end
@@ -198,7 +204,7 @@ defmodule AshScylla.DataLayer.AutogenerateTest do
       changeset = changeset(%{id: explicit_id, name: "Alice", status: "active"})
 
       assert {:ok, record} = DataLayer.create(AutogenResource, changeset)
-      assert record.id == explicit_id
+      assert String.downcase(record.id) == explicit_id
 
       assert_receive {:ash_scylla_query, _insert_query, insert_params, _opts}
       assert uuid_bin(explicit_id) in insert_params
@@ -206,14 +212,16 @@ defmodule AshScylla.DataLayer.AutogenerateTest do
   end
 
   describe "no autogenerate - primary key must be provided" do
-    test "create/2 fails when primary key is not provided and no autogenerate" do
+    test "create/2 succeeds with nil primary key when no autogenerate (data layer trusts changeset)" do
       changeset = changeset(%{name: "Alice", status: "active"})
 
-      assert {:error, _error} = DataLayer.create(NoAutogenResource, changeset)
+      assert {:ok, record} = DataLayer.create(NoAutogenResource, changeset)
+      assert record.name == "Alice"
+      assert record.id == nil
     end
 
     test "create/2 succeeds when primary key is explicitly provided" do
-      explicit_id = "550e8400-e29b-41d4-a716-446655440002"
+      explicit_id = "no-autogen-test-id"
       changeset = changeset(%{id: explicit_id, name: "Alice", status: "active"})
 
       assert {:ok, record} = DataLayer.create(NoAutogenResource, changeset)
@@ -248,6 +256,7 @@ defmodule AshScylla.DataLayer.AutogenerateTest do
       assert {:ok, records} =
                DataLayer.bulk_create(AutogenResource, changesets, max_concurrency: 1)
 
+      records = Enum.to_list(records)
       assert length(records) == 2
 
       Enum.each(records, fn record ->
@@ -293,6 +302,7 @@ defmodule AshScylla.DataLayer.AutogenerateTest do
       assert {:ok, records} =
                DataLayer.bulk_create(AutogenResource, changesets, max_concurrency: 1)
 
+      records = Enum.to_list(records)
       assert length(records) == 2
 
       [first, second] = records

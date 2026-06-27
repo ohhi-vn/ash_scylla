@@ -613,7 +613,7 @@ defmodule AshScylla.DataLayer do
 
     case result do
       :ok when return_records? -> {:ok, stream_bulk_records(changesets, resource)}
-      :ok -> {:ok, Enum.map(changesets, & &1.data)}
+      :ok -> {:ok, []}
       {:error, error} -> handle_scylla_result({:error, error})
     end
   end
@@ -712,7 +712,7 @@ defmodule AshScylla.DataLayer do
   @impl Ash.DataLayer
   @spec update_query(t(), Ash.Changeset.t(), keyword(), Ash.Resource.t()) ::
           {:ok, [Ash.Resource.t()]} | {:error, term()}
-  def update_query(data_layer_query, changeset, _opts, resource) do
+  def update_query(data_layer_query, changeset, resource, _opts) do
     repo = repo(resource)
     opts = build_opts(resource)
     sanitized_table = sanitize_identifier(source(resource))
@@ -721,7 +721,13 @@ defmodule AshScylla.DataLayer do
     {set_clauses, set_values} = build_set_clauses(attrs, resource)
 
     %__MODULE__{filters: filters} = data_layer_query
-    {where_clause, where_params} = QueryBuilder.build_where_clause(filters)
+
+    {where_clause, where_params} =
+      case filters do
+        [] -> build_pk_where_clause(changeset, resource)
+        _ -> QueryBuilder.build_where_clause(filters)
+      end
+
     where_params = convert_uuid_params(where_params, resource)
 
     query =
@@ -744,13 +750,19 @@ defmodule AshScylla.DataLayer do
   @impl Ash.DataLayer
   @spec destroy_query(t(), Ash.Changeset.t(), keyword(), Ash.Resource.t()) ::
           :ok | {:error, term()}
-  def destroy_query(data_layer_query, _changeset, _opts, resource) do
+  def destroy_query(data_layer_query, changeset, _opts, resource) do
     repo = repo(resource)
     opts = build_opts(resource)
     sanitized_table = sanitize_identifier(source(resource))
 
     %__MODULE__{filters: filters} = data_layer_query
-    {where_clause, where_params} = QueryBuilder.build_where_clause(filters)
+
+    {where_clause, where_params} =
+      case filters do
+        [] -> build_pk_where_clause(changeset, resource)
+        _ -> QueryBuilder.build_where_clause(filters)
+      end
+
     where_params = convert_uuid_params(where_params, resource)
 
     query =
@@ -839,7 +851,12 @@ defmodule AshScylla.DataLayer do
     sanitized_table = sanitize_identifier(table)
     %__MODULE__{filters: filters} = data_layer_query
 
-    {where_clause, where_params} = QueryBuilder.build_where_clause(filters)
+    {where_clause, where_params} =
+      case filters do
+        [] -> {"", []}
+        _ -> QueryBuilder.build_where_clause(filters)
+      end
+
     where_params = convert_uuid_params(where_params, resource)
 
     # Build COUNT queries for each aggregate
@@ -1403,16 +1420,32 @@ defmodule AshScylla.DataLayer do
         data when is_map(data) ->
           data_attributes = Map.get(data, :attributes, %{})
 
-          Enum.reduce(Info.attributes(resource), %{}, fn attr, acc ->
-            if attr.primary_key? do
-              case Map.get(data_attributes, attr.name) do
-                nil -> acc
-                val -> Map.put(acc, attr.name, val)
+          pk_from_struct =
+            Enum.reduce(Info.attributes(resource), %{}, fn attr, acc ->
+              if attr.primary_key? do
+                case Map.get(data, attr.name) do
+                  nil -> acc
+                  val -> Map.put(acc, attr.name, val)
+                end
+              else
+                acc
               end
-            else
-              acc
-            end
-          end)
+            end)
+
+          if map_size(data_attributes) > 0 and map_size(pk_from_struct) == 0 do
+            Enum.reduce(Info.attributes(resource), %{}, fn attr, acc ->
+              if attr.primary_key? do
+                case Map.get(data_attributes, attr.name) do
+                  nil -> acc
+                  val -> Map.put(acc, attr.name, val)
+                end
+              else
+                acc
+              end
+            end)
+          else
+            pk_from_struct
+          end
 
         _ ->
           %{}
@@ -1749,7 +1782,7 @@ defmodule AshScylla.DataLayer do
       case attr.type.storage_type([]) do
         :uuid -> "uuid"
         :integer -> "bigint"
-        :float -> "float"
+        :float -> "double"
         :double -> "double"
         :boolean -> "boolean"
         :string -> "text"
@@ -1781,8 +1814,8 @@ defmodule AshScylla.DataLayer do
       UUID -> "uuid"
       :uuid -> "uuid"
       Ash.Type.Integer -> "bigint"
-      Ash.Type.Float -> "float"
-      :float -> "float"
+      Ash.Type.Float -> "double"
+      :float -> "double"
       :double -> "double"
       Ash.Type.Boolean -> "boolean"
       :boolean -> "boolean"

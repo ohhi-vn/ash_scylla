@@ -113,7 +113,9 @@ defmodule Mix.Tasks.AshScylla.Migrate do
     # Also scan umbrella child apps
     child_files =
       case Mix.Project.apps_paths() do
-        nil -> []
+        nil ->
+          []
+
         apps ->
           for {_app, path} <- apps,
               file <- Path.wildcard(Path.join(path, "priv/migrations/**/*.ex")),
@@ -247,9 +249,15 @@ defmodule Mix.Tasks.AshScylla.Migrate do
       repo
     else
       app = AshScylla.MixHelpers.app_name()
-      missing = [(!has_nodes && "nodes/0") || nil, (!has_keyspace && "keyspace/0") || nil] |> Enum.reject(&is_nil/1)
+
+      missing =
+        [(!has_nodes && "nodes/0") || nil, (!has_keyspace && "keyspace/0") || nil]
+        |> Enum.reject(&is_nil/1)
+
       behaviours = repo.__info__(:attributes)[:behaviour] || []
-      exported = repo.__info__(:functions) |> Enum.map_join(", ", &"#{elem(&1, 0)}/#{elem(&1, 1)}")
+
+      exported =
+        repo.__info__(:functions) |> Enum.map_join(", ", &"#{elem(&1, 0)}/#{elem(&1, 1)}")
 
       Mix.raise("""
       Repo module #{inspect(repo)} is missing required functions: #{Enum.join(missing, ", ")}.
@@ -327,7 +335,9 @@ defmodule Mix.Tasks.AshScylla.Migrate do
     load_from_lib_paths(repo)
 
     case Code.ensure_compiled(repo) do
-      {:module, _} -> return_repo(repo)
+      {:module, _} ->
+        return_repo(repo)
+
       {:error, :nofile} ->
         app = AshScylla.MixHelpers.app_name()
 
@@ -369,7 +379,9 @@ defmodule Mix.Tasks.AshScylla.Migrate do
 
     paths =
       case Mix.Project.apps_paths() do
-        nil -> []
+        nil ->
+          []
+
         apps_paths ->
           apps_paths
           |> Map.keys()
@@ -401,7 +413,9 @@ defmodule Mix.Tasks.AshScylla.Migrate do
 
     child_paths =
       case Mix.Project.apps_paths() do
-        nil -> []
+        nil ->
+          []
+
         apps_paths ->
           apps_paths
           |> Map.values()
@@ -413,6 +427,7 @@ defmodule Mix.Tasks.AshScylla.Migrate do
     found =
       Enum.find_value(all_paths, fn lib_path ->
         ex_file = Path.join(lib_path, "#{module_path}.ex")
+
         if File.exists?(ex_file) do
           Mix.shell().info("  Loading repo from: #{ex_file}")
           Code.compile_file(ex_file)
@@ -470,12 +485,13 @@ defmodule Mix.Tasks.AshScylla.Migrate do
       {0, 0}
     else
       # Start the repo connection so resources can query live schema
-      {:ok, _} = AshScylla.Connection.start_link(
-        name: repo,
-        nodes: repo.nodes(),
-        keyspace: repo.keyspace(),
-        connect_timeout: 10_000
-      )
+      {:ok, _} =
+        AshScylla.Connection.start_link(
+          name: repo,
+          nodes: repo.nodes(),
+          keyspace: repo.keyspace(),
+          connect_timeout: 10_000
+        )
 
       results =
         Enum.map(resources, fn resource ->

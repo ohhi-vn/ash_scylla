@@ -5,6 +5,10 @@ defmodule AshScylla.DataLayer.BugFixesTest do
   2. Atom type conversion in to_ash_record
   3. get_primary_key uses changeset.data as fallback
   4. In-memory sort fallback when ORDER BY is dropped for secondary index scans
+  5. Float columns marshaled as 8-byte double (not 4-byte float)
+  6. update_query/4 argument order matches Ash callback
+  7. get_primary_key_from_changeset/2 reads PK from struct fields
+  8. bulk_create/3 returns [] when return_records? is false
   """
 
   use ExUnit.Case, async: false
@@ -38,16 +42,38 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       send(self(), {:ash_scylla_query, query, raw_params, opts})
 
       case query do
+        # --- batch ---
+        "BEGIN BATCH" <> _ ->
+          {:ok, %Xandra.Void{}}
+
         # --- inserts ---
         "INSERT INTO bug_items" <> _ ->
+          {:ok, %Xandra.Page{content: []}}
+
+        "INSERT INTO float_items" <> _ ->
+          {:ok, %Xandra.Page{content: []}}
+
+        "INSERT INTO struct_pk_items" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
         # --- updates ---
         "UPDATE bug_items SET" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
+        "UPDATE float_items SET" <> _ ->
+          {:ok, %Xandra.Page{content: []}}
+
+        "UPDATE struct_pk_items SET" <> _ ->
+          {:ok, %Xandra.Page{content: []}}
+
         # --- deletes ---
         "DELETE FROM bug_items" <> _ ->
+          {:ok, %Xandra.Page{content: []}}
+
+        "DELETE FROM float_items" <> _ ->
+          {:ok, %Xandra.Page{content: []}}
+
+        "DELETE FROM struct_pk_items" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
         # --- selects with LIMIT on secondary index ---
@@ -84,6 +110,35 @@ defmodule AshScylla.DataLayer.BugFixesTest do
              columns: ["id", "name", "privacy", "score"]
            }}
 
+        "SELECT * FROM float_items WHERE id = ? LIMIT 1" ->
+          [id] = raw_params
+
+          {:ok,
+           %Xandra.Page{
+             content: [[id, "Run", 10.5, 100.0, 50.0]],
+             columns: ["id", "name", "speed", "distance", "elevation"]
+           }}
+
+        "SELECT * FROM float_items WHERE name = ?" <> _ ->
+          [_name] = raw_params
+
+          {:ok,
+           %Xandra.Page{
+             content: [
+               [uuid_bin("550e8400-e29b-41d4-a716-446655440099"), "Run", 10.5, 100.0, 50.0]
+             ],
+             columns: ["id", "name", "speed", "distance", "elevation"]
+           }}
+
+        "SELECT * FROM struct_pk_items WHERE" <> _ ->
+          [id] = raw_params
+
+          {:ok,
+           %Xandra.Page{
+             content: [[id, "Alice", "game-1"]],
+             columns: ["id", "name", "game_id"]
+           }}
+
         # --- fallback ---
         _ ->
           {:error, %Xandra.Error{reason: :overloaded, message: nil, warnings: []}}
@@ -117,6 +172,64 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       attribute(:name, :string)
       attribute(:privacy, :atom)
       attribute(:score, :integer)
+    end
+
+    actions do
+      defaults([:create, :read, :update, :destroy])
+    end
+  end
+
+  defmodule FloatResource do
+    @moduledoc false
+
+    use Ash.Resource,
+      domain: nil,
+      data_layer: AshScylla.DataLayer
+
+    import AshScylla.DataLayer.Dsl
+
+    ash_scylla do
+      repo(FakeRepo)
+      table("float_items")
+      keyspace("test_ks")
+      consistency(:one)
+      secondary_index(:name)
+    end
+
+    attributes do
+      uuid_primary_key(:id)
+      attribute(:name, :string)
+      attribute(:speed, :float)
+      attribute(:distance, :float)
+      attribute(:elevation, :float)
+    end
+
+    actions do
+      defaults([:create, :read, :update, :destroy])
+    end
+  end
+
+  defmodule StructPkResource do
+    @moduledoc false
+
+    use Ash.Resource,
+      domain: nil,
+      data_layer: AshScylla.DataLayer
+
+    import AshScylla.DataLayer.Dsl
+
+    ash_scylla do
+      repo(FakeRepo)
+      table("struct_pk_items")
+      keyspace("test_ks")
+      consistency(:one)
+      secondary_index(:name)
+    end
+
+    attributes do
+      uuid_primary_key(:id)
+      attribute(:name, :string)
+      attribute(:game_id, :string, primary_key?: true, allow_nil?: false)
     end
 
     actions do
@@ -218,7 +331,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       }
 
       assert {:ok, records} = DataLayer.run_query(query, AtomResource)
-      assert length(records) > 0
+      assert records != []
 
       # privacy should be an atom, not a string
       first = hd(records)
@@ -333,6 +446,222 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       # Verify ascending order
       scores = Enum.map(records, & &1.score)
       assert scores == [50, 100, 200]
+    end
+  end
+
+  # ===========================================================================
+  # Bug 5: Float columns marshaled as 8-byte double (not 4-byte float)
+  # ===========================================================================
+
+  describe "Bug 5: Float columns marshaled as double" do
+    test "attr_cql_type_map resolves :float to 'double' not 'float'" do
+      map = DataLayer.attr_cql_type_map(FloatResource)
+      assert map[:speed] == "double"
+      assert map[:distance] == "double"
+      assert map[:elevation] == "double"
+    end
+
+    test "create sends float values as doubles" do
+      id = "550e8400-e29b-41d4-a716-446655440099"
+      cs = changeset(%{id: id, name: "Run", speed: 10.5, distance: 100.0, elevation: 50.0})
+      assert {:ok, _record} = DataLayer.create(FloatResource, cs)
+
+      assert_receive {:ash_scylla_query, insert_query, insert_params, _opts}
+      assert insert_query =~ "INSERT INTO float_items"
+
+      # Verify float values are present as raw floats
+      # The data layer wraps them in {type, value} tuples internally,
+      # but unwrap_params strips the type tags for the test assertion
+      assert 10.5 in insert_params
+      assert 100.0 in insert_params
+      assert 50.0 in insert_params
+    end
+
+    test "bulk_create sends float values as doubles" do
+      id1 = "550e8400-e29b-41d4-a716-446655440098"
+      id2 = "550e8400-e29b-41d4-a716-446655440097"
+
+      changesets = [
+        changeset(%{id: id1, name: "Sprint", speed: 15.0, distance: 50.0, elevation: 10.0}),
+        changeset(%{id: id2, name: "Marathon", speed: 8.5, distance: 42.0, elevation: 100.0})
+      ]
+
+      assert {:ok, _records} =
+               DataLayer.bulk_create(FloatResource, changesets, max_concurrency: 1)
+
+      assert_receive {:ash_scylla_query, batch_query, batch_params, _opts}
+      assert batch_query =~ "BEGIN BATCH"
+      assert batch_query =~ "INSERT INTO float_items"
+
+      # Verify all float values are present
+      assert 15.0 in batch_params
+      assert 8.5 in batch_params
+      assert 50.0 in batch_params
+      assert 42.0 in batch_params
+      assert 10.0 in batch_params
+      assert 100.0 in batch_params
+    end
+  end
+
+  # ===========================================================================
+  # Bug 6: update_query/4 argument order matches Ash callback
+  # ===========================================================================
+
+  describe "Bug 6: update_query/4 argument order" do
+    test "update_query accepts (query, changeset, resource, opts)" do
+      query = %DataLayer{
+        resource: FloatResource,
+        repo: FakeRepo,
+        table: "float_items",
+        filters: [%{operator: :eq, left: %{name: :name}, right: %{value: "Run"}}],
+        sorts: [],
+        limit: nil,
+        offset: nil,
+        select: nil,
+        tenant: nil,
+        context: %{}
+      }
+
+      # The Ash callback calls update_query(query, changeset, resource, opts)
+      # If the arguments are swapped, this will fail with FunctionClauseError
+      # because repo() would be called with an opts map instead of a resource
+      assert {:ok, _records} =
+               DataLayer.update_query(query, changeset(%{speed: 20.0}), FloatResource, [])
+
+      assert_receive {:ash_scylla_query, update_query, _update_params, opts}
+      assert update_query =~ "UPDATE float_items SET"
+      assert opts[:consistency] == :one
+    end
+
+    test "update_query does not crash when opts contain keyword list" do
+      query = %DataLayer{
+        resource: FloatResource,
+        repo: FakeRepo,
+        table: "float_items",
+        filters: [%{operator: :eq, left: %{name: :name}, right: %{value: "Run"}}],
+        sorts: [],
+        limit: nil,
+        offset: nil,
+        select: nil,
+        tenant: nil,
+        context: %{}
+      }
+
+      # With correct argument order, opts are the 4th argument
+      # With swapped args, resource (module) would be in opts position
+      # and repo(resource) would fail
+      assert {:ok, _} =
+               DataLayer.update_query(
+                 query,
+                 changeset(%{distance: 200.0}),
+                 FloatResource,
+                 consistency: :local_quorum
+               )
+    end
+  end
+
+  # ===========================================================================
+  # Bug 7: get_primary_key_from_changeset/2 reads PK from struct fields
+  # ===========================================================================
+
+  describe "Bug 7: get_primary_key_from_changeset with struct data" do
+    test "destroy reads PK from struct fields when data_attributes is empty" do
+      # Simulate a changeset where data is a struct (not a plain map)
+      # Structs don't have an :attributes field, so Map.get(struct, :attributes) returns nil
+      data_struct = %{
+        id: "550e8400-e29b-41d4-a716-446655440001",
+        name: "Alice",
+        game_id: "game-1"
+      }
+
+      # Build a changeset with struct-like data (no :attributes key)
+      changeset = %Ash.Changeset{
+        attributes: %{name: "Alice"},
+        data: data_struct
+      }
+
+      assert :ok = DataLayer.destroy(StructPkResource, changeset)
+
+      assert_receive {:ash_scylla_query, delete_query, params, _opts}
+      assert delete_query =~ "DELETE FROM struct_pk_items"
+      assert delete_query =~ "WHERE"
+
+      # Should have extracted the PK from the struct fields
+      assert params != []
+      # The first param should be the UUID binary for the :id PK
+      [id_bin | _] = params
+      assert is_binary(id_bin)
+      assert byte_size(id_bin) == 16
+    end
+
+    test "update_query works with struct-based changeset data" do
+      # When changeset.data is a struct (no :attributes), the PK should still be found
+      data_struct = %{
+        id: "550e8400-e29b-41d4-a716-446655440002",
+        name: "Bob",
+        game_id: "game-2"
+      }
+
+      changeset = %Ash.Changeset{
+        attributes: %{name: "Bob Updated"},
+        data: data_struct
+      }
+
+      query = %DataLayer{
+        resource: StructPkResource,
+        repo: FakeRepo,
+        table: "struct_pk_items",
+        filters: [%{operator: :eq, left: %{name: :name}, right: %{value: "Bob"}}],
+        sorts: [],
+        limit: nil,
+        offset: nil,
+        select: nil,
+        tenant: nil,
+        context: %{}
+      }
+
+      assert {:ok, _records} =
+               DataLayer.update_query(query, changeset, StructPkResource, [])
+
+      assert_receive {:ash_scylla_query, _update_query, _update_params, _opts}
+    end
+  end
+
+  # ===========================================================================
+  # Bug 8: bulk_create/3 returns [] when return_records? is false
+  # ===========================================================================
+
+  describe "Bug 8: bulk_create with return_records? false" do
+    test "returns {:ok, []} when return_records? is false" do
+      changesets = [
+        changeset(%{name: "Alice", speed: 10.0}),
+        changeset(%{name: "Bob", speed: 20.0})
+      ]
+
+      assert {:ok, []} = DataLayer.bulk_create(FloatResource, changesets, return_records?: false)
+    end
+
+    test "does not crash when changeset.data is nil" do
+      # Changesets built from raw maps may have nil data
+      changesets = [
+        %Ash.Changeset{attributes: %{name: "Charlie", speed: 15.0}, data: nil},
+        %Ash.Changeset{attributes: %{name: "Diana", speed: 25.0}, data: nil}
+      ]
+
+      assert {:ok, []} = DataLayer.bulk_create(FloatResource, changesets, return_records?: false)
+    end
+
+    test "returns records when return_records? is true" do
+      id = "550e8400-e29b-41d4-a716-446655440096"
+
+      changesets = [
+        changeset(%{id: id, name: "Eve", speed: 30.0})
+      ]
+
+      assert {:ok, records} =
+               DataLayer.bulk_create(FloatResource, changesets, return_records?: true)
+
+      assert Enum.count(records) == 1
     end
   end
 end

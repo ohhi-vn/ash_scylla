@@ -89,6 +89,9 @@ mix test --exclude integration
 
 # Integration tests (uses the ScyllaDB container)
 mix test test/scylla_integration_test.exs
+
+# Run ScyllaDB config
+SCYLLA_DIRECT=1 SCYLLA_HOST=127.0.0.1 SCYLLA_PORT=9042 MIX_ENV=test mix test test/integration --only integration
 ```
 
 ---

@@ -225,65 +225,12 @@ defmodule AshScylla.Migration do
 
   @spec unindexable_columns(module()) :: [atom()]
   defp unindexable_columns(resource) do
-    try do
-      pk_attrs =
-        resource
-        |> Ash.Resource.Info.attributes()
-        |> Enum.filter(& &1.primary_key?)
-
-      # ScyllaDB forbids secondary indexes on the sole partition key column
-      # because it's already indexed by the partitioner. When AshScylla gains
-      # support for composite partition keys, revisit this to allow indexing
-      # individual components of a composite partition key.
-      case pk_attrs do
-        [sole_partition_key] -> [sole_partition_key.name]
-        _ -> []
-      end
-    rescue
-      # Plain test modules (not Ash resources) have no primary key metadata
-      _ -> []
-    end
+    AshScylla.DataLayer.SchemaUtils.unindexable_columns(resource)
   end
 
   @spec get_table_name(module()) :: String.t()
   defp get_table_name(resource) do
-    # Try DSL getter first (works at runtime), then fall back to compile-time attribute
-    case Dsl.table(resource) do
-      nil ->
-        segments = Module.split(resource)
-
-        name =
-          if Ash.Resource.Info.domain(resource) do
-            # Use last two segments (domain_resource) to avoid collisions
-            # e.g. Games.Stats -> games_stats, OfflineGame.Stats -> offline_game_stats
-            segments
-            |> Enum.take(-2)
-            |> Enum.map(&Macro.underscore/1)
-            |> Enum.join("_")
-          else
-            # No domain (test resources, etc.) — use just the last segment
-            segments
-            |> List.last()
-            |> Macro.underscore()
-          end
-
-        # Fall back to @table attribute if it exists (safe for compiled modules)
-        table_attr =
-          try do
-            Module.get_attribute(resource, :table)
-          rescue
-            ArgumentError -> nil
-          end
-
-        case table_attr do
-          nil -> name
-          "" -> name
-          table -> to_string(table)
-        end
-
-      name ->
-        to_string(name)
-    end
+    AshScylla.DataLayer.SchemaUtils.get_table_name(resource)
   end
 
   # Quotes an identifier for use in CQL, protecting reserved words.
@@ -414,7 +361,7 @@ defmodule AshScylla.Migration do
     alterations =
       fields
       |> Enum.map_join(", ", fn {name, type} ->
-        "ADD #{name} #{ash_type_to_cql_type(type, [])}"
+        "ADD #{name} #{AshScylla.DataLayer.Types.ash_type_to_cql_type(type, [])}"
       end)
 
     "ALTER TYPE #{type_name} #{alterations}"

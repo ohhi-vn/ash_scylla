@@ -229,7 +229,14 @@ defmodule AshScylla.DataLayer.Batch do
         {:ok, []}
 
       _ ->
-        unless valid_statements?(statements) do
+        if valid_statements?(statements) do
+          queries = Enum.map(statements, fn {query, _} -> query end)
+          all_params = Enum.flat_map(statements, fn {_, params} -> params end)
+          batch_query = "BEGIN BATCH #{Enum.join(queries, "; ")} APPLY BATCH;"
+
+          Logger.debug("AshScylla: Built batch query with #{length(statements)} statements")
+          repo.query(batch_query, all_params, opts)
+        else
           invalid =
             Enum.find(statements, fn
               {query, params} when is_binary(query) and is_list(params) -> false
@@ -240,13 +247,6 @@ defmodule AshScylla.DataLayer.Batch do
 
           raise ArgumentError,
                 "Invalid batch statement: #{inspect(invalid)}. Expected {query_string, params_list}"
-        else
-          queries = Enum.map(statements, fn {query, _} -> query end)
-          all_params = Enum.flat_map(statements, fn {_, params} -> params end)
-          batch_query = "BEGIN BATCH #{Enum.join(queries, "; ")} APPLY BATCH;"
-
-          Logger.debug("AshScylla: Built batch query with #{length(statements)} statements")
-          repo.query(batch_query, all_params, opts)
         end
     end
   end

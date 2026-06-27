@@ -157,7 +157,7 @@ defmodule AshScylla.DataLayer.AsyncBatchTest do
                )
 
       calls = TrackingRepo.get_calls()
-      assert length(calls) >= 1
+      assert calls != []
     end
   end
 
@@ -327,7 +327,7 @@ defmodule AshScylla.DataLayer.PaginationUpdatedTest do
     test "decode reverses encode" do
       original = "binary_paging_state"
       token = Pagination.encode_page_token(original)
-      assert {:ok, original} = Pagination.decode_page_token(token)
+      assert {:ok, ^original} = Pagination.decode_page_token(token)
     end
 
     test "decode returns error for invalid base64" do

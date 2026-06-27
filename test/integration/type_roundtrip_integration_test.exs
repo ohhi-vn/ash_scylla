@@ -13,8 +13,6 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
 
   use ExUnit.Case, async: false
 
-  require Logger
-
   # Enable source annotations for debugging (see https://spark.hexdocs.pm/use-source-annotations.html)
   setup do
     debug_info? = Code.get_compiler_option(:debug_info)
@@ -145,9 +143,11 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
   defp encode_param(%Date{} = value), do: {"date", value}
   defp encode_param(%Time{} = value), do: {"time", value}
   defp encode_param(%Decimal{} = value), do: {"decimal", value}
+
   defp encode_param(value) when is_binary(value) do
     if uuid?(value), do: {"uuid", value}, else: {"text", value}
   end
+
   defp encode_param(%MapSet{} = value), do: {"set<int>", value}
   defp encode_param(value) when is_map(value), do: {"map<text, text>", value}
   defp encode_param(value) when is_list(value), do: {"list<text>", value}
@@ -156,6 +156,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
   defp uuid?(value) when is_binary(value) do
     Regex.match?(~r/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, value)
   end
+
   defp uuid?(_), do: false
 
   # ── Setup ──────────────────────────────────────────────────────────────────
@@ -218,7 +219,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         %{conn: conn}
 
       _ ->
-        :ok
+        %{conn: nil}
     end
   end
 
@@ -252,7 +253,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
-      [read_id, read_str] = row
+      [_read_id, read_str] = row
       assert read_str == "Hello ScyllaDB"
       assert is_binary(read_str)
     end
@@ -281,7 +282,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
-      [read_id, read_int] = row
+      [_read_id, read_int] = row
       assert read_int == large_int
       assert is_integer(read_int)
     end
@@ -309,7 +310,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
-      [read_id, read_float] = row
+      [_read_id, read_float] = row
       assert is_float(read_float)
       # ScyllaDB FLOAT is single-precision, so there may be rounding
       assert_in_delta(read_float, 3.14, 0.01)
@@ -338,7 +339,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
-      [read_id, read_bool] = row
+      [_read_id, read_bool] = row
       assert read_bool == true
       assert is_boolean(read_bool)
     end
@@ -369,7 +370,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
-      [read_id, read_ts] = row
+      [_read_id, read_ts] = row
       assert %DateTime{} = read_ts
       # Timestamps should be equal (truncated to millisecond)
       assert DateTime.compare(read_ts, now) == :eq
@@ -399,7 +400,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
-      [read_id, read_date] = row
+      [_read_id, read_date] = row
       assert %Date{} = read_date
       assert read_date == today
     end
@@ -428,9 +429,9 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
-      [read_id, read_time] = row
+      [_read_id, read_time] = row
       assert %Time{} = read_time
-      end
+    end
 
     test "list type: Ash {:array, :string} → ScyllaDB LIST<TEXT> → Ash list", %{conn: conn} do
       if is_nil(conn), do: :ok
@@ -455,7 +456,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
-      [read_id, read_list] = row
+      [_read_id, read_list] = row
       assert is_list(read_list)
       assert length(read_list) == 3
     end
@@ -483,7 +484,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
-      [read_id, read_set] = row
+      [_read_id, read_set] = row
       assert %MapSet{} = read_set
       assert MapSet.size(read_set) == 3
     end
@@ -511,7 +512,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
-      [read_id, read_map] = row
+      [_read_id, read_map] = row
       assert is_map(read_map)
       assert map_size(read_map) == 2
     end
@@ -540,7 +541,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
-      [read_id, read_blob] = row
+      [_read_id, read_blob] = row
       assert is_binary(read_blob)
       assert byte_size(read_blob) == 6
     end
@@ -570,7 +571,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
-      [read_id, read_atom] = row
+      [_read_id, read_atom] = row
       assert read_atom == "active"
       assert is_binary(read_atom)
     end
@@ -623,7 +624,16 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         resource: nil,
         repo: nil,
         table: "ash_scylla_type_test.roundtrip",
-        select: [:id, :str_val, :int_val, :float_val, :bool_val, :timestamp_val, :date_val, :time_val],
+        select: [
+          :id,
+          :str_val,
+          :int_val,
+          :float_val,
+          :bool_val,
+          :timestamp_val,
+          :date_val,
+          :time_val
+        ],
         filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
         limit: 1
       }
@@ -632,7 +642,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
-      [read_id, read_str, read_int, read_float, read_bool, read_ts, read_date, read_time] = row
+      [_read_id, read_str, read_int, read_float, read_bool, read_ts, read_date, read_time] = row
 
       assert read_str == "test"
       assert read_int == 42

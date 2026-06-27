@@ -142,7 +142,9 @@ defmodule Mix.Tasks.AshScylla.Gen do
       if force? do
         Mix.shell().info("  Forced regeneration of #{length(resources)} resource(s)")
       else
-        Mix.shell().info("  #{length(changed_resources)} resource(s) changed, #{unchanged} unchanged")
+        Mix.shell().info(
+          "  #{length(changed_resources)} resource(s) changed, #{unchanged} unchanged"
+        )
       end
     end
   end
@@ -259,7 +261,14 @@ defmodule Mix.Tasks.AshScylla.Gen do
     app = AshScylla.MixHelpers.app_name()
     app_module = app |> Atom.to_string() |> Macro.camelize() |> String.to_atom()
     module_name = Module.concat([app_module, :Migrations, schema_name])
-    file_path = Path.join([File.cwd!(), "priv", "migrations", Macro.underscore(to_string(schema_name)) <> ".ex"])
+
+    file_path =
+      Path.join([
+        File.cwd!(),
+        "priv",
+        "migrations",
+        Macro.underscore(to_string(schema_name)) <> ".ex"
+      ])
 
     # Group resources by domain
     domain_groups =
@@ -310,19 +319,7 @@ defmodule Mix.Tasks.AshScylla.Gen do
   end
 
   defp resolve_table_name(resource) do
-    case AshScylla.DataLayer.Dsl.table(resource) do
-      nil ->
-        segments = Module.split(resource)
-        # Use last two segments (domain_resource) to avoid collisions
-        # e.g. Games.Stats -> games_stats, OfflineGame.Stats -> offline_game_stats
-        segments
-        |> Enum.take(-2)
-        |> Enum.map(&Macro.underscore/1)
-        |> Enum.join("_")
-
-      name ->
-        to_string(name)
-    end
+    AshScylla.DataLayer.SchemaUtils.get_table_name(resource)
   end
 
   defp render_create_table_cql(table_name, attributes) do
@@ -333,6 +330,7 @@ defmodule Mix.Tasks.AshScylla.Gen do
     {pk_attrs, regular_attrs} =
       if pk_attrs == [] do
         {id_attr, rest} = Enum.split_with(regular_attrs, fn attr -> attr.name == :id end)
+
         case id_attr do
           [id] -> {[id], rest}
           [] -> {[], regular_attrs}
@@ -482,12 +480,17 @@ defmodule Mix.Tasks.AshScylla.Gen do
   defp render_resource_struct(resource) do
     resource_name = resource |> Module.split() |> List.last() |> String.downcase()
     table_name = resolve_table_name(resource)
-    statements = render_resource_statements(table_name, Ash.Resource.Info.attributes(resource), AshScylla.DataLayer.Dsl.secondary_indexes(resource))
+
+    statements =
+      render_resource_statements(
+        table_name,
+        Ash.Resource.Info.attributes(resource),
+        AshScylla.DataLayer.Dsl.secondary_indexes(resource)
+      )
 
     statements_literal =
       statements
-      |> Enum.map(&"      \"#{&1}\"")
-      |> Enum.join(",\n")
+      |> Enum.map_join(",\n", &"      \"#{&1}\"")
 
     """
     %AshScylla.Schema.Resource{
@@ -498,5 +501,4 @@ defmodule Mix.Tasks.AshScylla.Gen do
     }
     """
   end
-
 end

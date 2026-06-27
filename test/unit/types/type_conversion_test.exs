@@ -641,8 +641,12 @@ defmodule AshScylla.TypeConversionTest do
       assert Types.ash_type_to_cql_type({:array, Ash.Type.String}, []) == "LIST<TEXT>"
       assert Types.ash_type_to_cql_type({:array, Ash.Type.Integer}, []) == "LIST<BIGINT>"
       assert Types.ash_type_to_cql_type({:set, Ash.Type.String}, []) == "SET<TEXT>"
-      assert Types.ash_type_to_cql_type({:map, Ash.Type.String, Ash.Type.Integer}, []) == "MAP<TEXT, BIGINT>"
-      assert Types.ash_type_to_cql_type({:map, Ash.Type.UUID, Ash.Type.Float}, []) == "MAP<UUID, FLOAT>"
+
+      assert Types.ash_type_to_cql_type({:map, Ash.Type.String, Ash.Type.Integer}, []) ==
+               "MAP<TEXT, BIGINT>"
+
+      assert Types.ash_type_to_cql_type({:map, Ash.Type.UUID, Ash.Type.Float}, []) ==
+               "MAP<UUID, FLOAT>"
     end
 
     test "resolve_type/1 passes plain atoms through unchanged" do

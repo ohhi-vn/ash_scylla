@@ -24,11 +24,13 @@ defmodule Mix.Tasks.AshScylla.GenChangeTrackingTest do
   setup do
     # Clean up any test migration files and meta file
     File.rm(@meta_file)
+
     Path.wildcard(Path.join(@test_migration_dir, "schema*.ex"))
     |> Enum.each(&File.rm/1)
 
     on_exit(fn ->
       File.rm(@meta_file)
+
       Path.wildcard(Path.join(@test_migration_dir, "schema*.ex"))
       |> Enum.each(&File.rm/1)
     end)
@@ -368,6 +370,7 @@ defmodule Mix.Tasks.AshScylla.GenChangeTrackingTest do
 
       # Clean up and run with different resource
       File.rm(@meta_file)
+
       Path.wildcard(Path.join(@test_migration_dir, "schema*.ex"))
       |> Enum.each(&File.rm/1)
 

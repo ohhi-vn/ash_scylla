@@ -529,7 +529,7 @@ defmodule AshScylla.DataLayer.QueryOptimizer do
       if function_exported?(resource, :__ash_scylla__, 1) do
         # Try to get primary key from resource attributes
         resource
-        |> then(&apply(Ash.Resource.Info, :attributes, [&1]))
+        |> then(&Ash.Resource.Info.attributes/1)
         |> Enum.filter(& &1.primary_key?)
         |> Enum.map(& &1.name)
       else

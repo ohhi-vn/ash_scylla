@@ -1,9 +1,25 @@
 version: "3.8"
 
 services:
+  init_scylla_dirs:
+    image: docker.io/scylladb/scylla:latest
+    user: root
+    volumes:
+      - scylla_data:/var/lib/scylla
+    entrypoint:
+      [
+        "sh",
+        "-c",
+        "mkdir -p /var/lib/scylla/.cassandra /var/lib/scylla/commitlog /var/lib/scylla/data /var/lib/scylla/hints /var/lib/scylla/view_logs && chown -R scylla:scylla /var/lib/scylla",
+      ]
+    restart: "no"
+
   scylladb:
     image: docker.io/scylladb/scylla:latest
     container_name: ash_scylla_dev
+    depends_on:
+      init_scylla_dirs:
+        condition: service_completed_successfully
     ports:
       - "9042:9042"
       - "9160:9160" # REST API

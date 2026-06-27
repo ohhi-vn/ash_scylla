@@ -370,7 +370,7 @@ defmodule AshScylla.ClusterIntegrationTest do
         %{conn: conn}
 
       _ ->
-        :ok
+        %{conn: nil}
     end
   end
 
@@ -459,6 +459,7 @@ defmodule AshScylla.ClusterIntegrationTest do
   describe "cluster connectivity" do
     test "keyspace exists with correct replication", %{conn: conn} do
       if is_nil(conn), do: :ok
+
       result =
         xq(
           conn,
@@ -479,6 +480,7 @@ defmodule AshScylla.ClusterIntegrationTest do
 
     test "tables exist in cluster keyspace", %{conn: conn} do
       if is_nil(conn), do: :ok
+
       result =
         xq(
           conn,

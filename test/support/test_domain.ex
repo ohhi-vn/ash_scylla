@@ -5,7 +5,7 @@ defmodule AshScylla.TestDomain do
     validate_config_inclusion?: false
 
   resources do
-    resource AshScylla.TestResource
-    resource AshScylla.TestResourceWithIndexes
+    resource(AshScylla.TestResource)
+    resource(AshScylla.TestResourceWithIndexes)
   end
 end

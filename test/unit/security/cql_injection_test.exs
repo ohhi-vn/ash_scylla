@@ -144,7 +144,7 @@ defmodule AshScylla.CqlInjectionTest do
   describe "Repo keyspace validation prevents injection" do
     test "validate_keyspace! rejects malicious keyspace names" do
       assert_raise ArgumentError, ~r/Keyspace name must be a string/, fn ->
-          raise ArgumentError, "Keyspace name must be a string"
+        raise ArgumentError, "Keyspace name must be a string"
       end
     end
 

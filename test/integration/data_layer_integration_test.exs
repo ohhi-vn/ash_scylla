@@ -194,6 +194,10 @@ defmodule AshScylla.DataLayer.IntegrationTest do
     if uuid?(value), do: {"uuid", value}, else: {"text", value}
   end
 
+  defp encode_param(value) when is_float(value), do: {"double", value}
+  defp encode_param(value) when is_integer(value), do: {"int", value}
+  defp encode_param(value) when is_boolean(value), do: {"boolean", value}
+  defp encode_param(nil), do: {"null", nil}
   defp encode_param(value), do: {"text", to_string(value)}
 
   defp connect_with_retry(host, port, retries \\ 20) do
@@ -290,7 +294,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         %{conn: conn}
 
       _ ->
-        :ok
+        %{conn: nil}
     end
   end
 
@@ -529,7 +533,8 @@ defmodule AshScylla.DataLayer.IntegrationTest do
       xq(conn, "INSERT INTO ash_scylla_dl_test.items (id, name) VALUES (?, ?)", [id, "Null Test"])
 
       result =
-        xq(conn,
+        xq(
+          conn,
           "SELECT name, status, value, score, active FROM ash_scylla_dl_test.items WHERE id = ?",
           [id]
         )
@@ -567,10 +572,14 @@ defmodule AshScylla.DataLayer.IntegrationTest do
 
       # Query using IN (which is how OR on same column is rewritten)
       result =
-        xq(conn, "SELECT * FROM ash_scylla_dl_test.items WHERE status IN (?, ?) ALLOW FILTERING", [
-          "active",
-          "pending"
-        ])
+        xq(
+          conn,
+          "SELECT * FROM ash_scylla_dl_test.items WHERE status IN (?, ?) ALLOW FILTERING",
+          [
+            "active",
+            "pending"
+          ]
+        )
 
       assert result.num_rows >= 2
     end
@@ -579,13 +588,15 @@ defmodule AshScylla.DataLayer.IntegrationTest do
       if is_nil(conn), do: :ok
       id = uid()
 
-      xq(conn,
+      xq(
+        conn,
         "INSERT INTO ash_scylla_dl_test.items (id, name, status, value) VALUES (?, ?, ?, ?)",
         [id, "AND Test", "active", 42]
       )
 
       result =
-        xq(conn,
+        xq(
+          conn,
           "SELECT * FROM ash_scylla_dl_test.items WHERE status = ? AND value = ? ALLOW FILTERING",
           [
             "active",
@@ -609,7 +620,8 @@ defmodule AshScylla.DataLayer.IntegrationTest do
       ])
 
       result =
-        xq(conn,
+        xq(
+          conn,
           "SELECT * FROM ash_scylla_dl_test.items WHERE value >= ? AND value <= ? ALLOW FILTERING",
           [40, 60]
         )
@@ -625,6 +637,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
   describe "error handling" do
     test "querying non-existent table returns error", %{conn: conn} do
       if is_nil(conn), do: :ok
+
       assert_raise RuntimeError, ~r/Query failed/, fn ->
         xq(conn, "SELECT * FROM ash_scylla_dl_test.nonexistent_table")
       end
@@ -632,6 +645,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
 
     test "insert with missing primary key returns error", %{conn: conn} do
       if is_nil(conn), do: :ok
+
       assert_raise RuntimeError, ~r/Query failed/, fn ->
         xq(conn, "INSERT INTO ash_scylla_dl_test.items (name) VALUES (?)", ["No PK"])
       end
@@ -669,7 +683,9 @@ defmodule AshScylla.DataLayer.IntegrationTest do
       {:ok, _} = Xandra.execute(conn, batch_cql, Enum.map(params, &encode_param/1))
 
       # Verify all inserted
-      result = xq(conn, "SELECT count(*) FROM ash_scylla_dl_test.items WHERE status = ?", ["active"])
+      result =
+        xq(conn, "SELECT count(*) FROM ash_scylla_dl_test.items WHERE status = ?", ["active"])
+
       assert result.num_rows >= 1
     end
   end
@@ -684,7 +700,8 @@ defmodule AshScylla.DataLayer.IntegrationTest do
       id = uid()
 
       {:ok, prepared} =
-        Xandra.prepare(conn,
+        Xandra.prepare(
+          conn,
           "INSERT INTO ash_scylla_dl_test.items (id, name, status) VALUES (?, ?, ?)"
         )
 

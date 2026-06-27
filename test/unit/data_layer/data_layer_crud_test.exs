@@ -504,7 +504,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       }
 
       assert {:ok, [record]} =
-               DataLayer.update_query(query, changeset(%{status: "inactive"}), [], Resource)
+               DataLayer.update_query(query, changeset(%{status: "inactive"}), Resource, [])
 
       assert record.name == "Ada"
 
