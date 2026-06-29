@@ -27,3 +27,4 @@ ash_scylla-*.tar
 .env
 mise.toml
 benchmarks/results
+priv/*
