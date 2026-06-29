@@ -136,7 +136,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
   defp encode_param({type, value}) when is_binary(type), do: {type, value}
   defp encode_param({type, value}), do: {to_string(type), value}
   defp encode_param(value) when is_integer(value), do: {"bigint", value}
-  defp encode_param(value) when is_float(value), do: {"float", value}
+  defp encode_param(value) when is_float(value), do: {"double", value}
   defp encode_param(value) when is_boolean(value), do: {"boolean", value}
   defp encode_param(nil), do: {"null", nil}
   defp encode_param(%DateTime{} = value), do: {"timestamp", value}
@@ -180,7 +180,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
           id UUID PRIMARY KEY,
           str_val TEXT,
           int_val BIGINT,
-          float_val FLOAT,
+          float_val DOUBLE,
           double_val DOUBLE,
           bool_val BOOLEAN,
           timestamp_val TIMESTAMP,
@@ -287,7 +287,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       assert is_integer(read_int)
     end
 
-    test "float type: Ash :float → ScyllaDB FLOAT → Ash :float", %{conn: conn} do
+    test "float type: Ash :float → ScyllaDB DOUBLE → Ash :float", %{conn: conn} do
       if is_nil(conn), do: :ok
       id = uid()
 
@@ -312,8 +312,8 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
 
       [_read_id, read_float] = row
       assert is_float(read_float)
-      # ScyllaDB FLOAT is single-precision, so there may be rounding
-      assert_in_delta(read_float, 3.14, 0.01)
+      # DOUBLE is 64-bit, so precision is preserved
+      assert_in_delta(read_float, 3.14, 0.0001)
     end
 
     test "boolean type: Ash :boolean → ScyllaDB BOOLEAN → Ash :boolean", %{conn: conn} do

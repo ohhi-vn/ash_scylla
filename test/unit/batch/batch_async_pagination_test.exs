@@ -64,8 +64,13 @@ defmodule AshScylla.DataLayer.AsyncBatchTest do
     setup do
       # Ensure a fresh Agent is running for each test
       case Process.whereis(TrackingRepo) do
-        nil -> :ok
-        pid -> Agent.stop(pid)
+        nil ->
+          :ok
+
+        pid ->
+          if Process.alive?(pid) do
+            Agent.stop(pid)
+          end
       end
 
       {:ok, _pid} = TrackingRepo.start_link()

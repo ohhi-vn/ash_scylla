@@ -18,8 +18,8 @@ defmodule Mix.Tasks.AshScylla.GenChangeTrackingTest do
 
   alias AshScylla.Migration
 
-  @meta_file Path.join("priv/migrations", ".schema_meta")
-  @test_migration_dir "priv/migrations"
+  @meta_file Path.join("priv/repo/migrations", ".schema_meta")
+  @test_migration_dir "priv/repo/migrations"
 
   setup do
     # Clean up any test migration files and meta file

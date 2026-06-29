@@ -36,29 +36,29 @@ defmodule AshScylla.DataLayer.AutogenerateTest do
       send(self(), {:ash_scylla_query, query, raw_params, opts})
 
       case query do
-        "INSERT INTO autogen_items" <> _ ->
+        "INSERT INTO test_ks.autogen_items" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
-        "INSERT INTO no_autogen_items" <> _ ->
+        "INSERT INTO test_ks.no_autogen_items" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
-        "INSERT INTO func_default_items" <> _ ->
+        "INSERT INTO test_ks.func_default_items" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
         "BEGIN BATCH" <> _ ->
           {:ok, %Xandra.Void{}}
 
-        "SELECT * FROM autogen_items WHERE id = ? LIMIT 1" ->
+        "SELECT * FROM test_ks.autogen_items WHERE id = ? LIMIT 1" ->
           [id] = raw_params
 
           {:ok,
            %Xandra.Page{content: [[id, "Alice", "active"]], columns: ["id", "name", "status"]}}
 
-        "SELECT * FROM func_default_items WHERE id = ? LIMIT 1" ->
+        "SELECT * FROM test_ks.func_default_items WHERE id = ? LIMIT 1" ->
           [id] = raw_params
           {:ok, %Xandra.Page{content: [[id, "Bob", "active"]], columns: ["id", "name", "status"]}}
 
-        "SELECT * FROM no_autogen_items WHERE id = ? LIMIT 1" ->
+        "SELECT * FROM test_ks.no_autogen_items WHERE id = ? LIMIT 1" ->
           [id] = raw_params
 
           {:ok,
@@ -192,7 +192,7 @@ defmodule AshScylla.DataLayer.AutogenerateTest do
       assert byte_size(record.id) == 36
 
       assert_receive {:ash_scylla_query, insert_query, insert_params, _opts}
-      assert insert_query =~ "INSERT INTO autogen_items"
+      assert insert_query =~ "INSERT INTO test_ks.autogen_items"
       assert length(insert_params) == 3
       [id_bin | _] = insert_params
       assert is_binary(id_bin)
@@ -238,7 +238,7 @@ defmodule AshScylla.DataLayer.AutogenerateTest do
       assert byte_size(record.id) == 36
 
       assert_receive {:ash_scylla_query, insert_query, insert_params, _opts}
-      assert insert_query =~ "INSERT INTO func_default_items"
+      assert insert_query =~ "INSERT INTO test_ks.func_default_items"
       assert length(insert_params) == 3
       [id_bin | _] = insert_params
       assert is_binary(id_bin)
@@ -266,7 +266,7 @@ defmodule AshScylla.DataLayer.AutogenerateTest do
 
       assert_receive {:ash_scylla_query, batch_query, batch_params, _opts}
       assert batch_query =~ "BEGIN BATCH"
-      assert batch_query =~ "INSERT INTO autogen_items"
+      assert batch_query =~ "INSERT INTO test_ks.autogen_items"
       assert batch_query =~ "APPLY BATCH"
       assert length(batch_params) == 6
     end

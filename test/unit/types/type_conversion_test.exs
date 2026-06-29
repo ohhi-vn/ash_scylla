@@ -9,6 +9,7 @@ defmodule AshScylla.TypeConversionTest do
   """
 
   use ExUnit.Case, async: true
+  @moduletag :integration
 
   alias AshScylla.Connection
   alias AshScylla.DataLayer
@@ -598,7 +599,7 @@ defmodule AshScylla.TypeConversionTest do
       assert Types.cql_type(:boolean) == "BOOLEAN"
       assert Types.cql_type(:uuid) == "UUID"
       assert Types.cql_type(:timestamp) == "TIMESTAMP"
-      assert Types.cql_type(:float) == "FLOAT"
+      assert Types.cql_type(:float) == "DOUBLE"
       assert Types.cql_type(:double) == "DOUBLE"
       assert Types.cql_type(:blob) == "BLOB"
       assert Types.cql_type(:inet) == "INET"
@@ -624,7 +625,7 @@ defmodule AshScylla.TypeConversionTest do
       assert Types.ash_type_to_cql_type(Ash.Type.UUID, []) == "UUID"
       assert Types.ash_type_to_cql_type(Ash.Type.String, []) == "TEXT"
       assert Types.ash_type_to_cql_type(Ash.Type.Integer, []) == "BIGINT"
-      assert Types.ash_type_to_cql_type(Ash.Type.Float, []) == "FLOAT"
+      assert Types.ash_type_to_cql_type(Ash.Type.Float, []) == "DOUBLE"
       assert Types.ash_type_to_cql_type(Ash.Type.Boolean, []) == "BOOLEAN"
       assert Types.ash_type_to_cql_type(Ash.Type.Date, []) == "DATE"
       assert Types.ash_type_to_cql_type(Ash.Type.Time, []) == "TIME"
@@ -646,7 +647,7 @@ defmodule AshScylla.TypeConversionTest do
                "MAP<TEXT, BIGINT>"
 
       assert Types.ash_type_to_cql_type({:map, Ash.Type.UUID, Ash.Type.Float}, []) ==
-               "MAP<UUID, FLOAT>"
+               "MAP<UUID, DOUBLE>"
     end
 
     test "resolve_type/1 passes plain atoms through unchanged" do
@@ -689,7 +690,7 @@ defmodule AshScylla.TypeConversionTest do
     @ash_scylla_type_pairs %{
       string: "TEXT",
       integer: "BIGINT",
-      float: "FLOAT",
+      float: "DOUBLE",
       boolean: "BOOLEAN",
       uuid: "UUID",
       utc_datetime: "TIMESTAMP",

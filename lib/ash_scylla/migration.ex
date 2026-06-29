@@ -65,6 +65,12 @@ defmodule AshScylla.Migration do
   @spec create_table_cql(module(), keyword()) :: String.t()
   def create_table_cql(resource, _opts) do
     table_name = get_table_name(resource)
+    keyspace = keyspace(resource)
+
+    qualified_table_name =
+      if keyspace,
+        do: "#{quote_name(keyspace)}.#{quote_name(table_name)}",
+        else: quote_name(table_name)
 
     all_attributes = Ash.Resource.Info.attributes(resource)
 
@@ -119,7 +125,7 @@ defmodule AshScylla.Migration do
       end
 
     """
-    CREATE TABLE IF NOT EXISTS #{quote_name(table_name)} (
+    CREATE TABLE IF NOT EXISTS #{qualified_table_name} (
       #{Enum.join(all_definitions, ",\n  ")}
     )#{suffix}
     """
@@ -137,12 +143,12 @@ defmodule AshScylla.Migration do
     case pk_attrs do
       [single_pk] ->
         # Simple primary key - just one column
-        "PRIMARY KEY (#{quote_name(single_pk.name)})"
+        "PRIMARY KEY (#{single_pk.name})"
 
       [partition_key | clustering_keys] ->
         # Composite primary key
         pk_cols =
-          [quote_name(partition_key.name) | Enum.map(clustering_keys, &quote_name(&1.name))]
+          [partition_key.name | Enum.map(clustering_keys, & &1.name)]
 
         "PRIMARY KEY (#{Enum.join(pk_cols, ", ")})"
     end
@@ -156,7 +162,7 @@ defmodule AshScylla.Migration do
   defp build_clustering_order_clause([_partition_key | clustering_keys]) do
     order_str =
       clustering_keys
-      |> Enum.map_join(", ", fn attr -> "#{quote_name(attr.name)} DESC" end)
+      |> Enum.map_join(", ", fn attr -> "#{attr.name} DESC" end)
 
     "WITH CLUSTERING ORDER BY (#{order_str})"
   end
@@ -249,11 +255,10 @@ defmodule AshScylla.Migration do
 
   @doc """
   Returns the keyspace for a resource if configured via DSL.
-  Note: This is a placeholder for future DSL implementation.
   """
   @spec keyspace(module()) :: String.t() | nil
-  def keyspace(_resource) do
-    nil
+  def keyspace(resource) do
+    AshScylla.DataLayer.Dsl.keyspace(resource)
   end
 
   @doc """
@@ -415,7 +420,7 @@ defmodule AshScylla.Migration do
 
     type_str = ash_type_to_cql_type(type, opts)
 
-    "#{quote_name(name)} #{type_str}"
+    "#{name} #{type_str}"
   end
 
   @doc """

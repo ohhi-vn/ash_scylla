@@ -211,7 +211,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
   # Pass through already-typed tuples from QueryBuilder (e.g., {"int", 10})
   defp encode_param({type, value}) when is_binary(type), do: {type, value}
   defp encode_param({:timestamp, value}), do: {"timestamp", value}
-  defp encode_param({:float, value}), do: {"float", value}
+  defp encode_param({:float, value}), do: {"double", value}
   defp encode_param({:double, value}), do: {"double", value}
   defp encode_param({:bigint, value}), do: {"bigint", value}
   defp encode_param({:smallint, value}), do: {"smallint", value}
@@ -2103,7 +2103,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
           text_val TEXT,
           int_val INT,
           bigint_val BIGINT,
-          float_val FLOAT,
+          float_val DOUBLE,
           double_val DOUBLE,
           boolean_val BOOLEAN,
           timestamp_val TIMESTAMP,

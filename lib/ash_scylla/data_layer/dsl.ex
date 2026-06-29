@@ -345,6 +345,10 @@ defmodule AshScylla.DataLayer.Dsl do
           {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_repo__]},
            meta, [{:__MODULE__, [], nil}, value]}
 
+        {:migrate, meta, [value]} ->
+          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_migrate__]},
+           meta, [{:__MODULE__, [], nil}, value]}
+
         # ── Ash 3.0+ resource-level options ──
 
         {:base_filter, meta, [value]} ->
@@ -547,6 +551,7 @@ defmodule AshScylla.DataLayer.Dsl do
       @ash_scylla_lwt false
       @ash_scylla_allow_filtering false
       @ash_scylla_repo nil
+      @ash_scylla_migrate true
 
       # ── Ash 3.0+ resource-level attributes ──
       @ash_scylla_base_filter nil
@@ -601,6 +606,7 @@ defmodule AshScylla.DataLayer.Dsl do
         lwt: @ash_scylla_lwt,
         allow_filtering: @ash_scylla_allow_filtering,
         repo: @ash_scylla_repo,
+        migrate: @ash_scylla_migrate,
         base_filter: @ash_scylla_base_filter,
         default_context: @ash_scylla_default_context,
         description: @ash_scylla_description,
@@ -669,6 +675,15 @@ defmodule AshScylla.DataLayer.Dsl do
   # ============================================================================
   # Existing public API getters
   # ============================================================================
+
+  @doc """
+  Returns whether this resource should be included in migrations.
+
+  Defaults to `true` for all resources using `AshScylla.DataLayer`.
+  Can be overridden in the DSL with `migrate false`.
+  """
+  @spec migrate?(module()) :: boolean()
+  def migrate?(resource), do: get_config(resource, :migrate, true)
 
   @doc """
   Gets the configured table name for a resource.
@@ -949,6 +964,11 @@ defmodule AshScylla.DataLayer.Dsl do
   @doc false
   @spec __set_repo__(module(), module()) :: :ok
   def __set_repo__(module, value), do: put_attr(module, :ash_scylla_repo, value)
+
+  @doc false
+  @spec __set_migrate__(module(), boolean()) :: :ok
+  def __set_migrate__(module, value) when is_boolean(value),
+    do: put_attr(module, :ash_scylla_migrate, value)
 
   # ── Ash 3.0+ setters ──
 

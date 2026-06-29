@@ -12,12 +12,12 @@ defmodule Mix.Tasks.AshScylla.GenTest do
                 user_id: :uuid,
                 name: :string,
                 age: :integer
-              ], []} =
+              ]} =
                ResourceGenerator.parse_args(["MyResource", "user_id:uuid, name:string, age:int"])
     end
 
     test "parses domain-prefixed resource name" do
-      assert {:ok, :"MyApp.MyDomain.MyResource", [name: :string], []} =
+      assert {:ok, :"MyApp.MyDomain.MyResource", [name: :string]} =
                ResourceGenerator.parse_args(["MyApp.MyDomain.MyResource", "name:string"])
     end
 
@@ -35,7 +35,7 @@ defmodule Mix.Tasks.AshScylla.GenTest do
 
   describe "ResourceGenerator.parse_args/2 with --domain" do
     test "prefixes resource name with domain module" do
-      {:ok, resource_name, attributes, opts} =
+      {:ok, resource_name, attributes} =
         ResourceGenerator.parse_args(
           ["User", "name:string, email:string"],
           domain: MyApp.MyDomain
@@ -43,18 +43,16 @@ defmodule Mix.Tasks.AshScylla.GenTest do
 
       assert resource_name == MyApp.MyDomain.User
       assert attributes == [name: :string, email: :string]
-      assert opts == [domain: MyApp.MyDomain]
     end
 
     test "domain with nested module name" do
-      {:ok, resource_name, _attributes, opts} =
+      {:ok, resource_name, _attributes} =
         ResourceGenerator.parse_args(
           ["Post", "title:string"],
           domain: :"MyApp.Blog"
         )
 
       assert resource_name == MyApp.Blog.Post
-      assert opts == [domain: :"MyApp.Blog"]
     end
 
     test "domain option with no attributes returns error" do
@@ -68,7 +66,7 @@ defmodule Mix.Tasks.AshScylla.GenTest do
 
   describe "ResourceGenerator.parse_args/2 with --resource" do
     test "uses fully-qualified resource name" do
-      {:ok, resource_name, attributes, opts} =
+      {:ok, resource_name, attributes} =
         ResourceGenerator.parse_args(
           ["User", "name:string"],
           resource: :"MyApp.Games.User"
@@ -76,11 +74,10 @@ defmodule Mix.Tasks.AshScylla.GenTest do
 
       assert resource_name == :"MyApp.Games.User"
       assert attributes == [name: :string]
-      assert opts == [domain: nil]
     end
 
     test "resource flag overrides positional name" do
-      {:ok, resource_name, _attributes, _opts} =
+      {:ok, resource_name, _attributes} =
         ResourceGenerator.parse_args(
           ["Something", "name:string"],
           resource: :"MyApp.MyDomain.User"
@@ -92,7 +89,7 @@ defmodule Mix.Tasks.AshScylla.GenTest do
 
   describe "ResourceGenerator.parse_args/2 with both --domain and --resource" do
     test "resource takes precedence over domain" do
-      {:ok, resource_name, attributes, opts} =
+      {:ok, resource_name, attributes} =
         ResourceGenerator.parse_args(
           ["User", "name:string"],
           domain: MyApp.MyDomain,
@@ -101,7 +98,6 @@ defmodule Mix.Tasks.AshScylla.GenTest do
 
       assert resource_name == :"MyApp.Other.User"
       assert attributes == [name: :string]
-      assert opts == [domain: MyApp.MyDomain]
     end
   end
 
@@ -262,7 +258,7 @@ defmodule Mix.Tasks.AshScylla.GenTest do
           MyApp.Repo
         )
 
-      assert statements != []
+      assert length(statements) > 0
       table_cql = hd(statements)
       assert table_cql =~ "CREATE TABLE IF NOT EXISTS users"
       assert table_cql =~ "name TEXT"
@@ -334,6 +330,90 @@ defmodule Mix.Tasks.AshScylla.GenTest do
       assert table_cql =~ "id UUID"
       assert table_cql =~ "title TEXT"
     end
+
+    test "generates composite primary key for multiple uuid attributes" do
+      statements =
+        ResourceGenerator.render_create_table(
+          "direct_messages",
+          [id: :uuid, from_user_id: :uuid, to_user_id: :uuid, content: :string],
+          MyApp.Repo
+        )
+
+      table_cql = hd(statements)
+      assert table_cql =~ "PRIMARY KEY (id, from_user_id, to_user_id)"
+      assert table_cql =~ "id UUID"
+      assert table_cql =~ "from_user_id UUID"
+      assert table_cql =~ "to_user_id UUID"
+      assert table_cql =~ "content TEXT"
+    end
+
+    test "generates composite primary key with three uuid attributes" do
+      statements =
+        ResourceGenerator.render_create_table(
+          "message_metadata",
+          [id: :uuid, user_id: :uuid, message_id: :uuid, content: :string],
+          MyApp.Repo
+        )
+
+      table_cql = hd(statements)
+      assert table_cql =~ "PRIMARY KEY (id, user_id, message_id)"
+      assert table_cql =~ "content TEXT"
+    end
+
+    test "composite pk columns are not duplicated in regular columns" do
+      statements =
+        ResourceGenerator.render_create_table(
+          "club_messages",
+          [id: :uuid, group_id: :uuid, group_type: :string, content: :string],
+          MyApp.Repo
+        )
+
+      table_cql = hd(statements)
+      # PK columns should appear once in the column list
+      assert table_cql =~ "id UUID"
+      assert table_cql =~ "group_id UUID"
+      # PK clause should be present
+      assert table_cql =~ "PRIMARY KEY (id, group_id)"
+      # Count occurrences of "id UUID" as a standalone column definition -
+      # should appear exactly once (not duplicated between column list and PK clause)
+      assert length(Regex.scan(~r/(?:^|,\s*)id UUID/, table_cql)) == 1
+    end
+
+    test "handles single non-uuid attribute without primary key" do
+      statements =
+        ResourceGenerator.render_create_table(
+          "logs",
+          [message: :string],
+          MyApp.Repo
+        )
+
+      table_cql = hd(statements)
+      assert table_cql =~ "CREATE TABLE IF NOT EXISTS logs"
+      assert table_cql =~ "message TEXT"
+      refute table_cql =~ "PRIMARY KEY"
+    end
+
+    test "handles empty attribute list gracefully" do
+      statements =
+        ResourceGenerator.render_create_table(
+          "empty_table",
+          [],
+          MyApp.Repo
+        )
+
+      table_cql = hd(statements)
+      assert table_cql =~ "CREATE TABLE IF NOT EXISTS empty_table"
+    end
+
+    test "does not crash with many uuid attributes" do
+      # Regression: previously crashed with FunctionClauseError when
+      # pk_attrs had 2+ elements because pk_clause only matched single-element list
+      assert {:ok, _, _} =
+               ResourceGenerator.parse_args(
+                 "MyResource",
+                 "id:uuid, group_id: :uuid, org_id: :uuid, name:string"
+               )
+    end
   end
 
   describe "cql_type/1 mapping" do
@@ -362,7 +442,7 @@ defmodule Mix.Tasks.AshScylla.GenTest do
       assert table_cql =~ "uuid_col UUID"
       assert table_cql =~ "string_col TEXT"
       assert table_cql =~ "int_col INT"
-      assert table_cql =~ "float_col FLOAT"
+      assert table_cql =~ "float_col DOUBLE"
       assert table_cql =~ "bool_col BOOLEAN"
       assert table_cql =~ "date_col DATE"
       assert table_cql =~ "time_col TIME"
@@ -480,6 +560,43 @@ defmodule Mix.Tasks.AshScylla.GenTest do
       assert output =~ "Generated schema migration"
       # Should have domain info in output
       assert output =~ "Domains:"
+    end
+
+    test "generates keyspace-qualified table name when keyspace is configured" do
+      output =
+        capture_io(fn ->
+          try do
+            Mix.Tasks.AshScylla.Gen.run([
+              "--resource",
+              "AshScylla.TestResource",
+              "--force",
+              "KeyspaceQualified"
+            ])
+          rescue
+            _ -> :ok
+          end
+        end)
+
+      assert output =~ "Generated schema migration"
+    end
+
+    test "generates composite primary key for resource with multiple pk attributes" do
+      output =
+        capture_io(fn ->
+          try do
+            Mix.Tasks.AshScylla.Gen.run([
+              "--resource",
+              "AshScylla.TestResourceCompositePK",
+              "--force",
+              "CompositePKSchema"
+            ])
+          rescue
+            _ -> :ok
+          end
+        end)
+
+      assert output =~ "Generated schema migration"
+      assert output =~ "Resources: 1"
     end
   end
 

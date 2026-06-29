@@ -256,11 +256,11 @@ defmodule AshScylla.DslRepoMigrationContinuedTest do
   end
 
   describe "Migration.keyspace/1" do
-    test "returns nil (placeholder implementation)" do
-      assert Migration.keyspace(TestResourceWithIndexes) == nil
+    test "returns configured keyspace for resource with keyspace" do
+      assert Migration.keyspace(TestResourceWithIndexes) == "ash_scylla_test"
     end
 
-    test "returns nil for any module" do
+    test "returns nil for module without keyspace config" do
       assert Migration.keyspace(String) == nil
     end
   end

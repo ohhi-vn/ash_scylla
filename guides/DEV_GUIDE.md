@@ -548,7 +548,26 @@ mix run -e '
   MyApp.Repo.drop_keyspace()
   MyApp.Repo.create_keyspace()
 '
+
+# Or use the Ash extension callback
+mix ash.reset AshScylla
 ```
+
+### Ash Extension Callbacks
+
+AshScylla implements the full `Ash.Extension` behaviour. The `AshScylla.Extension` module provides:
+
+| Callback | Mix Task | Description |
+|----------|----------|-------------|
+| `codegen/1` | `mix ash.codegen` | Generate CQL migration files from resources |
+| `setup/1` | `mix ash.setup` | Create keyspace and run migrations |
+| `migrate/1` | `mix ash.migrate` | Run migration files |
+| `install/5` | `mix ash.install` | Install AshScylla for a resource |
+| `reset/1` | `mix ash.reset` | Drop keyspace, recreate, re-run migrations |
+| `rollback/1` | `mix ash.rollback` | Rollback to a version (logs warning - no CQL DDL rollback) |
+| `tear_down/1` | `mix ash.tear_down` | Drop the keyspace |
+
+All callbacks support `--dry-run` flag and handle missing repo gracefully.
 
 ### Building CQL Queries from Ash
 

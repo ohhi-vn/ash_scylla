@@ -3,6 +3,10 @@ import Config
 # This file contains configuration examples for AshScylla with connection pool tuning.
 # Copy the appropriate configuration to your app's config/config.exs
 
+# Register AshScylla as an Ash extension so that
+# `mix ash.codegen` and `mix ash.migrate` discover it.
+config :ash, extensions: [AshScylla.Extension]
+
 # ============================================
 # Basic Development Configuration
 # ============================================

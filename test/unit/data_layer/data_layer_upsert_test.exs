@@ -4,7 +4,7 @@ defmodule AshScylla.DataLayerUpsertTest do
   Covers: Issue #6 (do_upsert fallback to do_update doesn't pass original attrs)
   """
 
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   # Test resource with upsert support
   defmodule UpsertResource do

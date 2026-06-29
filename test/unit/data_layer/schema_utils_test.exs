@@ -3,7 +3,7 @@ defmodule AshScylla.DataLayer.SchemaUtilsTest do
   Tests for AshScylla.DataLayer.SchemaUtils — shared schema utilities.
   """
 
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias AshScylla.DataLayer.SchemaUtils
   alias AshScylla.Identifier

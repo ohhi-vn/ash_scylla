@@ -21,7 +21,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
     - resource_to_query/2
   """
 
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias AshScylla.DataLayer
 

@@ -14,9 +14,9 @@ defmodule AshScylla.Migrations.DiffHash1 do
 %AshScylla.Schema.Resource{
   name: :testresource,
   statements: [
-      "CREATE TABLE IF NOT EXISTS test_resource (id UUID, name TEXT, email TEXT, age BIGINT, password_hash TEXT, org_id UUID, created_at TIMESTAMP, updated_at TIMESTAMP, PRIMARY KEY (id))",
-      "CREATE INDEX IF NOT EXISTS idx_test_resource_email ON test_resource (email)",
-      "CREATE INDEX IF NOT EXISTS idx_test_resource_name ON test_resource (name)"
+      "CREATE TABLE IF NOT EXISTS "ash_scylla_test".test_resource (id UUID, name TEXT, email TEXT, age BIGINT, password_hash TEXT, org_id UUID, created_at TIMESTAMP, updated_at TIMESTAMP, PRIMARY KEY (id))",
+      "CREATE INDEX IF NOT EXISTS idx_"ash_scylla_test".test_resource_email ON "ash_scylla_test".test_resource (email)",
+      "CREATE INDEX IF NOT EXISTS idx_"ash_scylla_test".test_resource_name ON "ash_scylla_test".test_resource (name)"
   ]
 }
 

@@ -422,7 +422,7 @@ defmodule AshScylla.ClusterIntegrationTest do
       else: {"int", value}
   end
 
-  defp encode_param(value) when is_float(value), do: {"float", value}
+  defp encode_param(value) when is_float(value), do: {"double", value}
   defp encode_param(value) when is_boolean(value), do: {"boolean", value}
   defp encode_param(nil), do: {"null", nil}
   defp encode_param(%DateTime{} = value), do: {"timestamp", value}

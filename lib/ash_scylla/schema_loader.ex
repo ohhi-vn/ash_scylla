@@ -14,12 +14,12 @@
 
 defmodule AshScylla.SchemaLoader do
   @moduledoc """
-  Loads and discovers schema migration modules from `priv/migrations`.
+  Loads and discovers schema migration modules from `priv/<repo>/migrations`.
 
   ## Discovery
 
   `discover/0` scans all apps (current + umbrella) for `.ex` files under
-  `priv/migrations/` and returns sorted file paths.
+  `priv/<repo>/migrations/` and returns sorted file paths.
 
   ## Loading
 
@@ -33,14 +33,15 @@ defmodule AshScylla.SchemaLoader do
   @type loaded :: {:ok, module()} | {:error, term()}
 
   @doc """
-  Discovers all `.ex` files under `priv/migrations` for the current project.
+  Discovers all `.ex` files under `priv/<repo>/migrations` for the current project.
   """
   @spec discover() :: [String.t()]
   def discover do
     apps = Mix.Project.apps_paths() || %{}
+    migrations_glob = Path.join("priv/repo/migrations", "**/*.ex")
 
     for {_app, path} <- apps,
-        file <- Path.wildcard(Path.join(path, "priv/migrations/**/*.ex")),
+        file <- Path.wildcard(Path.join(path, migrations_glob)),
         do:
           file
           |> Enum.sort()

@@ -24,6 +24,7 @@ Code.require_file("test/support/schema_fixtures.ex")
 # Load test resource definitions (must be before ExUnit.start so protocols are consolidated)
 Code.require_file("test/support/test_resource.ex")
 Code.require_file("test/support/test_resource_with_indexes.ex")
+Code.require_file("test/support/test_resource_composite_pk.ex")
 Code.require_file("test/support/test_domain.ex")
 
-ExUnit.start()
+ExUnit.start(max_cases: 4)

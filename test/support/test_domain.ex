@@ -7,5 +7,6 @@ defmodule AshScylla.TestDomain do
   resources do
     resource(AshScylla.TestResource)
     resource(AshScylla.TestResourceWithIndexes)
+    resource(AshScylla.TestResourceCompositePK)
   end
 end

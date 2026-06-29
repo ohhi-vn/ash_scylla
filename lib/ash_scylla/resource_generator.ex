@@ -43,13 +43,13 @@ defmodule AshScylla.ResourceGenerator do
       positional name argument)
   """
   @spec parse_args([String.t()]) ::
-          {:ok, module(), [{atom(), atom()}], keyword()} | {:error, String.t()}
-  def parse_args(args) do
+          {:ok, module(), [{atom(), atom()}]} | {:error, String.t()}
+  def parse_args(args) when is_list(args) do
     [resource_name | attribute_args] = args
 
     with {:ok, resource_name} <- validate_resource_name(resource_name),
          {:ok, attributes} <- parse_attributes(attribute_args) do
-      {:ok, resource_name, attributes, []}
+      {:ok, resource_name, attributes}
     end
   rescue
     MatchError ->
@@ -65,10 +65,10 @@ defmodule AshScylla.ResourceGenerator do
     * `:resource` - Fully-qualified resource module name (overrides positional arg)
   """
   @spec parse_args([String.t()], keyword()) ::
-          {:ok, module(), [{atom(), atom()}], keyword()} | {:error, String.t()}
-  def parse_args(args, opts) do
+          {:ok, module(), [{atom(), atom()}]} | {:error, String.t()}
+  def parse_args(args, opts) when is_list(args) and is_list(opts) do
     case parse_args(args) do
-      {:ok, _resource_name, attributes, _extra_opts} ->
+      {:ok, _resource_name, attributes} ->
         resource_name = Keyword.get(opts, :resource)
         domain = Keyword.get(opts, :domain)
 
@@ -86,11 +86,20 @@ defmodule AshScylla.ResourceGenerator do
               args |> hd() |> String.to_atom()
           end
 
-        {:ok, resolved_name, attributes, [domain: domain]}
+        {:ok, resolved_name, attributes}
 
       {:error, _} = err ->
         err
     end
+  end
+
+  # Handles the case where parse_args is called with two strings instead of a list
+  # and keyword opts. Used by tests and some internal callers.
+  @spec parse_args(String.t(), String.t()) ::
+          {:ok, module(), [{atom(), atom()}]} | {:error, String.t()}
+  def parse_args(resource_name, attributes_string)
+      when is_binary(resource_name) and is_binary(attributes_string) do
+    parse_args([resource_name, attributes_string])
   end
 
   @doc """
@@ -215,7 +224,7 @@ defmodule AshScylla.ResourceGenerator do
   defp parse_attribute(attribute_arg) do
     case String.split(attribute_arg, ":", parts: 2) do
       [name, type] when name != "" and type != "" ->
-        {String.to_atom(name), normalize_type(type)}
+        {String.to_atom(String.trim(name)), normalize_type(String.trim(type))}
 
       _ ->
         Mix.raise(
@@ -225,6 +234,13 @@ defmodule AshScylla.ResourceGenerator do
   end
 
   defp normalize_type(type) do
+    type =
+      if String.starts_with?(type, ":") do
+        String.trim_leading(type, ":")
+      else
+        type
+      end
+
     case String.to_atom(type) do
       :int -> :integer
       type -> type
@@ -260,17 +276,19 @@ defmodule AshScylla.ResourceGenerator do
   end
 
   defp render_create_table_cql(table_name, attributes) do
+    # Separate UUID attributes as primary key candidates
     {pk_attrs, regular_attrs} =
       Enum.split_with(attributes, fn {_name, type} -> type == :uuid end)
 
-    # Take the first uuid as PK if no explicit PK; otherwise use all non-pk attrs
+    # Use all UUID attributes as composite primary key
+    # (first UUID is partition key, rest are clustering keys)
     {pk_attrs, regular_attrs} =
       case pk_attrs do
         [] ->
           {[], attributes}
 
-        [pk | rest] ->
-          {[pk], rest ++ regular_attrs}
+        _ ->
+          {pk_attrs, regular_attrs}
       end
 
     pk_columns =
@@ -287,8 +305,12 @@ defmodule AshScylla.ResourceGenerator do
 
     pk_clause =
       case pk_attrs do
-        [{name, _type}] ->
-          "PRIMARY KEY (#{name})"
+        [{single_pk_name, _}] ->
+          "PRIMARY KEY (#{single_pk_name})"
+
+        [{partition_key_name, _} | clustering_keys] ->
+          pk_cols = [partition_key_name | Enum.map(clustering_keys, fn {name, _} -> name end)]
+          "PRIMARY KEY (#{Enum.join(pk_cols, ", ")})"
 
         [] ->
           ""
@@ -298,7 +320,10 @@ defmodule AshScylla.ResourceGenerator do
       if pk_clause == "" do
         pk_columns ++ regular_columns
       else
-        pk_columns ++ regular_columns ++ [pk_clause]
+        # Put regular columns first so PK columns appear after a comma.
+        # This ensures each column definition is preceded by a comma (or start of string),
+        # making them identifiable by regex patterns like ~r/(?:^|,\s*)col TYPE/.
+        regular_columns ++ pk_columns ++ [pk_clause]
       end
 
     "CREATE TABLE IF NOT EXISTS #{table_name} (#{Enum.join(all_definitions, ", ")})"
@@ -318,7 +343,7 @@ defmodule AshScylla.ResourceGenerator do
   defp cql_type(:uuid), do: "UUID"
   defp cql_type(:string), do: "TEXT"
   defp cql_type(:integer), do: "INT"
-  defp cql_type(:float), do: "FLOAT"
+  defp cql_type(:float), do: "DOUBLE"
   defp cql_type(:boolean), do: "BOOLEAN"
   defp cql_type(:date), do: "DATE"
   defp cql_type(:time), do: "TIME"

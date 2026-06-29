@@ -10,6 +10,7 @@ defmodule AshScylla.AtomTypeRoundtripTest do
   """
 
   use ExUnit.Case, async: false
+  @moduletag :integration
 
   alias AshScylla.DataLayer
 

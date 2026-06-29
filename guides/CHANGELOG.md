@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1]
+
+### Added
+- **`AshScylla.Extension` callbacks** — full `Ash.Extension` behaviour implementation with `install/5`, `reset/1`, `rollback/1`, and `tear_down/1` callbacks, enabling `mix ash.install`, `mix ash.reset`, `mix ash.rollback`, and `mix ash.tear_down` support
+
+## [0.13.0]
+
 ### Changed
 - Credo checks updated to use new module names (Credo.Check.Refactor.*, Credo.Check.Warning.Dbg, etc.)
 - Unit tests no longer require Docker/container runtime (lazy-loaded container support)
@@ -167,7 +174,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multitenancy via keyspace-based tenant isolation
 - Basic CQL query generation from Ash queries
 
-[Unreleased]: https://github.com/ohhi-vn/ash_scylla/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/ohhi-vn/ash_scylla/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/ohhi-vn/ash_scylla/compare/v0.13.0...v0.13.1
+[0.13.0]: https://github.com/ohhi-vn/ash_scylla/compare/v0.6.0...v0.13.0
 [0.6.0]: https://github.com/ohhi-vn/ash_scylla/compare/v0.4.0...v0.6.0
 [0.5.0]: https://github.com/ohhi-vn/ash_scylla/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/ohhi-vn/ash_scylla/compare/v0.3.0...v0.4.0

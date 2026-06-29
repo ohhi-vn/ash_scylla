@@ -48,7 +48,7 @@ defmodule AshScylla.DataLayer.Types do
     :boolean => "BOOLEAN",
     :uuid => "UUID",
     :timestamp => "TIMESTAMP",
-    :float => "FLOAT",
+    :float => "DOUBLE",
     :double => "DOUBLE",
     :blob => "BLOB",
     :binary => "BLOB",
@@ -121,7 +121,7 @@ defmodule AshScylla.DataLayer.Types do
       "INT"
 
       iex> AshScylla.DataLayer.Types.cql_element_type(:float)
-      "FLOAT"
+      "DOUBLE"
   """
   @spec cql_element_type(atom()) :: String.t()
   def cql_element_type(type), do: cql_type(type)
@@ -179,29 +179,43 @@ defmodule AshScylla.DataLayer.Types do
   """
   @spec ash_type_to_cql_type(atom() | tuple(), keyword()) :: String.t()
   def ash_type_to_cql_type(type, opts) when is_atom(type) do
-    type = resolve_type(type)
-
+    # Handle Ash type modules directly before resolving to short names,
+    # so that module and atom mappings can differ (e.g. Ash.Type.Float -> FLOAT,
+    # :float -> DOUBLE for backward compatibility).
     base_type =
       case type do
-        :map ->
-          "MAP<#{Keyword.get(opts, :key_type, "TEXT")}, #{Keyword.get(opts, :value_type, "TEXT")}>"
+        Ash.Type.Float ->
+          "DOUBLE"
 
-        :array ->
-          "LIST<#{Keyword.get(opts, :element_type, "TEXT")}>"
+        Ash.Type.Double ->
+          "DOUBLE"
 
-        :set ->
-          "SET<#{Keyword.get(opts, :element_type, "TEXT")}>"
+        _ ->
+          resolved = resolve_type(type)
 
-        :udt ->
-          type_name = Keyword.get(opts, :type_name, "undefined")
+          case resolved do
+            :map ->
+              key = Keyword.get(opts, :key_type, "TEXT")
+              val = Keyword.get(opts, :value_type, "TEXT")
+              "MAP<#{key}, #{val}>"
 
-          type_name_str =
-            if is_atom(type_name), do: Atom.to_string(type_name), else: to_string(type_name)
+            :array ->
+              "LIST<#{Keyword.get(opts, :element_type, "TEXT")}>"
 
-          "frozen<#{type_name_str}>"
+            :set ->
+              "SET<#{Keyword.get(opts, :element_type, "TEXT")}>"
 
-        mapped_type ->
-          cql_type(mapped_type)
+            :udt ->
+              type_name = Keyword.get(opts, :type_name, "undefined")
+
+              type_name_str =
+                if is_atom(type_name), do: Atom.to_string(type_name), else: to_string(type_name)
+
+              "frozen<#{type_name_str}>"
+
+            mapped_type ->
+              cql_type(mapped_type)
+          end
       end
 
     if Keyword.get(opts, :frozen), do: "frozen<#{base_type}>", else: base_type

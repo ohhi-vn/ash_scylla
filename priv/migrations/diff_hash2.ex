@@ -14,11 +14,11 @@ defmodule AshScylla.Migrations.DiffHash2 do
 %AshScylla.Schema.Resource{
   name: :testresourcewithindexes,
   statements: [
-      "CREATE TABLE IF NOT EXISTS test_users (id UUID, name TEXT, email TEXT, status TEXT, age BIGINT, created_at TIMESTAMP, PRIMARY KEY (id))",
-      "CREATE INDEX IF NOT EXISTS idx_user_status_status ON test_users (status)",
-      "CREATE INDEX IF NOT EXISTS idx_test_users_name ON test_users (name)",
-      "CREATE INDEX IF NOT EXISTS idx_test_users_age ON test_users (age)",
-      "CREATE INDEX IF NOT EXISTS idx_test_users_email ON test_users (email)"
+      "CREATE TABLE IF NOT EXISTS "ash_scylla_test".test_users (id UUID, name TEXT, email TEXT, status TEXT, age BIGINT, created_at TIMESTAMP, PRIMARY KEY (id))",
+      "CREATE INDEX IF NOT EXISTS idx_user_status_status ON "ash_scylla_test".test_users (status)",
+      "CREATE INDEX IF NOT EXISTS idx_"ash_scylla_test".test_users_name ON "ash_scylla_test".test_users (name)",
+      "CREATE INDEX IF NOT EXISTS idx_"ash_scylla_test".test_users_age ON "ash_scylla_test".test_users (age)",
+      "CREATE INDEX IF NOT EXISTS idx_"ash_scylla_test".test_users_email ON "ash_scylla_test".test_users (email)"
   ]
 }
 

@@ -169,7 +169,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
   end
 
   defp encode_param({:timestamp, value}), do: {"timestamp", value}
-  defp encode_param({:float, value}), do: {"float", value}
+  defp encode_param({:float, value}), do: {"double", value}
   defp encode_param({:double, value}), do: {"double", value}
   defp encode_param({:bigint, value}), do: {"bigint", value}
   defp encode_param({:smallint, value}), do: {"smallint", value}
@@ -262,7 +262,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
 
         xq(
           conn,
-          "CREATE TABLE IF NOT EXISTS ash_scylla_dl_test.items (id UUID PRIMARY KEY, name TEXT, status TEXT, value INT, score FLOAT, active BOOLEAN, created_at TIMESTAMP, tags LIST<TEXT>, metadata MAP<TEXT, TEXT>)"
+          "CREATE TABLE IF NOT EXISTS ash_scylla_dl_test.items (id UUID PRIMARY KEY, name TEXT, status TEXT, value INT, score DOUBLE, active BOOLEAN, created_at TIMESTAMP, tags LIST<TEXT>, metadata MAP<TEXT, TEXT>)"
         )
 
         xq(

@@ -197,4 +197,69 @@ defmodule Mix.Tasks.AshScylla.MigrateTest do
       assert is_list(result)
     end
   end
+
+  describe "migration file path" do
+    test "uses priv/repo/migrations directory" do
+      migrate_task = Mix.Tasks.AshScylla.Migrate
+      assert function_exported?(migrate_task, :run, 1)
+    end
+
+    test "run_schema_files reads from priv/repo/migrations" do
+      tmp_dir =
+        Path.join(
+          System.tmp_dir!(),
+          "ash_scylla_migrate_path_test_#{:erlang.unique_integer([:positive])}"
+        )
+
+      migrations_dir = Path.join(tmp_dir, "priv/repo/migrations")
+      File.mkdir_p!(migrations_dir)
+
+      migration_file = Path.join(migrations_dir, "test_migration.ex")
+
+      File.write!(migration_file, """
+      defmodule AshScylla.MigratePathTest.TestMigration do
+        def change do
+          ["CREATE TABLE IF NOT EXISTS test_table (id UUID PRIMARY KEY)"]
+        end
+      end
+      """)
+
+      # Verify the migration file exists in the expected path
+      assert File.exists?(migration_file)
+      assert Path.dirname(migrations_dir) == Path.join(tmp_dir, "priv/repo")
+
+      File.rm_rf!(tmp_dir)
+    end
+  end
+
+  describe "run_schema_file executes migration statements" do
+    test "loads and executes migration from file" do
+      tmp_dir =
+        Path.join(
+          System.tmp_dir!(),
+          "ash_scylla_migrate_exec_test_#{:erlang.unique_integer([:positive])}"
+        )
+
+      tmp_file = Path.join(tmp_dir, "test_exec.ex")
+      File.mkdir_p!(tmp_dir)
+
+      File.write!(tmp_file, """
+      defmodule AshScylla.MigrateExecTest.Schema do
+        def change do
+          [
+            "CREATE TABLE IF NOT EXISTS exec_test (id UUID PRIMARY KEY)",
+            "CREATE INDEX IF NOT EXISTS idx_exec_name ON exec_test (name)"
+          ]
+        end
+      end
+      """)
+
+      assert {:ok, statements} = AshScylla.SchemaLoader.load(tmp_file)
+      assert length(statements) == 2
+      assert Enum.at(statements, 0) =~ "CREATE TABLE"
+      assert Enum.at(statements, 1) =~ "CREATE INDEX"
+
+      File.rm_rf!(tmp_dir)
+    end
+  end
 end

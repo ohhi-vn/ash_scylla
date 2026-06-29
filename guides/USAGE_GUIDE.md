@@ -14,10 +14,11 @@
 6. [Data Modeling Best Practices](#data-modeling-best-practices)
 7. [ScyllaDB Features](#scylladb-features)
 8. [Migrations](#migrations)
-9. [Performance Tips](#performance-tips)
-10. [Common Patterns](#common-patterns)
-11. [Troubleshooting](#troubleshooting)
-12. [Additional Resources](#additional-resources)
+9. [Ash Extension Callbacks](#ash-extension-callbacks)
+10. [Performance Tips](#performance-tips)
+11. [Common Patterns](#common-patterns)
+12. [Troubleshooting](#troubleshooting)
+13. [Additional Resources](#additional-resources)
 
 ---
 
@@ -627,6 +628,26 @@ mix ash_scylla.migrate --dry-run
 # Only schema files from priv/migrations
 mix ash_scylla.migrate --schemas-only
 ```
+
+### Ash Extension Callbacks
+
+AshScylla implements the `Ash.Extension` behaviour, enabling standard Ash Mix tasks:
+
+```bash
+# Install AshScylla for a resource (generates migration files)
+mix ash.install AshScylla --resource MyApp.User
+
+# Reset the database (drop keyspace, recreate, re-run migrations)
+mix ash.reset AshScylla
+
+# Rollback migrations (note: CQL has no transactional DDL rollback)
+mix ash.rollback AshScylla --version 20240101000000
+
+# Tear down (drop keyspace)
+mix ash.tear_down AshScylla
+```
+
+All callbacks support `--dry-run` to preview actions without executing them.
 
 ---
 

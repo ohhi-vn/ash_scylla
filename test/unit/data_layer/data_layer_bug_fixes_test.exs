@@ -47,37 +47,37 @@ defmodule AshScylla.DataLayer.BugFixesTest do
           {:ok, %Xandra.Void{}}
 
         # --- inserts ---
-        "INSERT INTO bug_items" <> _ ->
+        "INSERT INTO test_ks.bug_items" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
-        "INSERT INTO float_items" <> _ ->
+        "INSERT INTO test_ks.float_items" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
-        "INSERT INTO struct_pk_items" <> _ ->
+        "INSERT INTO test_ks.struct_pk_items" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
         # --- updates ---
-        "UPDATE bug_items SET" <> _ ->
+        "UPDATE test_ks.bug_items SET" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
-        "UPDATE float_items SET" <> _ ->
+        "UPDATE test_ks.float_items SET" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
-        "UPDATE struct_pk_items SET" <> _ ->
+        "UPDATE test_ks.struct_pk_items SET" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
         # --- deletes ---
-        "DELETE FROM bug_items" <> _ ->
+        "DELETE FROM test_ks.bug_items" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
-        "DELETE FROM float_items" <> _ ->
+        "DELETE FROM test_ks.float_items" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
-        "DELETE FROM struct_pk_items" <> _ ->
+        "DELETE FROM test_ks.struct_pk_items" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
         # --- selects with LIMIT on secondary index ---
-        "SELECT * FROM bug_items WHERE" <> _ ->
+        "SELECT * FROM test_ks.bug_items WHERE" <> _ ->
           [_status, limit] = raw_params
 
           rows = [
@@ -101,7 +101,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
            }}
 
         # --- selects without LIMIT (for PK fetch) ---
-        "SELECT * FROM bug_items WHERE id = ? LIMIT 1" ->
+        "SELECT * FROM test_ks.bug_items WHERE id = ? LIMIT 1" ->
           [id] = raw_params
 
           {:ok,
@@ -110,7 +110,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
              columns: ["id", "name", "privacy", "score"]
            }}
 
-        "SELECT * FROM float_items WHERE id = ? LIMIT 1" ->
+        "SELECT * FROM test_ks.float_items WHERE id = ? LIMIT 1" ->
           [id] = raw_params
 
           {:ok,
@@ -119,7 +119,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
              columns: ["id", "name", "speed", "distance", "elevation"]
            }}
 
-        "SELECT * FROM float_items WHERE name = ?" <> _ ->
+        "SELECT * FROM test_ks.float_items WHERE name = ?" <> _ ->
           [_name] = raw_params
 
           {:ok,
@@ -130,7 +130,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
              columns: ["id", "name", "speed", "distance", "elevation"]
            }}
 
-        "SELECT * FROM struct_pk_items WHERE" <> _ ->
+        "SELECT * FROM test_ks.struct_pk_items WHERE" <> _ ->
           [id] = raw_params
 
           {:ok,
@@ -273,7 +273,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       query = %DataLayer{
         resource: AtomResource,
         repo: FakeRepo,
-        table: "bug_items",
+        table: "test_ks.bug_items",
         filters: [%{operator: :eq, left: %{name: :privacy}, right: %{value: "public"}}],
         sorts: [],
         limit: 250,
@@ -294,7 +294,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       query = %DataLayer{
         resource: AtomResource,
         repo: FakeRepo,
-        table: "bug_items",
+        table: "test_ks.bug_items",
         filters: [%{operator: :eq, left: %{name: :privacy}, right: %{value: "public"}}],
         sorts: [],
         limit: 10,
@@ -320,7 +320,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       query = %DataLayer{
         resource: AtomResource,
         repo: FakeRepo,
-        table: "bug_items",
+        table: "test_ks.bug_items",
         filters: [%{operator: :eq, left: %{name: :privacy}, right: %{value: "public"}}],
         sorts: [],
         limit: 10,
@@ -343,7 +343,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       query = %DataLayer{
         resource: AtomResource,
         repo: FakeRepo,
-        table: "bug_items",
+        table: "test_ks.bug_items",
         filters: [%{operator: :eq, left: %{name: :privacy}, right: %{value: "public"}}],
         sorts: [],
         limit: 10,
@@ -381,7 +381,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       assert :ok = DataLayer.destroy(AtomResource, changeset)
 
       assert_receive {:ash_scylla_query, delete_query, params, _opts}
-      assert delete_query == "DELETE FROM bug_items WHERE id = ?"
+      assert delete_query == "DELETE FROM test_ks.bug_items WHERE id = ?"
       # Should have the UUID binary from data, not nil
       assert [id_bin] = params
       assert is_binary(id_bin)
@@ -395,7 +395,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       assert :ok = DataLayer.destroy(AtomResource, changeset)
 
       assert_receive {:ash_scylla_query, delete_query, params, _opts}
-      assert delete_query == "DELETE FROM bug_items WHERE id = ?"
+      assert delete_query == "DELETE FROM test_ks.bug_items WHERE id = ?"
       assert [id_bin] = params
       assert id_bin == uuid_bin(id)
     end
@@ -410,7 +410,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       query = %DataLayer{
         resource: AtomResource,
         repo: FakeRepo,
-        table: "bug_items",
+        table: "test_ks.bug_items",
         filters: [%{operator: :eq, left: %{name: :privacy}, right: %{value: "public"}}],
         sorts: [:score],
         limit: 10,
@@ -431,7 +431,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       query = %DataLayer{
         resource: AtomResource,
         repo: FakeRepo,
-        table: "bug_items",
+        table: "test_ks.bug_items",
         filters: [%{operator: :eq, left: %{name: :privacy}, right: %{value: "public"}}],
         sorts: [:score],
         limit: 10,
@@ -467,7 +467,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       assert {:ok, _record} = DataLayer.create(FloatResource, cs)
 
       assert_receive {:ash_scylla_query, insert_query, insert_params, _opts}
-      assert insert_query =~ "INSERT INTO float_items"
+      assert insert_query =~ "INSERT INTO test_ks.float_items"
 
       # Verify float values are present as raw floats
       # The data layer wraps them in {type, value} tuples internally,
@@ -491,7 +491,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
 
       assert_receive {:ash_scylla_query, batch_query, batch_params, _opts}
       assert batch_query =~ "BEGIN BATCH"
-      assert batch_query =~ "INSERT INTO float_items"
+      assert batch_query =~ "INSERT INTO test_ks.float_items"
 
       # Verify all float values are present
       assert 15.0 in batch_params
@@ -512,7 +512,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       query = %DataLayer{
         resource: FloatResource,
         repo: FakeRepo,
-        table: "float_items",
+        table: "test_ks.float_items",
         filters: [%{operator: :eq, left: %{name: :name}, right: %{value: "Run"}}],
         sorts: [],
         limit: nil,
@@ -529,7 +529,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
                DataLayer.update_query(query, changeset(%{speed: 20.0}), FloatResource, [])
 
       assert_receive {:ash_scylla_query, update_query, _update_params, opts}
-      assert update_query =~ "UPDATE float_items SET"
+      assert update_query =~ "UPDATE test_ks.float_items SET"
       assert opts[:consistency] == :one
     end
 
@@ -537,7 +537,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       query = %DataLayer{
         resource: FloatResource,
         repo: FakeRepo,
-        table: "float_items",
+        table: "test_ks.float_items",
         filters: [%{operator: :eq, left: %{name: :name}, right: %{value: "Run"}}],
         sorts: [],
         limit: nil,
@@ -583,7 +583,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       assert :ok = DataLayer.destroy(StructPkResource, changeset)
 
       assert_receive {:ash_scylla_query, delete_query, params, _opts}
-      assert delete_query =~ "DELETE FROM struct_pk_items"
+      assert delete_query =~ "DELETE FROM test_ks.struct_pk_items"
       assert delete_query =~ "WHERE"
 
       # Should have extracted the PK from the struct fields
@@ -610,7 +610,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       query = %DataLayer{
         resource: StructPkResource,
         repo: FakeRepo,
-        table: "struct_pk_items",
+        table: "test_ks.struct_pk_items",
         filters: [%{operator: :eq, left: %{name: :name}, right: %{value: "Bob"}}],
         sorts: [],
         limit: nil,

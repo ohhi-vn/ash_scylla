@@ -16,8 +16,8 @@ defmodule AshScylla.MigrationTest do
       assert Migration.ash_type_to_cql_type(:integer, []) == "BIGINT"
     end
 
-    test "maps :float to FLOAT" do
-      assert Migration.ash_type_to_cql_type(:float, []) == "FLOAT"
+    test "maps :float to DOUBLE (64-bit, matches Elixir float)" do
+      assert Migration.ash_type_to_cql_type(:float, []) == "DOUBLE"
     end
 
     test "maps :double to DOUBLE" do
@@ -141,6 +141,51 @@ defmodule AshScylla.MigrationTest do
   describe "ash_type_to_cql_type/2 with unknown type" do
     test "defaults unknown types to TEXT" do
       assert Migration.ash_type_to_cql_type(:custom_type, []) == "TEXT"
+    end
+  end
+
+  describe "create_table_cql/1" do
+    test "generates simple primary key" do
+      cql = Migration.create_table_cql(AshScylla.TestResource)
+      assert cql =~ "CREATE TABLE IF NOT EXISTS"
+      assert cql =~ "PRIMARY KEY"
+      assert cql =~ "id UUID"
+      assert cql =~ "name TEXT"
+    end
+
+    test "generates keyspace-qualified table name when keyspace is configured" do
+      cql = Migration.create_table_cql(AshScylla.TestResource)
+      assert cql =~ ~s("ash_scylla_test")
+    end
+
+    test "generates composite primary key for resource with multiple pk attributes" do
+      cql = Migration.create_table_cql(AshScylla.TestResourceCompositePK)
+      assert cql =~ "PRIMARY KEY (id, group_id)"
+      assert cql =~ "id UUID"
+      assert cql =~ "group_id UUID"
+      assert cql =~ "content TEXT"
+    end
+
+    test "composite pk columns appear in column list and pk clause" do
+      cql = Migration.create_table_cql(AshScylla.TestResourceCompositePK)
+      # Both pk columns should be in the column definitions
+      assert cql =~ "id UUID"
+      assert cql =~ "group_id UUID"
+      # Composite pk clause
+      assert cql =~ "PRIMARY KEY (id, group_id)"
+    end
+
+    test "does not produce trailing comma in column list" do
+      cql = Migration.create_table_cql(AshScylla.TestResourceCompositePK)
+      refute cql =~ ",)"
+      refute cql =~ ", )"
+    end
+
+    test "generates valid CQL with secondary indexes" do
+      cql = Migration.create_table_cql(AshScylla.TestResourceWithIndexes)
+      assert cql =~ "PRIMARY KEY"
+      assert cql =~ "name TEXT"
+      assert cql =~ "email TEXT"
     end
   end
 

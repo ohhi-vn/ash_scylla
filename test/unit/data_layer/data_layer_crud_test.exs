@@ -44,13 +44,13 @@ defmodule AshScylla.DataLayer.CrudTest do
 
       case query do
         # --- inserts ---
-        "INSERT INTO crud_items" <> _ ->
+        "INSERT INTO test_ks.crud_items" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
-        "INSERT INTO lwt_items" <> _ ->
+        "INSERT INTO test_ks.lwt_items" <> _ ->
           {:ok, %Xandra.Page{content: [[false]]}}
 
-        "INSERT INTO lwt_success_items" <> _ ->
+        "INSERT INTO test_ks.lwt_success_items" <> _ ->
           {:ok, %Xandra.Page{content: [[true]]}}
 
         # --- batch ---
@@ -58,21 +58,21 @@ defmodule AshScylla.DataLayer.CrudTest do
           {:ok, %Xandra.Void{}}
 
         # --- updates ---
-        "UPDATE crud_items SET" <> _ ->
+        "UPDATE test_ks.crud_items SET" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
-        "UPDATE lwt_items SET" <> _ ->
+        "UPDATE test_ks.lwt_items SET" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
         # --- deletes ---
-        "DELETE FROM crud_items WHERE id = ?" ->
+        "DELETE FROM test_ks.crud_items WHERE id = ?" ->
           {:ok, %Xandra.Page{content: []}}
 
-        "DELETE FROM crud_items WHERE status = ?" ->
+        "DELETE FROM test_ks.crud_items WHERE status = ?" ->
           {:ok, %Xandra.Page{content: []}}
 
         # --- selects (real Xandra format: positional rows + string column names) ---
-        "SELECT * FROM crud_items WHERE id = ? LIMIT 1" ->
+        "SELECT * FROM test_ks.crud_items WHERE id = ? LIMIT 1" ->
           [id] = params
 
           if id == "bad-fetch" do
@@ -86,7 +86,7 @@ defmodule AshScylla.DataLayer.CrudTest do
              }}
           end
 
-        "SELECT * FROM lwt_items WHERE id = ? LIMIT 1" ->
+        "SELECT * FROM test_ks.lwt_items WHERE id = ? LIMIT 1" ->
           [id] = params
 
           {:ok,
@@ -95,7 +95,7 @@ defmodule AshScylla.DataLayer.CrudTest do
              columns: ["id", "name", "status"]
            }}
 
-        "SELECT * FROM crud_items WHERE status = ? LIMIT ?" ->
+        "SELECT * FROM test_ks.crud_items WHERE status = ? LIMIT ?" ->
           {:ok,
            %Xandra.Page{
              content: [
@@ -114,7 +114,7 @@ defmodule AshScylla.DataLayer.CrudTest do
              columns: ["id", "name", "status", "age"]
            }}
 
-        "SELECT COUNT(*) FROM crud_items" <> _ ->
+        "SELECT COUNT(*) FROM test_ks.crud_items" <> _ ->
           {:ok, %Xandra.Page{content: [[2]]}}
 
         # --- fallback ---
@@ -243,7 +243,7 @@ defmodule AshScylla.DataLayer.CrudTest do
     %DataLayer{
       resource: Resource,
       repo: FakeRepo,
-      table: "crud_items",
+      table: "test_ks.crud_items",
       filters: [],
       sorts: [],
       limit: nil,
@@ -271,7 +271,7 @@ defmodule AshScylla.DataLayer.CrudTest do
 
       # INSERT
       assert_receive {:ash_scylla_query, insert_query, insert_params, opts}
-      assert insert_query =~ "INSERT INTO crud_items"
+      assert insert_query =~ "INSERT INTO test_ks.crud_items"
       assert insert_query =~ "USING TTL 60"
       assert opts[:consistency] == :one
       assert Enum.sort(insert_params) == Enum.sort([uuid_bin(record_id), "Ada", 42, "active"])
@@ -280,7 +280,7 @@ defmodule AshScylla.DataLayer.CrudTest do
 
       # fetch-by-PK (params are the 16-byte binary UUID)
       assert_receive {:ash_scylla_query, fetch_query, [^id_bin], []}
-      assert fetch_query == "SELECT * FROM crud_items WHERE id = ? LIMIT 1"
+      assert fetch_query == "SELECT * FROM test_ks.crud_items WHERE id = ? LIMIT 1"
     end
 
     test "wraps fetch-by-primary-key connection errors" do
@@ -289,7 +289,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert {:error, error} = DataLayer.create(Resource, changeset)
       assert %ScyllaError{type: :connection_timeout} = error
 
-      assert_receive {:ash_scylla_query, "SELECT * FROM crud_items WHERE id = ? LIMIT 1",
+      assert_receive {:ash_scylla_query, "SELECT * FROM test_ks.crud_items WHERE id = ? LIMIT 1",
                       ["bad-fetch"], []}
     end
   end
@@ -309,13 +309,13 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert record.name == "Ada"
 
       assert_receive {:ash_scylla_query, update_query, _update_params, opts}
-      assert update_query =~ "UPDATE crud_items SET"
+      assert update_query =~ "UPDATE test_ks.crud_items SET"
       assert update_query =~ "WHERE id = ?"
       assert opts[:consistency] == :one
 
       id_bin = uuid_bin(id)
 
-      assert_receive {:ash_scylla_query, "SELECT * FROM crud_items WHERE id = ? LIMIT 1",
+      assert_receive {:ash_scylla_query, "SELECT * FROM test_ks.crud_items WHERE id = ? LIMIT 1",
                       [^id_bin], []}
     end
   end
@@ -333,7 +333,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert :ok = DataLayer.destroy(Resource, changeset(%{id: id}))
 
       assert_receive {:ash_scylla_query, delete_query, [^id_bin], opts}
-      assert delete_query == "DELETE FROM crud_items WHERE id = ?"
+      assert delete_query == "DELETE FROM test_ks.crud_items WHERE id = ?"
       assert opts[:consistency] == :one
     end
   end
@@ -352,7 +352,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       id_bin = uuid_bin(id)
 
       assert_receive {:ash_scylla_query, upsert_query, [^id_bin, "Upsert"], opts}
-      assert upsert_query =~ "INSERT INTO crud_items"
+      assert upsert_query =~ "INSERT INTO test_ks.crud_items"
       assert upsert_query =~ "USING TTL 60"
       refute upsert_query =~ "IF NOT EXISTS"
       assert opts[:consistency] == :one
@@ -368,15 +368,15 @@ defmodule AshScylla.DataLayer.CrudTest do
 
       # LWT insert returns [[false]] → conflict → falls back to update
       assert_receive {:ash_scylla_query, upsert_query, [^id_bin, "Grace"], opts}
-      assert upsert_query =~ "INSERT INTO lwt_items"
+      assert upsert_query =~ "INSERT INTO test_ks.lwt_items"
       assert upsert_query =~ "IF NOT EXISTS"
       assert opts[:consistency] == :one
 
       assert_receive {:ash_scylla_query, update_query, _update_params, _opts}
-      assert update_query =~ "UPDATE lwt_items SET"
+      assert update_query =~ "UPDATE test_ks.lwt_items SET"
       assert update_query =~ "WHERE id = ?"
 
-      assert_receive {:ash_scylla_query, "SELECT * FROM lwt_items WHERE id = ? LIMIT 1",
+      assert_receive {:ash_scylla_query, "SELECT * FROM test_ks.lwt_items WHERE id = ? LIMIT 1",
                       [^id_bin], []}
     end
 
@@ -391,7 +391,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       id_bin = uuid_bin(id)
 
       assert_receive {:ash_scylla_query, upsert_query, [^id_bin, "LWT"], opts}
-      assert upsert_query =~ "INSERT INTO lwt_success_items"
+      assert upsert_query =~ "INSERT INTO test_ks.lwt_success_items"
       assert upsert_query =~ "IF NOT EXISTS"
       assert opts[:consistency] == :one
     end
@@ -416,7 +416,7 @@ defmodule AshScylla.DataLayer.CrudTest do
 
       assert_receive {:ash_scylla_query, batch_query, batch_params, opts}
       assert batch_query =~ "BEGIN BATCH"
-      assert batch_query =~ "INSERT INTO crud_items"
+      assert batch_query =~ "INSERT INTO test_ks.crud_items"
       assert batch_query =~ "APPLY BATCH"
       assert opts[:consistency] == :one
 
@@ -447,7 +447,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert record.display_name == "Ada!"
 
       assert_receive {:ash_scylla_query, select_query, ["active", 10], opts}
-      assert select_query == "SELECT * FROM crud_items WHERE status = ? LIMIT ?"
+      assert select_query == "SELECT * FROM test_ks.crud_items WHERE status = ? LIMIT ?"
       assert opts[:consistency] == :one
     end
 
@@ -513,7 +513,7 @@ defmodule AshScylla.DataLayer.CrudTest do
 
       # update_query re-runs the original query (with original filters) to fetch results
       assert_receive {:ash_scylla_query, select_query, ["active", 10], _opts}
-      assert select_query == "SELECT * FROM crud_items WHERE status = ? LIMIT ?"
+      assert select_query == "SELECT * FROM test_ks.crud_items WHERE status = ? LIMIT ?"
     end
 
     test "bulk deletes by filter" do
@@ -525,7 +525,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert DataLayer.destroy_query(query, changeset(%{}), [], Resource) == :ok
 
       assert_receive {:ash_scylla_query, delete_query, ["active"], opts}
-      assert delete_query == "DELETE FROM crud_items WHERE status = ?"
+      assert delete_query == "DELETE FROM test_ks.crud_items WHERE status = ?"
       assert opts[:consistency] == :one
     end
   end
@@ -545,7 +545,7 @@ defmodule AshScylla.DataLayer.CrudTest do
                DataLayer.run_aggregate_query(query, [%{kind: :count, name: :total}], Resource)
 
       assert_receive {:ash_scylla_query, aggregate_query, ["active"], opts}
-      assert aggregate_query == "SELECT COUNT(*) FROM crud_items WHERE status = ?"
+      assert aggregate_query == "SELECT COUNT(*) FROM test_ks.crud_items WHERE status = ?"
       assert opts[:consistency] == :one
     end
 

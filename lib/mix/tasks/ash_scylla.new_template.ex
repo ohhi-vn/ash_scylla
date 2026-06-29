@@ -60,9 +60,8 @@ defmodule Mix.Tasks.AshScylla.NewTemplate do
     {opts, remaining} = parse_cli_opts(args)
 
     case AshScylla.ResourceGenerator.parse_args(remaining, opts) do
-      {:ok, resource_name, attributes, extra_opts} ->
-        merged_opts = Keyword.merge(opts, extra_opts)
-        AshScylla.ResourceGenerator.write_resource(resource_name, attributes, merged_opts)
+      {:ok, resource_name, attributes} ->
+        AshScylla.ResourceGenerator.write_resource(resource_name, attributes, opts)
 
       {:error, message} ->
         Mix.raise(message)
