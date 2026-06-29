@@ -3,7 +3,7 @@ defmodule BasicApp.Resources.User do
     data_layer: AshScylla.DataLayer,
     domain: BasicApp.Domain
 
-  ash_scylla do
+  scylla do
     table("users")
     keyspace("basic_app_dev")
     consistency(:quorum)

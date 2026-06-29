@@ -148,6 +148,16 @@ defmodule AshScylla.DataLayer.QueryBuilder do
         {query_acc, params}
       end
 
+    # Append ALLOW FILTERING when doing a secondary index scan.
+    # ScyllaDB requires ALLOW FILTERING for queries on secondary indexes.
+    query_acc =
+      if resource != nil and filters != [] and secondary_index_scan?(resource, filters) do
+        Logger.debug("AshScylla: Appending ALLOW FILTERING for secondary index scan on #{table}")
+        [query_acc, " ALLOW FILTERING"]
+      else
+        query_acc
+      end
+
     query = IO.iodata_to_binary(query_acc)
     {query, params}
   end
@@ -292,7 +302,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
                 {acc_c, acc_p}
 
               {c, p} ->
-                {[c | acc_c], Enum.reverse(p, acc_p)}
+                {[c | acc_c], acc_p ++ p}
             end
           end)
 
@@ -302,7 +312,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
           |> Enum.intersperse(" AND ")
           |> IO.iodata_to_binary()
 
-        {joined_clauses, :lists.reverse(params)}
+        {joined_clauses, params}
     end
   end
 
@@ -910,7 +920,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
                            "with"
                          ])
 
-  defp cql_identifier(name) do
+  def cql_identifier(name) do
     name_str = name |> to_string() |> Identifier.sanitize!()
 
     if MapSet.member?(@cql_reserved_keywords, String.downcase(name_str)) do
@@ -942,7 +952,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   defp maybe_iodata_to_binary({:error, _} = error), do: error
 
   @spec get_filter_columns(list()) :: [atom()]
-  defp get_filter_columns(filters) do
+  def get_filter_columns(filters) do
     filters
     |> Enum.flat_map(&extract_filter_columns/1)
     |> Enum.uniq()
@@ -970,16 +980,22 @@ defmodule AshScylla.DataLayer.QueryBuilder do
         MapSet.new()
       end
 
-    indexed_columns =
+    secondary_indexed_columns =
       resource
       |> Dsl.secondary_indexes()
       |> Enum.flat_map(fn idx -> idx.columns end)
       |> MapSet.new()
-      |> MapSet.union(pk_columns)
 
     filter_columns = get_filter_columns(filters)
 
+    # A secondary index scan occurs when:
+    # 1. There are filters
+    # 2. At least one filter column uses a secondary index (not a PK)
+    # 3. All filter columns are either PK or secondary index columns (no unindexed columns)
     filter_columns != [] and
-      Enum.all?(filter_columns, fn col -> MapSet.member?(indexed_columns, col) end)
+      Enum.any?(filter_columns, fn col -> MapSet.member?(secondary_indexed_columns, col) end) and
+      Enum.all?(filter_columns, fn col ->
+        MapSet.member?(pk_columns, col) or MapSet.member?(secondary_indexed_columns, col)
+      end)
   end
 end

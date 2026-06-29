@@ -488,7 +488,7 @@ defmodule AshScylla.DataLayer.Dsl do
         # ── Relationship DSL ──
 
         {:relationship, meta, [type, name, target | rest]}
-        when is_atom(type) and is_atom(name) and is_atom(target) ->
+        when is_atom(type) and is_atom(name) ->
           rel_opts =
             case rest do
               [] -> []

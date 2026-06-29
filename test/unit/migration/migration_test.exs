@@ -149,8 +149,8 @@ defmodule AshScylla.MigrationTest do
       cql = Migration.create_table_cql(AshScylla.TestResource)
       assert cql =~ "CREATE TABLE IF NOT EXISTS"
       assert cql =~ "PRIMARY KEY"
-      assert cql =~ "id UUID"
-      assert cql =~ "name TEXT"
+      assert cql =~ ~s("id" UUID)
+      assert cql =~ ~s("name" TEXT)
     end
 
     test "generates keyspace-qualified table name when keyspace is configured" do
@@ -160,19 +160,19 @@ defmodule AshScylla.MigrationTest do
 
     test "generates composite primary key for resource with multiple pk attributes" do
       cql = Migration.create_table_cql(AshScylla.TestResourceCompositePK)
-      assert cql =~ "PRIMARY KEY (id, group_id)"
-      assert cql =~ "id UUID"
-      assert cql =~ "group_id UUID"
-      assert cql =~ "content TEXT"
+      assert cql =~ ~s/PRIMARY KEY ("id", "group_id")/
+      assert cql =~ ~s/"id" UUID/
+      assert cql =~ ~s/"group_id" UUID/
+      assert cql =~ ~s/"content" TEXT/
     end
 
     test "composite pk columns appear in column list and pk clause" do
       cql = Migration.create_table_cql(AshScylla.TestResourceCompositePK)
       # Both pk columns should be in the column definitions
-      assert cql =~ "id UUID"
-      assert cql =~ "group_id UUID"
+      assert cql =~ ~s/"id" UUID/
+      assert cql =~ ~s/"group_id" UUID/
       # Composite pk clause
-      assert cql =~ "PRIMARY KEY (id, group_id)"
+      assert cql =~ ~s/PRIMARY KEY ("id", "group_id")/
     end
 
     test "does not produce trailing comma in column list" do
@@ -184,8 +184,8 @@ defmodule AshScylla.MigrationTest do
     test "generates valid CQL with secondary indexes" do
       cql = Migration.create_table_cql(AshScylla.TestResourceWithIndexes)
       assert cql =~ "PRIMARY KEY"
-      assert cql =~ "name TEXT"
-      assert cql =~ "email TEXT"
+      assert cql =~ ~s("name" TEXT)
+      assert cql =~ ~s("email" TEXT)
     end
   end
 

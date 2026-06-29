@@ -407,9 +407,9 @@ defmodule Mix.Tasks.AshScylla.GenChangeTrackingTest do
       result = Migration.create_secondary_indexes_cql(MultiColSplit)
       assert length(result) == 3
 
-      assert Enum.any?(result, &String.contains?(&1, "(a)"))
-      assert Enum.any?(result, &String.contains?(&1, "(b)"))
-      assert Enum.any?(result, &String.contains?(&1, "(c)"))
+      assert Enum.any?(result, &String.contains?(&1, ~s/("a")/))
+      assert Enum.any?(result, &String.contains?(&1, ~s/("b")/))
+      assert Enum.any?(result, &String.contains?(&1, ~s/("c")/))
     end
 
     test "splits multi-column index with custom name" do
@@ -439,7 +439,7 @@ defmodule Mix.Tasks.AshScylla.GenChangeTrackingTest do
 
       result = Migration.create_secondary_indexes_cql(SingleCol)
       assert length(result) == 1
-      assert String.contains?(hd(result), "(email)")
+      assert String.contains?(hd(result), ~s/("email")/)
     end
 
     test "mixed single and multi-column indexes" do
@@ -459,9 +459,9 @@ defmodule Mix.Tasks.AshScylla.GenChangeTrackingTest do
       # 1 (email) + 2 (first_name, last_name split) + 1 (status) = 4
       assert length(result) == 4
 
-      assert Enum.any?(result, &String.contains?(&1, "(email)"))
-      assert Enum.any?(result, &String.contains?(&1, "(first_name)"))
-      assert Enum.any?(result, &String.contains?(&1, "(last_name)"))
+      assert Enum.any?(result, &String.contains?(&1, ~s/("email")/))
+      assert Enum.any?(result, &String.contains?(&1, ~s/("first_name")/))
+      assert Enum.any?(result, &String.contains?(&1, ~s/("last_name")/))
       assert Enum.any?(result, &String.contains?(&1, "idx_status"))
     end
   end

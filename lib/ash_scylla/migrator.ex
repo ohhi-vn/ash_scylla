@@ -119,13 +119,23 @@ defmodule AshScylla.Migrator do
   defp execute_statements(conn_name, [stmt | rest], index, acc) do
     Logger.info("AshScylla.Migrator: Executing statement #{index}")
 
-    case AshScylla.Connection.query(conn_name, stmt, [], consistency: :quorum) do
+    conn_opts = connection_keyspace_opts(conn_name)
+
+    case AshScylla.Connection.query(conn_name, stmt, [], conn_opts ++ [consistency: :quorum]) do
       {:ok, result} ->
         execute_statements(conn_name, rest, index + 1, [result | acc])
 
       {:error, reason} ->
         Logger.error("AshScylla.Migrator: Statement #{index} failed: #{inspect(reason)}")
         {:error, {index, reason}}
+    end
+  end
+
+  defp connection_keyspace_opts(conn_name) do
+    case AshScylla.Connection.get_conn(conn_name) do
+      nil -> []
+      %AshScylla.Connection{keyspace: keyspace} when is_binary(keyspace) -> [keyspace: keyspace]
+      _ -> []
     end
   end
 end

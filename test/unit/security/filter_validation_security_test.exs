@@ -98,6 +98,25 @@ defmodule AshScylla.FilterValidationSecurityTest do
       }
 
       {cql, _params} = QueryBuilder.build_optimized_query(query)
+      # ALLOW FILTERING is present because the query uses a secondary index (:email)
+      assert cql =~ "ALLOW FILTERING"
+    end
+
+    test "ALLOW FILTERING is NOT present when querying by PK only" do
+      alias AshScylla.DataLayer.QueryBuilder
+
+      query = %AshScylla.Query{
+        resource: AshScylla.TestResource,
+        repo: nil,
+        table: "test_table",
+        filters: [
+          %{left: %{name: :id}, operator: :eq, right: %{value: "uuid"}}
+        ],
+        sorts: [],
+        limit: 50
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
       refute cql =~ "ALLOW FILTERING"
     end
   end

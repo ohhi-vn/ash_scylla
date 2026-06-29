@@ -283,9 +283,14 @@ defmodule AshScylla.ConnectionTest do
       assert params == [{"boolean", true}, {"boolean", false}]
     end
 
-    test "nil passes through as nil" do
+    test "nil is encoded as {\"text\", nil} tuple" do
       params = Connection.typed_params([nil])
-      assert params == [nil]
+      assert params == [{"text", nil}]
+    end
+
+    test "nil alongside other params is encoded correctly" do
+      params = Connection.typed_params(["hello", nil, 42, nil])
+      assert params == [{"text", "hello"}, {"text", nil}, {"bigint", 42}, {"text", nil}]
     end
 
     test "atoms are encoded as text via to_string" do

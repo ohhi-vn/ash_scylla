@@ -235,7 +235,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
       def __ash_scylla__(:secondary_indexes), do: []
     end
 
-    test "ORDER BY is dropped when scanning via secondary index" do
+    test "ORDER BY is dropped and ALLOW FILTERING is appended when scanning via secondary index" do
       filter = %{operator: :eq, left: %{name: :user_id}, right: %{value: "u1"}}
 
       query = %AshScylla.Query{
@@ -254,8 +254,11 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
       refute String.contains?(cql, "ORDER BY"),
              "ORDER BY must be dropped for secondary index scans"
 
+      assert String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must be appended for secondary index scans"
+
       assert cql ==
-               "SELECT id, started_at, user_id, game_id FROM game_members WHERE user_id = ?"
+               "SELECT id, started_at, user_id, game_id FROM game_members WHERE user_id = ? ALLOW FILTERING"
 
       assert params == ["u1"]
     end
@@ -383,9 +386,237 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
       {cql, params} = QueryBuilder.build_optimized_query(query)
 
       assert String.contains?(cql, "LIMIT ?")
+      assert String.contains?(cql, "ALLOW FILTERING")
       assert "a@b.com" in params
       assert "active" in params
       assert {"int", 10} in params
+    end
+  end
+
+  # ============================================================================
+  # ALLOW FILTERING clause tests
+  # ============================================================================
+
+  describe "build_optimized_query/1 ALLOW FILTERING for secondary index scans" do
+    defmodule AllowFilterResource do
+      @moduledoc false
+      def __ash_scylla__(:secondary_indexes), do: [%{columns: [:user_id, :status, :email]}]
+    end
+
+    defmodule AllowFilterPKResource do
+      @moduledoc false
+      def __ash_scylla__(:secondary_indexes), do: [%{columns: [:status]}]
+    end
+
+    test "appends ALLOW FILTERING when filtering on single secondary index column" do
+      filter = %{operator: :eq, left: %{name: :user_id}, right: %{value: "u1"}}
+
+      query = %AshScylla.Query{
+        resource: AllowFilterResource,
+        repo: nil,
+        table: "items",
+        filters: [filter],
+        sorts: [],
+        limit: nil,
+        select: [:id, :user_id],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      assert String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must be present for secondary index scan"
+    end
+
+    test "appends ALLOW FILTERING when filtering on multiple secondary index columns" do
+      f1 = %{operator: :eq, left: %{name: :user_id}, right: %{value: "u1"}}
+      f2 = %{operator: :eq, left: %{name: :status}, right: %{value: "active"}}
+
+      query = %AshScylla.Query{
+        resource: AllowFilterResource,
+        repo: nil,
+        table: "items",
+        filters: [f1, f2],
+        sorts: [],
+        limit: nil,
+        select: [:id, :user_id, :status],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      assert String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must be present when filtering on multiple secondary index columns"
+    end
+
+    test "does NOT append ALLOW FILTERING when filtering only by primary key" do
+      # game_id is the PK (not in secondary_indexes), so no ALLOW FILTERING needed
+      filter = %{operator: :eq, left: %{name: :game_id}, right: %{value: "g1"}}
+
+      query = %AshScylla.Query{
+        resource: AllowFilterResource,
+        repo: nil,
+        table: "items",
+        filters: [filter],
+        sorts: [],
+        limit: nil,
+        select: [:id, :game_id],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      refute String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must NOT be present for pure PK queries"
+    end
+
+    test "does NOT append ALLOW FILTERING when there are no filters" do
+      query = %AshScylla.Query{
+        resource: AllowFilterResource,
+        repo: nil,
+        table: "items",
+        filters: [],
+        sorts: [],
+        limit: nil,
+        select: [:id],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      refute String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must NOT be present when there are no filters"
+    end
+
+    test "does NOT append ALLOW FILTERING when resource is nil" do
+      filter = %{operator: :eq, left: %{name: :user_id}, right: %{value: "u1"}}
+
+      query = %AshScylla.Query{
+        resource: nil,
+        repo: nil,
+        table: "items",
+        filters: [filter],
+        sorts: [],
+        limit: nil,
+        select: [:id, :user_id],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      refute String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must NOT be present when resource is nil"
+    end
+
+    test "appends ALLOW FILTERING with LIMIT and secondary index scan" do
+      filter = %{operator: :eq, left: %{name: :email}, right: %{value: "a@b.com"}}
+
+      query = %AshScylla.Query{
+        resource: AllowFilterResource,
+        repo: nil,
+        table: "items",
+        filters: [filter],
+        sorts: [],
+        limit: 50,
+        select: [:id, :email],
+        tenant: nil
+      }
+
+      {cql, params} = QueryBuilder.build_optimized_query(query)
+
+      assert String.contains?(cql, "ALLOW FILTERING")
+      assert String.contains?(cql, "LIMIT ?")
+      assert {"int", 50} in params
+    end
+
+    test "appends ALLOW FILTERING with ORDER BY stripped and secondary index scan" do
+      # ORDER BY is dropped because it's a secondary index scan
+      filter = %{operator: :eq, left: %{name: :status}, right: %{value: "active"}}
+
+      query = %AshScylla.Query{
+        resource: AllowFilterResource,
+        repo: nil,
+        table: "items",
+        filters: [filter],
+        sorts: [{:created_at, :desc}],
+        limit: nil,
+        select: [:id, :status],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      assert String.contains?(cql, "ALLOW FILTERING")
+      refute String.contains?(cql, "ORDER BY")
+    end
+
+    test "appends ALLOW FILTERING when using Ash.Query.Ref on secondary index column" do
+      filter = %Ash.Query.Ref{attribute: %{name: :email}}
+
+      query = %AshScylla.Query{
+        resource: AllowFilterResource,
+        repo: nil,
+        table: "items",
+        filters: [filter],
+        sorts: [],
+        limit: nil,
+        select: [:id, :email],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      assert String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must be present when using Ash.Query.Ref on secondary index column"
+    end
+
+    test "does NOT append ALLOW FILTERING when Ash.Query.Ref points to non-indexed column" do
+      filter = %Ash.Query.Ref{attribute: %{name: :name}}
+
+      query = %AshScylla.Query{
+        resource: AllowFilterResource,
+        repo: nil,
+        table: "items",
+        filters: [filter],
+        sorts: [],
+        limit: nil,
+        select: [:id, :name],
+        tenant: nil
+      }
+
+      {cql, _params} = QueryBuilder.build_optimized_query(query)
+
+      refute String.contains?(cql, "ALLOW FILTERING"),
+             "ALLOW FILTERING must NOT be present when Ash.Query.Ref points to non-indexed column"
+    end
+
+    test "appends ALLOW FILTERING with complex AND filters on secondary indexes" do
+      f1 = %{operator: :eq, left: %{name: :user_id}, right: %{value: "u1"}}
+      f2 = %{operator: :gt, left: %{name: :status}, right: %{value: "active"}}
+      f3 = %{operator: :eq, left: %{name: :email}, right: %{value: "a@b.com"}}
+
+      query = %AshScylla.Query{
+        resource: AllowFilterResource,
+        repo: nil,
+        table: "items",
+        filters: [f1, f2, f3],
+        sorts: [],
+        limit: 100,
+        select: [:id, :user_id, :status, :email],
+        tenant: nil
+      }
+
+      {cql, params} = QueryBuilder.build_optimized_query(query)
+
+      assert String.contains?(cql, "ALLOW FILTERING")
+      assert String.contains?(cql, "LIMIT ?")
+      assert String.contains?(cql, "user_id = ?")
+      assert String.contains?(cql, "status > ?")
+      assert String.contains?(cql, "email = ?")
+      assert "u1" in params
+      assert "active" in params
+      assert "a@b.com" in params
+      assert {"int", 100} in params
     end
   end
 

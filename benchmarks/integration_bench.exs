@@ -286,7 +286,7 @@ defmodule AshScylla.Benchmarks.Integration do
       data_layer: AshScylla.DataLayer,
       repo: __MODULE__.Repo
 
-    ash_scylla do
+    scylla do
       table("bench_users")
       keyspace("ash_scylla_bench")
       consistency(:quorum)

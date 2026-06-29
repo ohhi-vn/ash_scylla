@@ -1175,8 +1175,8 @@ defmodule AshScylla.EdgeCasesTest do
 
       result = Migration.create_secondary_indexes_cql(MCIR2)
       assert length(result) == 2
-      assert String.contains?(hd(result), "(fn)")
-      assert String.contains?(Enum.at(result, 1), "(ln)")
+      assert String.contains?(hd(result), ~s/("fn")/)
+      assert String.contains?(Enum.at(result, 1), ~s/("ln")/)
     end
 
     test "create_secondary_indexes_cql with multiple indexes" do

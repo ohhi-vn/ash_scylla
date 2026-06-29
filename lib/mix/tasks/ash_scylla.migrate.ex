@@ -404,10 +404,29 @@ defmodule Mix.Tasks.AshScylla.Migrate do
 
   defp extract_migration_version(file) do
     base = Path.basename(file)
+    root = Path.rootname(base)
 
-    case Integer.parse(Path.rootname(base)) do
-      {version, _} -> {version, file}
-      _ -> nil
+    # Extract the migration version from the filename. Supports:
+    # - pure numeric: "20260629124004.ex" -> 20260629124004
+    # - numeric + suffix: "20260629122559_activity_message_dev.ex" -> 20260629122559
+    # - schema-prefixed: "schema20260629124004.ex" -> 20260629124004
+    cond do
+      # Pure numeric or numeric-with-suffix (original behavior)
+      match?({_, _}, Integer.parse(root)) ->
+        case Integer.parse(root) do
+          {v, _} -> {v, file}
+          :error -> nil
+        end
+
+      # Schema-prefixed files from `mix ash_scylla.gen` (e.g. "schema20260629124004")
+      String.starts_with?(root, "schema") ->
+        case Integer.parse(String.trim_leading(root, "schema")) do
+          {v, ""} -> {v, file}
+          _ -> nil
+        end
+
+      true ->
+        nil
     end
   end
 
@@ -509,7 +528,6 @@ defmodule Mix.Tasks.AshScylla.Migrate do
       Mix.shell().info("No resources found to migrate.")
       {0, 0}
     else
-
       # Only start a real connection if not in dry-run mode
       if !dry_run do
         {:ok, _} =

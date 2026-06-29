@@ -641,7 +641,7 @@ defmodule AshScylla.DataLayer do
       dsl_table ->
         to_string(dsl_table)
     end
-    |> sanitize_identifier()
+    |> QueryBuilder.cql_identifier()
   end
 
   # ============================================================================
@@ -704,8 +704,39 @@ defmodule AshScylla.DataLayer do
 
     where_params = convert_uuid_params(where_params, resource)
 
+    # Check if this is a secondary index scan (for bulk delete by filter)
+    pk_columns =
+      if Ash.Resource.Info.resource?(resource) do
+        resource
+        |> Ash.Resource.Info.primary_key()
+        |> MapSet.new()
+      else
+        MapSet.new()
+      end
+
+    secondary_indexed_columns =
+      resource
+      |> Dsl.secondary_indexes()
+      |> Enum.flat_map(fn idx -> idx.columns end)
+      |> MapSet.new()
+
+    filter_columns = QueryBuilder.get_filter_columns(filters)
+
+    needs_allow_filtering =
+      filter_columns != [] and
+        Enum.any?(filter_columns, fn col -> MapSet.member?(secondary_indexed_columns, col) end) and
+        Enum.all?(filter_columns, fn col ->
+          MapSet.member?(pk_columns, col) or MapSet.member?(secondary_indexed_columns, col)
+        end)
+
     query =
-      IO.iodata_to_binary(["DELETE FROM ", sanitized_table, " WHERE ", where_clause])
+      IO.iodata_to_binary([
+        "DELETE FROM ",
+        sanitized_table,
+        " WHERE ",
+        where_clause,
+        if(needs_allow_filtering, do: " ALLOW FILTERING", else: "")
+      ])
 
     Logger.debug("Executing bulk DELETE on #{sanitized_table}")
 
@@ -1244,8 +1275,40 @@ defmodule AshScylla.DataLayer do
 
     {pk_where, pk_values} = build_pk_where_clause(changeset, resource)
 
+    # Check if this is a secondary index scan (for bulk delete by filter)
+    pk_columns =
+      if Ash.Resource.Info.resource?(resource) do
+        resource
+        |> Ash.Resource.Info.primary_key()
+        |> MapSet.new()
+      else
+        MapSet.new()
+      end
+
+    secondary_indexed_columns =
+      resource
+      |> Dsl.secondary_indexes()
+      |> Enum.flat_map(fn idx -> idx.columns end)
+      |> MapSet.new()
+
+    filters = changeset.filter || []
+    filter_columns = QueryBuilder.get_filter_columns(filters)
+
+    needs_allow_filtering =
+      filter_columns != [] and
+        Enum.any?(filter_columns, fn col -> MapSet.member?(secondary_indexed_columns, col) end) and
+        Enum.all?(filter_columns, fn col ->
+          MapSet.member?(pk_columns, col) or MapSet.member?(secondary_indexed_columns, col)
+        end)
+
     query =
-      IO.iodata_to_binary(["DELETE FROM ", sanitized_table, " WHERE ", pk_where])
+      IO.iodata_to_binary([
+        "DELETE FROM ",
+        sanitized_table,
+        " WHERE ",
+        pk_where,
+        if(needs_allow_filtering, do: " ALLOW FILTERING", else: "")
+      ])
 
     Logger.debug("Executing DELETE on #{sanitized_table}")
 
@@ -1562,7 +1625,7 @@ defmodule AshScylla.DataLayer do
           end
 
         wrapped = wrap_typed(value, k, cql_types)
-        {[sanitize_identifier(to_string(k)) | fs], [wrapped | vs]}
+        {[QueryBuilder.cql_identifier(to_string(k)) | fs], [wrapped | vs]}
       end)
 
     {Enum.reverse(fields), :lists.reverse(values)}
@@ -1575,7 +1638,7 @@ defmodule AshScylla.DataLayer do
 
     {clauses, values} =
       Enum.reduce(attrs, {[], []}, fn {k, v}, {cs, vs} ->
-        sanitized = sanitize_identifier(to_string(k))
+        sanitized = QueryBuilder.cql_identifier(to_string(k))
 
         value =
           if uuid_field?(k, v, uuid_fields, resource) do
@@ -1607,7 +1670,7 @@ defmodule AshScylla.DataLayer do
 
     {clauses, values} =
       Enum.reduce(pk_map, {[], []}, fn {k, v}, {cs, vs} ->
-        sanitized = sanitize_identifier(to_string(k))
+        sanitized = QueryBuilder.cql_identifier(to_string(k))
 
         value =
           if uuid_field?(k, v, uuid_fields, resource) do

@@ -95,7 +95,7 @@ defmodule AshScylla.DataLayer.CrudTest do
              columns: ["id", "name", "status"]
            }}
 
-        "SELECT * FROM test_ks.crud_items WHERE status = ? LIMIT ?" ->
+        "SELECT * FROM test_ks.crud_items WHERE status = ? LIMIT ? ALLOW FILTERING" ->
           {:ok,
            %Xandra.Page{
              content: [
@@ -113,6 +113,9 @@ defmodule AshScylla.DataLayer.CrudTest do
              ],
              columns: ["id", "name", "status", "age"]
            }}
+
+        "DELETE FROM test_ks.crud_items WHERE status = ? ALLOW FILTERING" ->
+          {:ok, %Xandra.Page{content: []}}
 
         "SELECT COUNT(*) FROM test_ks.crud_items" <> _ ->
           {:ok, %Xandra.Page{content: [[2]]}}
@@ -446,7 +449,10 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert record.display_name == "Ada!"
 
       assert_receive {:ash_scylla_query, select_query, ["active", 10], opts}
-      assert select_query == "SELECT * FROM test_ks.crud_items WHERE status = ? LIMIT ?"
+
+      assert select_query ==
+               "SELECT * FROM test_ks.crud_items WHERE status = ? LIMIT ? ALLOW FILTERING"
+
       assert opts[:consistency] == :one
     end
 
@@ -512,7 +518,9 @@ defmodule AshScylla.DataLayer.CrudTest do
 
       # update_query re-runs the original query (with original filters) to fetch results
       assert_receive {:ash_scylla_query, select_query, ["active", 10], _opts}
-      assert select_query == "SELECT * FROM test_ks.crud_items WHERE status = ? LIMIT ?"
+
+      assert select_query ==
+               "SELECT * FROM test_ks.crud_items WHERE status = ? LIMIT ? ALLOW FILTERING"
     end
 
     test "bulk deletes by filter" do
@@ -524,7 +532,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       assert DataLayer.destroy_query(query, changeset(%{}), [], Resource) == :ok
 
       assert_receive {:ash_scylla_query, delete_query, ["active"], opts}
-      assert delete_query == "DELETE FROM test_ks.crud_items WHERE status = ?"
+      assert delete_query == "DELETE FROM test_ks.crud_items WHERE status = ? ALLOW FILTERING"
       assert opts[:consistency] == :one
     end
   end
@@ -544,7 +552,10 @@ defmodule AshScylla.DataLayer.CrudTest do
                DataLayer.run_aggregate_query(query, [%{kind: :count, name: :total}], Resource)
 
       assert_receive {:ash_scylla_query, aggregate_query, ["active"], opts}
-      assert aggregate_query == "SELECT COUNT(*) FROM test_ks.crud_items WHERE status = ?"
+
+      assert aggregate_query ==
+               "SELECT COUNT(*) FROM test_ks.crud_items WHERE status = ?"
+
       assert opts[:consistency] == :one
     end
 

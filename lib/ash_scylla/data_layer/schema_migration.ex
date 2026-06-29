@@ -263,6 +263,10 @@ defmodule AshScylla.DataLayer.SchemaMigration do
 
   @doc """
   Fetches existing materialized views for a table.
+
+  Note: system_schema.views does not support filtering by base_table_name
+  (it's not part of the primary key), so we query all views for the keyspace
+  and filter in Elixir to avoid the "ALLOW FILTERING" error.
   """
   @spec fetch_materialized_views(module(), module()) :: {:ok, [map()]} | {:error, term()}
   def fetch_materialized_views(resource, repo) do
@@ -271,14 +275,15 @@ defmodule AshScylla.DataLayer.SchemaMigration do
 
     query = """
     SELECT * FROM system_schema.views
-    WHERE keyspace_name = ? AND base_table_name = ?
+    WHERE keyspace_name = ?
     """
 
-    case repo.query(query, [keyspace, table_name], consistency: :quorum) do
+    case repo.query(query, [keyspace], consistency: :quorum) do
       {:ok, result} ->
         views =
           result
           |> Map.get(:rows, [])
+          |> Enum.filter(fn row -> row["base_table_name"] == table_name end)
           |> Enum.map(fn row ->
             %{
               view_name: row["view_name"],
@@ -401,7 +406,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
             "idx_#{table_name}_#{col}"
           end
 
-        "CREATE INDEX IF NOT EXISTS #{index_name} ON #{AshScylla.Identifier.quote_name(table_name)} (#{col})"
+        "CREATE INDEX IF NOT EXISTS #{index_name} ON #{AshScylla.Identifier.quote_name(table_name)} (#{AshScylla.Identifier.quote_name(col)})"
       end)
     end)
   end

@@ -159,6 +159,39 @@ defmodule AshScylla.Extension do
   @impl Ash.Extension
   def migrate(argv) do
     dry_run? = "--dry-run" in argv
+    # Keyspace is auto-created by default unless explicitly skipped with --no-keyspace
+    create_keyspace? = "--no-keyspace" not in argv
+
+    repo =
+      try do
+        AshScylla.MixHelpers.find_default_repo()
+      rescue
+        Mix.Error ->
+          nil
+      end
+
+    # Auto-create keyspace before running migrations if it doesn't exist.
+    # This ensures `mix ash.migrate` works out-of-the-box without requiring
+    # a separate `mix chat_service.release.create_keyspace` step.
+    if repo && create_keyspace? do
+      keyspace = repo.keyspace()
+
+      if keyspace do
+        if dry_run? do
+          Mix.shell().info("  [DRY RUN] Would create keyspace #{keyspace}")
+        else
+          Mix.shell().info("  Ensuring keyspace #{keyspace} exists...")
+
+          case AshScylla.create_keyspace(repo, []) do
+            :ok ->
+              Mix.shell().info("  Keyspace #{keyspace} ready.")
+
+            {:error, reason} ->
+              Mix.shell().error("  Failed to create keyspace: #{inspect(reason)}")
+          end
+        end
+      end
+    end
 
     # Run migration files from priv/repo/migrations
     migrations_path = migrations_path()
@@ -184,10 +217,20 @@ defmodule AshScylla.Extension do
             )
           else
             Logger.info("Executing migration #{Path.basename(file)}...")
-            # In a real implementation, these would be executed against the database
-            Mix.shell().info(
-              "  Executed #{Path.basename(file)}: #{length(statements)} statement(s)"
-            )
+
+            nodes = repo.nodes()
+
+            case AshScylla.Migrator.run(nodes, statements, keyspace: repo.keyspace()) do
+              {:ok, _results} ->
+                Mix.shell().info(
+                  "  Executed #{Path.basename(file)}: #{length(statements)} statement(s)"
+                )
+
+              {:error, {index, reason}} ->
+                Mix.shell().error(
+                  "  FAILED #{Path.basename(file)} at statement #{index}: #{inspect(reason)}"
+                )
+            end
           end
         end
       end)

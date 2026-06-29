@@ -143,14 +143,14 @@ defmodule AshScylla.Migration do
     case pk_attrs do
       [single_pk] ->
         # Simple primary key - just one column
-        "PRIMARY KEY (#{single_pk.name})"
+        "PRIMARY KEY (#{AshScylla.Identifier.quote_name(single_pk.name)})"
 
       [partition_key | clustering_keys] ->
         # Composite primary key
         pk_cols =
           [partition_key.name | Enum.map(clustering_keys, & &1.name)]
 
-        "PRIMARY KEY (#{Enum.join(pk_cols, ", ")})"
+        "PRIMARY KEY (#{Enum.map_join(pk_cols, ", ", &AshScylla.Identifier.quote_name/1)})"
     end
   end
 
@@ -162,7 +162,7 @@ defmodule AshScylla.Migration do
   defp build_clustering_order_clause([_partition_key | clustering_keys]) do
     order_str =
       clustering_keys
-      |> Enum.map_join(", ", fn attr -> "#{attr.name} DESC" end)
+      |> Enum.map_join(", ", fn attr -> "#{AshScylla.Identifier.quote_name(attr.name)} DESC" end)
 
     "WITH CLUSTERING ORDER BY (#{order_str})"
   end
@@ -206,7 +206,7 @@ defmodule AshScylla.Migration do
                 "idx_#{table_name}_#{col}"
               end
 
-            "CREATE INDEX IF NOT EXISTS #{index_name} ON #{quote_name(table_name)} (#{col})"
+            "CREATE INDEX IF NOT EXISTS #{index_name} ON #{quote_name(table_name)} (#{AshScylla.Identifier.quote_name(col)})"
           end)
         end)
     end
@@ -420,7 +420,7 @@ defmodule AshScylla.Migration do
 
     type_str = ash_type_to_cql_type(type, opts)
 
-    "#{name} #{type_str}"
+    "#{AshScylla.Identifier.quote_name(name)} #{type_str}"
   end
 
   @doc """

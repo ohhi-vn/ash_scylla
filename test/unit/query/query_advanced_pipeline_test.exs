@@ -577,8 +577,17 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
       assert QueryBuilder.secondary_index_scan?(TenantResource, filters) == false
     end
 
-    test "true when filter on pk column" do
+    test "false when filter on pk column only (no secondary index needed)" do
       filters = [%{operator: :eq, left: %{name: :id}, right: %{value: "abc"}}]
+      assert QueryBuilder.secondary_index_scan?(TenantResource, filters) == false
+    end
+
+    test "true when filter on pk column AND secondary index column" do
+      filters = [
+        %{operator: :eq, left: %{name: :id}, right: %{value: "abc"}},
+        %{operator: :eq, left: %{name: :email}, right: %{value: "a@b.co"}}
+      ]
+
       assert QueryBuilder.secondary_index_scan?(TenantResource, filters) == true
     end
   end

@@ -153,8 +153,11 @@ defmodule AshScylla.MigrationGenerator do
     |> Enum.map(&AshScylla.DataLayer.Dsl.repo/1)
     |> Enum.reject(&is_nil/1)
     |> case do
-      [repo | _] -> repo
- [] -> Mix.raise("No repo found. Configure a repo on your resources or start the application.")
+      [repo | _] ->
+        repo
+
+      [] ->
+        Mix.raise("No repo found. Configure a repo on your resources or start the application.")
     end
   end
 
@@ -524,24 +527,24 @@ defmodule AshScylla.MigrationGenerator do
       pk_attrs
       |> Enum.map(fn attr ->
         type_str = Migration.ash_type_to_cql_type(attr.type, attr.constraints)
-        "#{attr.name} #{type_str}"
+        "#{AshScylla.Identifier.quote_name(attr.name)} #{type_str}"
       end)
 
     regular_columns =
       regular_attrs
       |> Enum.map(fn attr ->
         type_str = Migration.ash_type_to_cql_type(attr.type, attr.constraints)
-        "#{attr.name} #{type_str}"
+        "#{AshScylla.Identifier.quote_name(attr.name)} #{type_str}"
       end)
 
     pk_clause =
       case pk_attrs do
         [single_pk] ->
-          "PRIMARY KEY (#{single_pk.name})"
+          "PRIMARY KEY (#{AshScylla.Identifier.quote_name(single_pk.name)})"
 
         [partition_key | clustering_keys] ->
           pk_cols = [partition_key.name | Enum.map(clustering_keys, & &1.name)]
-          "PRIMARY KEY (#{Enum.join(pk_cols, ", ")})"
+          "PRIMARY KEY (#{Enum.map_join(pk_cols, ", ", &AshScylla.Identifier.quote_name/1)})"
 
         [] ->
           ""
@@ -565,7 +568,8 @@ defmodule AshScylla.MigrationGenerator do
     attrs
     |> Enum.map(fn attr ->
       type_str = Migration.ash_type_to_cql_type(attr.type, attr.constraints)
-      "ALTER TABLE #{quote_table_name(table_name)} ADD #{attr.name} #{type_str}"
+
+      "ALTER TABLE #{quote_table_name(table_name)} ADD #{AshScylla.Identifier.quote_name(attr.name)} #{type_str}"
     end)
   end
 
@@ -574,7 +578,7 @@ defmodule AshScylla.MigrationGenerator do
 
     attrs
     |> Enum.map(fn attr ->
-      "# ALTER TABLE #{quote_table_name(table_name)} DROP #{attr.name}"
+      "# ALTER TABLE #{quote_table_name(table_name)} DROP #{AshScylla.Identifier.quote_name(attr.name)}"
     end)
   end
 
@@ -591,7 +595,7 @@ defmodule AshScylla.MigrationGenerator do
             "idx_#{table_name}_#{col}"
           end
 
-        "CREATE INDEX IF NOT EXISTS #{index_name} ON #{quote_table_name(table_name)} (#{col})"
+        "CREATE INDEX IF NOT EXISTS #{index_name} ON #{quote_table_name(table_name)} (#{AshScylla.Identifier.quote_name(col)})"
       end)
     end)
   end
@@ -616,7 +620,7 @@ defmodule AshScylla.MigrationGenerator do
 
     attrs
     |> Enum.map(fn attr ->
-      "ALTER TABLE #{quote_table_name(table_name)} DROP #{attr.name}"
+      "ALTER TABLE #{quote_table_name(table_name)} DROP #{AshScylla.Identifier.quote_name(attr.name)}"
     end)
   end
 
@@ -625,7 +629,7 @@ defmodule AshScylla.MigrationGenerator do
 
     attrs
     |> Enum.map(fn attr ->
-      "# ALTER TABLE #{quote_table_name(table_name)} ADD #{attr.name} <type>"
+      "# ALTER TABLE #{quote_table_name(table_name)} ADD #{AshScylla.Identifier.quote_name(attr.name)} <type>"
     end)
   end
 
