@@ -538,28 +538,6 @@ defmodule AshScylla.ErrorEdgeCasesTest do
     end
   end
 
-  describe "Error.retry_delay" do
-    test "known types return correct delays" do
-      assert Error.retry_delay(%ScyllaError{type: :overloaded}) == 1000
-      assert Error.retry_delay(%ScyllaError{type: :timeout}) == 500
-      assert Error.retry_delay(%ScyllaError{type: :connection_timeout}) == 2000
-      assert Error.retry_delay(%ScyllaError{type: :connection_closed}) == 1000
-      assert Error.retry_delay(%ScyllaError{type: :connection_error}) == 2000
-    end
-
-    test "unknown type returns default 500" do
-      assert Error.retry_delay(%ScyllaError{type: :query_error}) == 500
-      assert Error.retry_delay(%ScyllaError{type: :unknown}) == 500
-      assert Error.retry_delay(%ScyllaError{type: :generic_error}) == 500
-    end
-
-    test "non-ScyllaError returns default 500" do
-      assert Error.retry_delay(%{}) == 500
-      assert Error.retry_delay(nil) == 500
-      assert Error.retry_delay("error") == 500
-    end
-  end
-
   # ── Error struct field access ────────────────────────────────────────────
 
   describe "ScyllaError struct field access" do

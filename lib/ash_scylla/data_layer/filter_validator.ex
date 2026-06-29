@@ -35,10 +35,6 @@ defmodule AshScylla.DataLayer.FilterValidator do
   - Base filter validation
   - Ash error type integration for better error messages
 
-  ## Skip Condition
-
-  The validator is skipped when `allow_filtering` is enabled on the resource
-  DSL. A warning is logged at runtime in that case.
   """
 
   alias Ash.Resource.Info
@@ -91,7 +87,7 @@ defmodule AshScylla.DataLayer.FilterValidator do
             "Filter on column(s) [#{col_names}] requires a secondary index. " <>
               "These columns are not part of the primary key [#{pk_names}] " <>
               "and do not have secondary indexes [#{idx_names}]. " <>
-              "Add `secondary_index :#{hd(cols)}` to your ash_scylla block, " <>
+              "Add `secondary_index :#{hd(cols)}` to your scylla block, " <>
               "or create a materialized view for this query pattern."
     end
   end

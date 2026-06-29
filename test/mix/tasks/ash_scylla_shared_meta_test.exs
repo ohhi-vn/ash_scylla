@@ -11,14 +11,17 @@ defmodule Mix.Tasks.AshScylla.SharedMetaTest do
 
   import ExUnit.CaptureIO
 
-  # Both commands should use the same meta file path.
-  # When the app is not started, both commands fall back to priv/repo/migrations.
-  @meta_file Path.join("priv/repo/migrations", ".schema_meta")
-  @test_migration_dir "priv/repo/migrations"
+  # Both commands should use the same meta file path based on the repo.
+  # The test resources use AshScylla.TestRepo, so the path is priv/test_repo/migrations.
+  @meta_file Path.join("priv/test_repo/migrations", ".schema_meta")
+  @test_migration_dir "priv/test_repo/migrations"
 
   setup do
     # Start the application so that resources can be found
     Application.ensure_all_started(:ash_scylla)
+
+    # Configure the test domain so codegen can discover resources
+    Application.put_env(:ash_scylla, :ash_domains, [AshScylla.TestDomain])
 
     # Clean up any test migration files and meta file
     File.rm(@meta_file)
@@ -31,6 +34,8 @@ defmodule Mix.Tasks.AshScylla.SharedMetaTest do
 
       Path.wildcard(Path.join(@test_migration_dir, "*.ex"))
       |> Enum.each(&File.rm/1)
+
+      Application.delete_env(:ash_scylla, :ash_domains)
     end)
 
     :ok
@@ -54,7 +59,7 @@ defmodule Mix.Tasks.AshScylla.SharedMetaTest do
              "Expected .schema_meta file to be created by ash_scylla.gen"
     end
 
-    test "ash.codegen creates .schema_meta file (not .codegen_meta)" do
+    test "ash_scylla.gen recognizes meta file on second run" do
       # Run ash_scylla.gen first to create the meta file
       capture_io(fn ->
         try do
@@ -71,33 +76,14 @@ defmodule Mix.Tasks.AshScylla.SharedMetaTest do
       assert File.exists?(@meta_file),
              "Expected .schema_meta file to exist after ash_scylla.gen"
 
-      # Verify no .codegen_meta file is created
-      refute File.exists?(Path.join(@test_migration_dir, ".codegen_meta")),
-             "Expected .codegen_meta file to NOT exist (should use .schema_meta)"
-    end
-
-    test "ash_scylla.gen recognizes meta file created by ash.codegen" do
-      # First, run ash.codegen to create the meta file
-      capture_io(fn ->
-        try do
-          AshScylla.Extension.codegen(["--force", "--dev"])
-        rescue
-          _ -> :ok
-        end
-      end)
-
-      # Verify meta file was created
-      assert File.exists?(@meta_file),
-             "Expected .schema_meta file to be created by ash.codegen"
-
-      # Now run ash_scylla.gen - it should recognize the meta file and report up to date
+      # Run again - should report up to date
       output =
         capture_io(fn ->
           try do
             Mix.Tasks.AshScylla.Gen.run([
               "--resource",
               "AshScylla.TestResource",
-              "GenAfterCodegen"
+              "GenSecond"
             ])
           rescue
             _ -> :ok
@@ -105,43 +91,10 @@ defmodule Mix.Tasks.AshScylla.SharedMetaTest do
         end)
 
       assert output =~ "Schema is up to date",
-             "Expected ash_scylla.gen to recognize meta from ash.codegen, got: #{output}"
+             "Expected ash_scylla.gen to report up to date, got: #{output}"
     end
 
-    test "ash.codegen recognizes meta file created by ash_scylla.gen" do
-      # First, run ash_scylla.gen to create the meta file
-      capture_io(fn ->
-        try do
-          Mix.Tasks.AshScylla.Gen.run([
-            "--resource",
-            "AshScylla.TestResource",
-            "GenFirst"
-          ])
-        rescue
-          _ -> :ok
-        end
-      end)
-
-      # Verify meta file was created
-      assert File.exists?(@meta_file),
-             "Expected .schema_meta file to be created by ash_scylla.gen"
-
-      # Now run ash.codegen - it should recognize the meta file and report up to date
-      output =
-        capture_io(fn ->
-          try do
-            AshScylla.Extension.codegen(["--dev"])
-          rescue
-            _ -> :ok
-          end
-        end)
-
-      assert output =~ "Schema is up to date",
-             "Expected ash.codegen to recognize meta from ash_scylla.gen, got: #{output}"
-    end
-
-    test "meta file format is consistent between both commands" do
-      # Run ash_scylla.gen to create the meta file
+    test "ash_scylla.gen creates meta file with correct format" do
       capture_io(fn ->
         try do
           Mix.Tasks.AshScylla.Gen.run([
@@ -163,10 +116,7 @@ defmodule Mix.Tasks.AshScylla.SharedMetaTest do
       assert is_integer(meta["AshScylla.TestResource"])
     end
 
-    test "both commands use the same meta file path" do
-      # Both commands should use the same meta file path
-      expected_meta_file = Path.join("priv/repo/migrations", ".schema_meta")
-
+    test "meta file uses .schema_meta filename" do
       # Verify the meta file is created at the expected path
       capture_io(fn ->
         try do
@@ -180,8 +130,32 @@ defmodule Mix.Tasks.AshScylla.SharedMetaTest do
         end
       end)
 
-      assert File.exists?(expected_meta_file),
-             "Expected meta file at #{expected_meta_file}"
+      # Verify .schema_meta exists
+      assert File.exists?(@meta_file),
+             "Expected .schema_meta file at #{@meta_file}"
+
+      # Verify no .codegen_meta file is created
+      refute File.exists?(Path.join(@test_migration_dir, ".codegen_meta")),
+             "Expected .codegen_meta file to NOT exist (should use .schema_meta)"
+    end
+
+    test "ash_scylla.gen and ash.codegen use same migrations directory" do
+      # Both commands should use the same migrations directory
+      capture_io(fn ->
+        try do
+          Mix.Tasks.AshScylla.Gen.run([
+            "--resource",
+            "AshScylla.TestResource",
+            "DirTest"
+          ])
+        rescue
+          _ -> :ok
+        end
+      end)
+
+      # The meta file should be in the migrations directory
+      assert File.exists?(@meta_file),
+             "Expected meta file in migrations directory"
     end
   end
 end

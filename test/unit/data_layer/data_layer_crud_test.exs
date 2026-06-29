@@ -142,7 +142,7 @@ defmodule AshScylla.DataLayer.CrudTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       repo(FakeRepo)
       table("crud_items")
       keyspace("test_ks")
@@ -172,7 +172,7 @@ defmodule AshScylla.DataLayer.CrudTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       repo(FakeRepo)
       table("lwt_items")
       keyspace("test_ks")
@@ -201,7 +201,7 @@ defmodule AshScylla.DataLayer.CrudTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       repo(FakeRepo)
       table("lwt_success_items")
       keyspace("test_ks")
@@ -240,14 +240,13 @@ defmodule AshScylla.DataLayer.CrudTest do
   defp changeset(attrs), do: %Ash.Changeset{attributes: attrs}
 
   defp base_query do
-    %DataLayer{
+    %AshScylla.Query{
       resource: Resource,
       repo: FakeRepo,
       table: "test_ks.crud_items",
       filters: [],
       sorts: [],
       limit: nil,
-      offset: nil,
       select: nil,
       tenant: nil,
       context: %{}

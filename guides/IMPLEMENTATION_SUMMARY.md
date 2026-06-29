@@ -8,7 +8,7 @@
 
 AshScylla is a comprehensive data layer for the Ash Framework that enables persistence with **ScyllaDB** or **Apache Cassandra**. It uses [Xandra](https://github.com/whatyouhide/xandra) (a native Elixir CQL driver) to communicate via CQL (Cassandra Query Language).
 
-Current version: **0.12.0**
+Current version: **0.13.1**
 
 ---
 
@@ -26,6 +26,12 @@ Current version: **0.12.0**
 │  • Implements Ash.DataLayer behaviour                  │
 │  • Converts Ash queries to CQL                        │
 │  • Handles CRUD operations                            │
+└──────────────────┬──────────────────────────────────────┘
+                   │
+                   ▼
+┌─────────────────────────────────────────────────────────┐
+│                  AshScylla.Query                        │
+│  • Owns the query struct                              │
 └──────────────────┬──────────────────────────────────────┘
                    │
                    ▼
@@ -56,6 +62,7 @@ Current version: **0.12.0**
 | File | Purpose |
 |------|---------|
 | `lib/ash_scylla.ex` | Main module with `verify/2`, `migrate/2`, `create_keyspace/2`, `version/0` |
+| `lib/ash_scylla/query.ex` | Query struct (moved from DataLayer) |
 | `lib/ash_scylla/application.ex` | Application callback, creates `:ash_scylla_repo_cache` ETS table |
 | `lib/ash_scylla/data_layer.ex` | Main DataLayer implementation (`Ash.DataLayer` behaviour) |
 | `lib/ash_scylla/connection.ex` | GenServer wrapping Xandra connections |
@@ -77,7 +84,8 @@ Current version: **0.12.0**
 
 | File | Purpose |
 |------|---------|
-| `lib/ash_scylla/data_layer/dsl.ex` | `ash_scylla` DSL macro and config accessors |
+| `lib/ash_scylla/data_layer/dsl.ex` | `scylla` DSL macro and config accessors |
+| `lib/ash_scylla/data_layer/secondary_index.ex` | SecondaryIndex struct and parsing |
 | `lib/ash_scylla/data_layer/query_builder.ex` | Query building with filter-to-CQL conversion |
 | `lib/ash_scylla/data_layer/query_optimizer.ex` | Query optimization hints (consistency, timeout, paging) |
 | `lib/ash_scylla/data_layer/filter_validator.ex` | Filter validation (prevents ALLOW FILTERING anti-pattern) |
@@ -152,7 +160,7 @@ Current version: **0.12.0**
 
 #### 1. TTL (Time To Live)
 ```elixir
-ash_scylla do
+scylla do
   ttl 3600  # Expire after 1 hour
 end
 ```
@@ -160,7 +168,7 @@ end
 
 #### 2. Consistency Levels
 ```elixir
-ash_scylla do
+scylla do
   consistency :quorum  # :any, :one, :two, :three, :quorum, :all, :local_quorum
 end
 ```
@@ -168,7 +176,7 @@ end
 
 #### 3. Secondary Indexes
 ```elixir
-ash_scylla do
+scylla do
   secondary_index :email              # Single column
   secondary_index [:name, :age]        # Composite index (multi-column)
   secondary_index :status, name: "idx_status"
@@ -178,8 +186,7 @@ end
 
 #### 4. Materialized Views
 ```elixir
-ash_scylla do
-  materialized_view :users_by_email,
+scylla do
     primary_key: [:email, :id],
     include_columns: [:name, :age],
     clustering_order: [id: :desc]
@@ -224,7 +231,7 @@ children = [
 
 #### 8. Per-Action Consistency
 ```elixir
-ash_scylla do
+scylla do
   consistency :quorum
   per_action_consistency read: :one, create: :quorum
 end
@@ -232,7 +239,7 @@ end
 
 #### 9. Lightweight Transactions (LWT)
 ```elixir
-ash_scylla do
+scylla do
   lwt true
 end
 ```
@@ -262,14 +269,12 @@ end
 ## Data Layer Query Struct
 
 ```elixir
+# AshScylla.Query struct (lib/ash_scylla/query.ex)
 defstruct [
   :resource,
   :repo,
   :table,
-  filters: [],
-  sorts: [],
   limit: nil,
-  offset: nil,
   select: nil,
   distinct: nil,
   tenant: nil,
@@ -280,7 +285,9 @@ defstruct [
   upsert_identity: nil,
   keyset: nil,
   aggregates: [],
-  group_by: nil
+  group_by: nil,
+  filters: [],
+  sorts: []
 ]
 ```
 
@@ -292,20 +299,20 @@ AshScylla provides structured error handling for ScyllaDB-specific errors:
 
 ### Error Types
 
-| Error Type | When It Occurs | Retryable? | Delay |
-|------------|---------------|------------|-------|
-| `:syntax_error` | Invalid CQL syntax | ❌ | - |
-| `:query_error` | General query execution error | ❌ | - |
-| `:schema_error` | Table/keyspace/column not found | ❌ | - |
-| `:overloaded` | ScyllaDB node overloaded | ✅ | 1000ms |
-| `:timeout` | Query timeout | ✅ | 500ms |
-| `:consistency_error` | Consistency level not met | ❌ | - |
-| `:unauthorized` | Permission denied | ❌ | - |
-| `:already_exists` | Resource conflict | ❌ | - |
-| `:not_found` | Resource missing | ❌ | - |
-| `:connection_timeout` | Connection timeout | ✅ | 2000ms |
-| `:connection_closed` | Connection closed | ✅ | 1000ms |
-| `:connection_error` | General connection error | ✅ | 2000ms |
+| Error Type | When It Occurs | Retryable? |
+|------------|---------------|------------|
+| `:syntax_error` | Invalid CQL syntax | ❌ |
+| `:query_error` | General query execution error | ❌ |
+| `:schema_error` | Table/keyspace/column not found | ❌ |
+| `:overloaded` | ScyllaDB node overloaded | ✅ |
+| `:timeout` | Query timeout | ✅ |
+| `:consistency_error` | Consistency level not met | ❌ |
+| `:unauthorized` | Permission denied | ❌ |
+| `:already_exists` | Resource conflict | ❌ |
+| `:not_found` | Resource missing | ❌ |
+| `:connection_timeout` | Connection timeout | ✅ |
+| `:connection_closed` | Connection closed | ✅ |
+| `:connection_error` | General connection error | ✅ |
 
 ### Using Error Handling
 
@@ -318,8 +325,7 @@ case AshScylla.DataLayer.run_query(query, resource) do
     Logger.error("Database error: #{AshScylla.Error.format_error(error)}")
 
     if AshScylla.Error.retryable?(error) do
-      delay = AshScylla.Error.retry_delay(error)
-      {:retry, delay}
+      {:retry, error}
     else
       {:error, error}
     end
@@ -371,7 +377,7 @@ Dev/test dependencies:
 - JOINs (use denormalization)
 - Complex aggregations across partitions (only per-partition COUNT)
 - ACID transactions across partitions (only lightweight transactions)
-- OFFSET (raises error — use keyset pagination)
+- ALLOW FILTERING (rejected at query-plan time — add secondary indexes instead)
 - OR conditions in WHERE clause (rewritten to IN where possible)
 - Foreign keys
 
@@ -427,7 +433,7 @@ defmodule MyApp.User do
     data_layer: AshScylla.DataLayer,
     domain: MyApp.Domain
 
-  ash_scylla do
+  scylla do
     table "users"
     consistency :quorum
     ttl 3600

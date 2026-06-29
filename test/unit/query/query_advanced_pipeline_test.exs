@@ -21,7 +21,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       table("tenant_resource")
       keyspace("ash_scylla_test")
       secondary_index(:email)
@@ -52,7 +52,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       table("multi_pk_resource")
       keyspace("ash_scylla_test")
       secondary_index(:org_id)
@@ -76,13 +76,12 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
 
   describe "build_optimized_query with GROUP BY and aggregates" do
     test "single aggregate with GROUP BY" do
-      data_layer = %AshScylla.DataLayer{
+      data_layer = %AshScylla.Query{
         resource: TenantResource,
         table: "tenant_resource",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         distinct: nil,
         keyset: nil,
@@ -97,13 +96,12 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
     end
 
     test "count(*) without field" do
-      data_layer = %AshScylla.DataLayer{
+      data_layer = %AshScylla.Query{
         resource: TenantResource,
         table: "tenant_resource",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         distinct: nil,
         keyset: nil,
@@ -116,13 +114,12 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
     end
 
     test "multiple aggregates with GROUP BY" do
-      data_layer = %AshScylla.DataLayer{
+      data_layer = %AshScylla.Query{
         resource: TenantResource,
         table: "tenant_resource",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         distinct: nil,
         keyset: nil,
@@ -141,13 +138,12 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
     end
 
     test "aggregate with select columns" do
-      data_layer = %AshScylla.DataLayer{
+      data_layer = %AshScylla.Query{
         resource: TenantResource,
         table: "tenant_resource",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: [:status],
         distinct: nil,
         keyset: nil,
@@ -161,7 +157,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
     end
 
     test "aggregate with filters and GROUP BY" do
-      data_layer = %AshScylla.DataLayer{
+      data_layer = %AshScylla.Query{
         resource: TenantResource,
         table: "tenant_resource",
         filters: [
@@ -169,7 +165,6 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         ],
         sorts: [],
         limit: 100,
-        offset: nil,
         select: nil,
         distinct: nil,
         keyset: nil,
@@ -186,13 +181,12 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
     end
 
     test "unsupported aggregate falls back to COUNT" do
-      data_layer = %AshScylla.DataLayer{
+      data_layer = %AshScylla.Query{
         resource: TenantResource,
         table: "tenant_resource",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         distinct: nil,
         keyset: nil,
@@ -211,13 +205,12 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
 
   describe "build_optimized_query with keyset pagination" do
     test "keyset with single partition key" do
-      data_layer = %AshScylla.DataLayer{
+      data_layer = %AshScylla.Query{
         resource: TenantResource,
         table: "tenant_resource",
         filters: [],
         sorts: [],
         limit: 20,
-        offset: nil,
         select: nil,
         distinct: nil,
         keyset: %{
@@ -236,13 +229,12 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
     end
 
     test "keyset with composite partition key" do
-      data_layer = %AshScylla.DataLayer{
+      data_layer = %AshScylla.Query{
         resource: MultiPkResource,
         table: "multi_pk_resource",
         filters: [],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: nil,
         distinct: nil,
         keyset: %{
@@ -260,13 +252,12 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
     end
 
     test "keyset direction :before uses <" do
-      data_layer = %AshScylla.DataLayer{
+      data_layer = %AshScylla.Query{
         resource: TenantResource,
         table: "tenant_resource",
         filters: [],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: nil,
         distinct: nil,
         keyset: %{
@@ -283,13 +274,12 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
     end
 
     test "keyset defaults to :after when direction omitted" do
-      data_layer = %AshScylla.DataLayer{
+      data_layer = %AshScylla.Query{
         resource: TenantResource,
         table: "tenant_resource",
         filters: [],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: nil,
         distinct: nil,
         keyset: %{
@@ -312,13 +302,12 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
   describe "build_optimized_query with DISTINCT" do
     test "distinct with nil select falls through to SELECT *" do
       # When select is nil, distinct is not applied (catch-all clause returns *)
-      data_layer = %AshScylla.DataLayer{
+      data_layer = %AshScylla.Query{
         resource: TenantResource,
         table: "tenant_resource",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         distinct: [:status],
         keyset: nil,
@@ -332,13 +321,12 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
 
     test "distinct with empty select list also falls through to SELECT *" do
       # The distinct clause only matches when select is nil, not []
-      data_layer = %AshScylla.DataLayer{
+      data_layer = %AshScylla.Query{
         resource: TenantResource,
         table: "tenant_resource",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: [],
         distinct: [:status, :org_id],
         keyset: nil,
@@ -351,7 +339,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
     end
 
     test "distinct with filters produces SELECT * (catch-all)" do
-      data_layer = %AshScylla.DataLayer{
+      data_layer = %AshScylla.Query{
         resource: TenantResource,
         table: "tenant_resource",
         filters: [
@@ -359,7 +347,6 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         ],
         sorts: [],
         limit: 50,
-        offset: nil,
         select: [],
         distinct: [:email],
         keyset: nil,
@@ -568,29 +555,8 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
   end
 
   # ---------------------------------------------------------------------------
-  # needs_allow_filtering? / secondary_index_scan?
+  # secondary_index_scan?
   # ---------------------------------------------------------------------------
-
-  describe "needs_allow_filtering?/2" do
-    test "true when filter on non-pk column" do
-      filters = [%{operator: :eq, left: %{name: :email}, right: %{value: "a@b.co"}}]
-      assert QueryBuilder.needs_allow_filtering?(TenantResource, filters) == true
-    end
-
-    test "false when filter only on pk" do
-      filters = [%{operator: :eq, left: %{name: :id}, right: %{value: "abc"}}]
-      assert QueryBuilder.needs_allow_filtering?(TenantResource, filters) == false
-    end
-
-    test "true when mixed pk and non-pk filters" do
-      filters = [
-        %{operator: :eq, left: %{name: :id}, right: %{value: "abc"}},
-        %{operator: :eq, left: %{name: :email}, right: %{value: "a@b.co"}}
-      ]
-
-      assert QueryBuilder.needs_allow_filtering?(TenantResource, filters) == true
-    end
-  end
 
   describe "secondary_index_scan?/2" do
     test "true when all filters on indexed columns" do

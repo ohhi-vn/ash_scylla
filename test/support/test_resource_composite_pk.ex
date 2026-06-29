@@ -6,7 +6,7 @@ defmodule AshScylla.TestResourceCompositePK do
 
   import AshScylla.DataLayer.Dsl
 
-  ash_scylla do
+  scylla do
     repo(AshScylla.TestRepo)
     table("test_composite_pk")
     keyspace("ash_scylla_test")

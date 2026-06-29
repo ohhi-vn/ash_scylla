@@ -179,8 +179,8 @@ defmodule AshScylla.MixHelpers do
 
     To fix this, either:
     1. Specify a repo explicitly: mix ash_scylla.migrate --repo MyApp.Repo
-    2. Configure a repo on your resources in the ash_scylla DSL:
-         ash_scylla do
+    2. Configure a repo on your resources in the scylla DSL:
+         scylla do
            repo MyApp.Repo
            table "my_table"
          end

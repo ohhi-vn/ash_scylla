@@ -16,7 +16,7 @@ defmodule AshScylla.DataLayerUpsertTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       repo(AshScylla.TestRepo)
       table("upsert_test")
       keyspace("ash_scylla_test")

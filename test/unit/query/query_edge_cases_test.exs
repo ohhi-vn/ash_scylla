@@ -415,14 +415,13 @@ defmodule AshScylla.EdgeCasesTest do
         right: %{operator: :<=, left: %{name: "started_at"}, right: end_dt}
       }
 
-      dlq = %DataLayer{
+      dlq = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "members",
         filters: [filter],
         sorts: [started_at: :desc],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -449,14 +448,13 @@ defmodule AshScylla.EdgeCasesTest do
         right: %{operator: :>=, left: %{name: "created_at"}, right: dt}
       }
 
-      dlq = %DataLayer{
+      dlq = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "events",
         filters: [filter],
         sorts: [],
         limit: 50,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -472,14 +470,13 @@ defmodule AshScylla.EdgeCasesTest do
 
       filter = %{operator: :>=, left: %{name: "started_at"}, right: dt}
 
-      dlq = %DataLayer{
+      dlq = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "games",
         filters: [filter],
         sorts: [started_at: :desc],
         limit: 100,
-        offset: nil,
         select: [:id, :name, :started_at],
         tenant: nil
       }
@@ -499,14 +496,13 @@ defmodule AshScylla.EdgeCasesTest do
         right: %{operator: :==, left: %{name: "status"}, right: "pending"}
       }
 
-      dlq = %DataLayer{
+      dlq = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "tasks",
         filters: [filter],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -530,14 +526,13 @@ defmodule AshScylla.EdgeCasesTest do
         right: %{operator: :>=, left: %{name: "created_at"}, right: dt}
       }
 
-      dlq = %DataLayer{
+      dlq = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "items",
         filters: [filter],
         sorts: [created_at: :asc],
         limit: 25,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -562,14 +557,13 @@ defmodule AshScylla.EdgeCasesTest do
         right: %{operator: :is_nil, left: %{name: "deleted_at"}, right: true}
       }
 
-      dlq = %DataLayer{
+      dlq = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "records",
         filters: [filter],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -587,14 +581,13 @@ defmodule AshScylla.EdgeCasesTest do
         right: %{operator: :>=, left: %{name: "created_at"}, right: ~U[2025-01-01 00:00:00Z]}
       }
 
-      dlq = %DataLayer{
+      dlq = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "posts",
         filters: [filter],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -663,14 +656,13 @@ defmodule AshScylla.EdgeCasesTest do
         right: %{operator: :<=, left: %{name: "started_at"}, right: ~U[2026-06-18 00:00:00Z]}
       }
 
-      dlq = %DataLayer{
+      dlq = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "t",
         filters: [filter],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -685,14 +677,13 @@ defmodule AshScylla.EdgeCasesTest do
 
   describe "build_optimized_query/1 edge cases" do
     test "empty select list" do
-      qs = %DataLayer{
+      qs = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "t",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: [],
         tenant: nil
       }
@@ -702,14 +693,13 @@ defmodule AshScylla.EdgeCasesTest do
     end
 
     test "single column select" do
-      qs = %DataLayer{
+      qs = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "t",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: [:id],
         tenant: nil
       }
@@ -718,33 +708,14 @@ defmodule AshScylla.EdgeCasesTest do
       assert cql == "SELECT id FROM t"
     end
 
-    test "offset is ignored" do
-      qs = %DataLayer{
-        resource: nil,
-        repo: nil,
-        table: "t",
-        filters: [],
-        sorts: [],
-        limit: 10,
-        offset: 100,
-        select: nil,
-        tenant: nil
-      }
-
-      {cql, params} = QueryBuilder.build_optimized_query(qs)
-      refute String.contains?(cql, "OFFSET")
-      assert params == [{"int", 10}]
-    end
-
     test "multiple sort fields" do
-      qs = %DataLayer{
+      qs = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "t",
         filters: [],
         sorts: [%{field: :a, direction: :asc}, %{field: :b, direction: :desc}],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -754,14 +725,13 @@ defmodule AshScylla.EdgeCasesTest do
     end
 
     test "empty filters means no WHERE" do
-      qs = %DataLayer{
+      qs = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "t",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -773,14 +743,13 @@ defmodule AshScylla.EdgeCasesTest do
     test "filter with expression key" do
       f = %{expression: %{operator: :eq, left: %{name: "s"}, right: %{value: "a"}}}
 
-      qs = %DataLayer{
+      qs = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "t",
         filters: [f],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -793,14 +762,13 @@ defmodule AshScylla.EdgeCasesTest do
     test "filter params before limit params" do
       f = %{operator: :eq, left: %{name: "s"}, right: %{value: "a"}}
 
-      qs = %DataLayer{
+      qs = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "t",
         filters: [f],
         sorts: [],
         limit: 25,
-        offset: nil,
         select: nil,
         tenant: nil
       }

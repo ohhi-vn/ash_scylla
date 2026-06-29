@@ -116,10 +116,11 @@ defmodule AshScylla.TypeConversionTest do
         send(self(), {:type_query, query, params, opts})
 
         cond do
-          String.starts_with?(query, "INSERT INTO type_roundtrip") ->
+          String.contains?(query, "INSERT INTO") and String.contains?(query, "type_roundtrip") ->
             {:ok, %Xandra.Page{content: []}}
 
-          String.contains?(query, "SELECT * FROM type_roundtrip WHERE id = ?") ->
+          String.contains?(query, "SELECT * FROM") and String.contains?(query, "type_roundtrip") and
+              String.contains?(query, "WHERE id = ?") ->
             [id] = params
 
             row =
@@ -250,10 +251,10 @@ defmodule AshScylla.TypeConversionTest do
 
             {:ok, %Xandra.Page{content: [row]}}
 
-          String.starts_with?(query, "UPDATE type_roundtrip") ->
+          String.contains?(query, "UPDATE") and String.contains?(query, "type_roundtrip") ->
             {:ok, %Xandra.Page{content: []}}
 
-          String.starts_with?(query, "DELETE FROM type_roundtrip") ->
+          String.contains?(query, "DELETE") and String.contains?(query, "type_roundtrip") ->
             {:ok, %Xandra.Page{content: []}}
 
           String.contains?(query, "SELECT") and String.contains?(query, "WHERE") ->
@@ -274,7 +275,7 @@ defmodule AshScylla.TypeConversionTest do
 
       import AshScylla.DataLayer.Dsl
 
-      ash_scylla do
+      scylla do
         repo(FakeTypeRepo)
         table("type_roundtrip")
         keyspace("test_ks")
@@ -433,7 +434,8 @@ defmodule AshScylla.TypeConversionTest do
 
       # Verify the INSERT CQL was built with all the params
       assert_receive {:type_query, insert_query, insert_params, _opts}
-      assert insert_query =~ "INSERT INTO type_roundtrip"
+      assert insert_query =~ "INSERT INTO"
+      assert insert_query =~ "type_roundtrip"
       assert id in insert_params
       assert "Round Trip" in insert_params
     end

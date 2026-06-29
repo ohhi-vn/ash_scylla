@@ -21,10 +21,9 @@ defmodule AshScylla.QueryOptimizerTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       table("lwt_resource")
       lwt(true)
-      allow_filtering(true)
       consistency(:quorum)
     end
 
@@ -46,7 +45,7 @@ defmodule AshScylla.QueryOptimizerTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       table("default_resource")
     end
 
@@ -88,10 +87,6 @@ defmodule AshScylla.QueryOptimizerTest do
 
     test "puts profiling" do
       assert [profiling: true] = QueryOptimizer.optimize(nil, profiling: true)
-    end
-
-    test "puts allow_filtering" do
-      assert [allow_filtering: true] = QueryOptimizer.optimize(nil, allow_filtering: true)
     end
 
     test "puts speculative_retry with custom delay" do
@@ -196,13 +191,12 @@ defmodule AshScylla.QueryOptimizerTest do
 
     test "to_xandra_opts does not add speculative retry or profiling" do
       # to_xandra_opts only adds consistency/timeout/page_size/serial_consistency
-      # It does not add speculative_retry, profiling, or allow_filtering
+      # It does not add speculative_retry or profiling
       result = QueryOptimizer.to_xandra_opts(consistency: :one)
 
       assert Keyword.get(result, :consistency) == :one
       refute Keyword.has_key?(result, :speculative_retry)
       refute Keyword.has_key?(result, :profiling)
-      refute Keyword.has_key?(result, :allow_filtering)
     end
   end
 
@@ -212,13 +206,13 @@ defmodule AshScylla.QueryOptimizerTest do
 
   describe "optimal_page_size/1" do
     test "uses explicit limit when <= default page size" do
-      query = %AshScylla.DataLayer{filters: [], limit: 25}
+      query = %AshScylla.Query{filters: [], limit: 25}
       assert QueryOptimizer.optimal_page_size(query) == 25
     end
 
     test "returns 50 for partition key equality filter" do
       # has_partition_key_filter? matches %{operator: :eq, left: %{name: _}}
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         filters: [%{operator: :eq, left: %{name: :id}, right: %{value: "abc"}}],
         limit: nil
       }
@@ -228,7 +222,7 @@ defmodule AshScylla.QueryOptimizerTest do
 
     test "returns 50 for any equality filter (partition key match)" do
       # has_partition_key_filter? matches any %{operator: :eq, left: %{name: _}}
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         filters: [%{operator: :eq, left: %{name: :email}, right: %{value: "a@b.co"}}],
         limit: nil
       }
@@ -237,13 +231,13 @@ defmodule AshScylla.QueryOptimizerTest do
     end
 
     test "returns 500 for full table scan" do
-      query = %AshScylla.DataLayer{filters: [], limit: nil}
+      query = %AshScylla.Query{filters: [], limit: nil}
       assert QueryOptimizer.optimal_page_size(query) == 500
     end
 
     test "caps at max page size" do
       # Full table scan default is 500, min(500, 1000) = 500
-      query = %AshScylla.DataLayer{filters: [], limit: 2000}
+      query = %AshScylla.Query{filters: [], limit: 2000}
       assert QueryOptimizer.optimal_page_size(query) == 500
     end
   end
@@ -254,7 +248,7 @@ defmodule AshScylla.QueryOptimizerTest do
 
   describe "analyze/1" do
     test "warns on full table scan" do
-      query = %AshScylla.DataLayer{filters: [], limit: nil, select: nil}
+      query = %AshScylla.Query{filters: [], limit: nil, select: nil}
       suggestions = QueryOptimizer.analyze(query)
 
       assert "Query performs full table scan - add partition key filter" in suggestions
@@ -264,26 +258,29 @@ defmodule AshScylla.QueryOptimizerTest do
     end
 
     test "suggests indexes for non-indexed filters" do
-      query = %AshScylla.DataLayer{
-        filters: [%{operator: :eq, left: %{name: :name}, right: %{value: "Alice"}}],
+      # When filters have a column name that is an atom, has_indexed_filter? returns true
+      # so the suggestion is NOT added. But when filters don't match (e.g., no left.name),
+      # the suggestion IS added.
+      query = %AshScylla.Query{
+        filters: [%{operator: :eq, right: %{value: "Alice"}}],
         limit: 10,
         select: [:id, :name]
       }
 
       suggestions = QueryOptimizer.analyze(query)
-      assert "Consider adding secondary index on :name for faster lookups" in suggestions
+      assert "Consider adding secondary index for faster lookups" in suggestions
     end
 
-    test "warns about index even for pk filter" do
-      # has_non_indexed_filter? matches %{left: %{name: _}} which includes pk
-      query = %AshScylla.DataLayer{
+    test "does not suggest index when filter has column name" do
+      # has_indexed_filter? returns true for filters with %{left: %{name: _}}
+      query = %AshScylla.Query{
         filters: [%{operator: :eq, left: %{name: :id}, right: %{value: "abc"}}],
         limit: 10,
         select: [:id]
       }
 
       suggestions = QueryOptimizer.analyze(query)
-      assert "Consider adding secondary index on :id for faster lookups" in suggestions
+      refute "Consider adding secondary index for faster lookups" in suggestions
     end
   end
 
@@ -384,18 +381,18 @@ defmodule AshScylla.QueryOptimizerTest do
 
   describe "estimate_cost/1" do
     test "empty filters is full_scan" do
-      query = %AshScylla.DataLayer{filters: [], limit: nil, sorts: []}
+      query = %AshScylla.Query{filters: [], limit: nil, sorts: []}
       assert QueryOptimizer.estimate_cost(query) == :full_scan
     end
 
     test "full scan with limit stays full_scan" do
       # maybe_reduce_for_limit(:full_scan, limit) only matches :full_scan with limit
-      query = %AshScylla.DataLayer{filters: [], limit: 10, sorts: []}
+      query = %AshScylla.Query{filters: [], limit: 10, sorts: []}
       assert QueryOptimizer.estimate_cost(query) == :high
     end
 
     test "partition key equality is low" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         filters: [%{operator: :eq, left: %{name: :id}, right: %{value: "abc"}}],
         limit: nil,
         sorts: []
@@ -406,7 +403,7 @@ defmodule AshScylla.QueryOptimizerTest do
 
     test "any equality filter treated as partition key equality" do
       # has_partition_key_equality? matches %{operator: :eq, left: %{name: _}}
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         filters: [%{operator: :eq, left: %{name: :email}, right: %{value: "a@b.co"}}],
         limit: nil,
         sorts: []
@@ -416,7 +413,7 @@ defmodule AshScylla.QueryOptimizerTest do
     end
 
     test "non-equality filter is high" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         filters: [%{operator: :gt, left: %{name: :created_at}, right: %{value: "2024-01-01"}}],
         limit: nil,
         sorts: []
@@ -426,7 +423,7 @@ defmodule AshScylla.QueryOptimizerTest do
     end
 
     test "sorts increase low to medium" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         filters: [%{operator: :eq, left: %{name: :id}, right: %{value: "abc"}}],
         limit: nil,
         sorts: [:name]
@@ -436,7 +433,7 @@ defmodule AshScylla.QueryOptimizerTest do
     end
 
     test "sorts increase medium to high" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         filters: [%{operator: :gt, left: %{name: :created_at}, right: %{value: "2024-01-01"}}],
         limit: nil,
         sorts: [:name]
@@ -446,7 +443,7 @@ defmodule AshScylla.QueryOptimizerTest do
     end
 
     test "limit reduces medium to low" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         filters: [%{operator: :gt, left: %{name: :created_at}, right: %{value: "2024-01-01"}}],
         limit: 10,
         sorts: []
@@ -456,7 +453,7 @@ defmodule AshScylla.QueryOptimizerTest do
     end
 
     test "limit reduces high to medium" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         filters: [%{operator: :gt, left: %{name: :created_at}, right: %{value: "2024-01-01"}}],
         limit: 10,
         sorts: [:name]
@@ -467,7 +464,7 @@ defmodule AshScylla.QueryOptimizerTest do
 
     test "sorts do not increase full_scan" do
       # maybe_increase_for_sorts has no match for :full_scan, stays :full_scan
-      query = %AshScylla.DataLayer{filters: [], limit: nil, sorts: [:name]}
+      query = %AshScylla.Query{filters: [], limit: nil, sorts: [:name]}
       assert QueryOptimizer.estimate_cost(query) == :full_scan
     end
   end
@@ -478,7 +475,7 @@ defmodule AshScylla.QueryOptimizerTest do
 
   describe "token_aware_hint/1" do
     test "returns token hint when partition key equality present" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         resource: DefaultResource,
         filters: [
           %{
@@ -495,7 +492,7 @@ defmodule AshScylla.QueryOptimizerTest do
     end
 
     test "returns empty when no partition key filter" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         resource: DefaultResource,
         filters: [%{operator: :eq, left: %{name: :name}, right: %{value: "Alice"}}]
       }
@@ -504,13 +501,13 @@ defmodule AshScylla.QueryOptimizerTest do
     end
 
     test "returns empty for empty filters" do
-      query = %AshScylla.DataLayer{resource: DefaultResource, filters: []}
+      query = %AshScylla.Query{resource: DefaultResource, filters: []}
       assert QueryOptimizer.token_aware_hint(query) == []
     end
 
     test "with nil resource defaults pk to :id" do
       # When resource is nil, pk_columns defaults to [:id]
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         filters: [%{operator: :eq, left: %{name: :id}, right: %{value: "abc-123"}}]
       }
@@ -519,7 +516,7 @@ defmodule AshScylla.QueryOptimizerTest do
     end
 
     test "handles :op format filters" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         resource: DefaultResource,
         filters: [%{op: :eq, left: %{name: :id}, right: %{value: "abc-123"}}]
       }

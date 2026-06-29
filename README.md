@@ -78,7 +78,7 @@ defmodule MyApp.User do
     data_layer: AshScylla.DataLayer,
     domain: MyApp.Domain
 
-  ash_scylla do
+  scylla do
     table "users"
     consistency :quorum
   end
@@ -130,7 +130,7 @@ For a complete step-by-step guide, see the **[Usage Guide](guides/USAGE_GUIDE.md
 | Sort | ✅ | ORDER BY on clustering columns (within partition) |
 | Keyset pagination | ✅ | Token-based pagination via paging_state (default mode) |
 | Limit | ✅ | LIMIT is natively supported |
-| Offset | ❌ | Raises error — use keyset pagination instead |
+
 | Select | ✅ | Select specific fields |
 | Multitenancy | ✅ | Keyspace-based multitenancy |
 | Bulk Create | ✅ | Batch INSERT operations |
@@ -169,7 +169,7 @@ defmodule MyApp.User do
     data_layer: AshScylla.DataLayer,
     domain: MyApp.Domain
 
-  ash_scylla do
+  scylla do
     table "users"
     consistency :quorum
     ttl 3600
@@ -214,7 +214,7 @@ config :my_app, MyApp.Repo,
 | **No complex aggregations** | Materialized views or custom aggregation |
 | **No ACID transactions** | Use LWT for single-partition operations |
 | **Limited WHERE without indexes** | Create secondary indexes or materialized views |
-| **No OFFSET** | Use keyset pagination (`data_layer_keyset_by_default?/0` returns `true`) |
+| **No OFFSET** | Use keyset pagination via `paging_state` (default mode) |
 | **Cluster requires same port** | Configure all nodes on the same port, or use single-node connection |
 
 ---
@@ -255,7 +255,7 @@ children = [
 | **[Development Guide](guides/DEV_GUIDE.md)** | Dev container setup, testing, type mapping, CQL query building |
 | **[Production Guide](guides/PRODUCTION_GUIDE.md)** | Multi-node cluster deployment, monitoring, backup, rolling upgrades |
 | **[Implementation Summary](guides/IMPLEMENTATION_SUMMARY.md)** | Technical architecture and module reference |
-| **[Error Handling](guides/ERROR_HANDLING.md)** | Error types, retry logic, common scenarios |
+| **[Error Handling](guides/ERROR_HANDLING.md)** | Error types, common scenarios |
 | **[Changelog](guides/CHANGELOG.md)** | Version history and release notes |
 | **[API Documentation](https://hexdocs.pm/ash_scylla)** | Module documentation (when published) |
 
@@ -286,6 +286,9 @@ mix ash_scylla.migrate                      # Run all migrations
 mix ash_scylla.migrate --schemas-only       # Run only schema files
 mix ash_scylla.migrate --resource MyApp.User # Run migrations for one resource
 mix ash_scylla.gen --dev                    # Generate schema migration from DSL
+
+# ── Schema Generation ────────────────────────────────────────────────────────
+mix ash_scylla.generate_migrations           # Generate CQL from Ash resource DSL
 
 # ── Ash Extension Callbacks ──────────────────────────────────────────────────
 mix ash.install AshScylla --resource MyApp.User  # Install for a resource

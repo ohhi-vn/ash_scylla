@@ -247,7 +247,7 @@ defmodule MyApp.User do
     data_layer: AshScylla.DataLayer,
     domain: MyApp.Domain
 
-  ash_scylla do
+  scylla do
     table "users"
     consistency :quorum
     secondary_index :email
@@ -587,21 +587,21 @@ QueryBuilder                 # converts filters → CQL WHERE
 { cql, params }              # final query + typed parameters
 ```
 
-#### Stage 1 — Build the DataLayer struct
+#### Stage 1 — Build the Query struct
 
 For resources, let Ash build the struct from the DSL:
 
 ```elixir
-alias AshScylla.DataLayer
+alias AshScylla.Query
 
-query = DataLayer.resource_to_query(MyApp.User, MyApp.Domain)
-# %AshScylla.DataLayer{resource: MyApp.User, repo: MyApp.Repo, table: "users", ...}
+query = Query.from_resource(MyApp.User, MyApp.Domain)
+# %AshScylla.Query{resource: MyApp.User, repo: MyApp.Repo, table: "users", ...}
 ```
 
 For ad-hoc queries (tests, scripts), build the struct manually:
 
 ```elixir
-query = %DataLayer{
+query = %AshScylla.Query{
   resource: MyApp.User,     # or nil for resource-less queries
   repo: MyApp.Repo,         # or nil
   table: "users",            # required
@@ -688,21 +688,21 @@ Xandra.stop(conn)
 
 ```elixir
 # ── Primary key lookup (most efficient) ────────────────────────────────────
-query = %DataLayer{
+query = %AshScylla.Query{
   table: "users",
   filters: [%{operator: :eq, left: %{name: :id}, right: %{value: user_id}}]
 }
 # → SELECT * FROM users WHERE id = ?
 
 # ── Secondary index lookup ──────────────────────────────────────────────────
-query = %DataLayer{
+query = %AshScylla.Query{
   table: "users",
   filters: [%{operator: :eq, left: %{name: :email}, right: %{value: "a@b.com"}}]
 }
 # → SELECT * FROM users WHERE email = ?
 
 # ── Range query on clustering columns ───────────────────────────────────────
-query = %DataLayer{
+query = %AshScylla.Query{
   table: "events",
   filters: [
     %{operator: :eq, left: %{name: :user_id}, right: %{value: user_id}},
@@ -712,7 +712,7 @@ query = %DataLayer{
 # → SELECT * FROM events WHERE user_id = ? AND event_id >= ?
 
 # ── COUNT aggregate ────────────────────────────────────────────────────────
-query = %DataLayer{
+query = %AshScylla.Query{
   table: "users",
   filters: [%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}],
   aggregates: [%{kind: :count, name: :total}]
@@ -720,14 +720,14 @@ query = %DataLayer{
 # → SELECT count(*) FROM users WHERE status = ?
 
 # ── DISTINCT on partition key ───────────────────────────────────────────────
-query = %DataLayer{
+query = %AshScylla.Query{
   table: "users",
   distinct: [:status]
 }
 # → SELECT DISTINCT status FROM users
 
 # ── Token-based keyset pagination ───────────────────────────────────────────
-query = %DataLayer{
+query = %AshScylla.Query{
   table: "users",
   keyset: page_token,     # opaque token from previous page
   limit: 25
@@ -735,7 +735,7 @@ query = %DataLayer{
 # → SELECT * FROM users LIMIT ?  (with page_state sent to Xandra)
 
 # ── IN clause ───────────────────────────────────────────────────────────────
-query = %DataLayer{
+query = %AshScylla.Query{
   table: "users",
   filters: [%{operator: :in, left: %{name: :id}, right: %{value: [id1, id2, id3]}}]
 }
@@ -830,7 +830,7 @@ mix ash_scylla.setup
 
 ### "OFFSET not supported"
 
-AshScylla raises an error when you try to use offset queries. Use keyset pagination instead:
+OFFSET is not supported — use keyset pagination via paging_state instead:
 
 ```elixir
 # Instead of offset

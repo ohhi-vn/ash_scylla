@@ -16,7 +16,7 @@ defmodule AshScylla.AutogenerateTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       repo(AshScylla.TestRepo)
       table("autogen_test")
       keyspace("ash_scylla_test")
@@ -42,7 +42,7 @@ defmodule AshScylla.AutogenerateTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       repo(AshScylla.TestRepo)
       table("no_autogen_test")
       keyspace("ash_scylla_test")

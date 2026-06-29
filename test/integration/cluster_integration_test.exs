@@ -51,7 +51,6 @@ defmodule AshScylla.ClusterIntegrationTest do
     :ok
   end
 
-  alias AshScylla.DataLayer
   alias AshScylla.DataLayer.QueryBuilder
   alias AshScylla.TestRepo
   alias AshScylla.ScyllaContainer, warn: false
@@ -680,7 +679,7 @@ defmodule AshScylla.ClusterIntegrationTest do
         [id, "DL Cluster", "dl@cluster.com", "active", 25]
       )
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: TestRepo,
         table: "#{@keyspace}.users",
@@ -689,7 +688,6 @@ defmodule AshScylla.ClusterIntegrationTest do
         ],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: [:id, :name, :email],
         tenant: nil,
         distinct: nil,
@@ -722,14 +720,13 @@ defmodule AshScylla.ClusterIntegrationTest do
         )
       end)
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: TestRepo,
         table: "#{@keyspace}.users",
         filters: [%{operator: :in, left: %{name: :id}, right: %{value: ids}}],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil,
         distinct: nil,

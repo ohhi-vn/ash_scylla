@@ -84,7 +84,7 @@ defmodule MyApp.User do
     data_layer: AshScylla.DataLayer,
     domain: MyApp.Domain
 
-  ash_scylla do
+  scylla do
     table "users"
     consistency :quorum
   end
@@ -156,13 +156,12 @@ defmodule MyApp.Product do
     data_layer: AshScylla.DataLayer,
     domain: MyApp.Domain
 
-  ash_scylla do
+  scylla do
     table "products"
     keyspace "custom_keyspace"
     consistency :quorum
     ttl 3600
     lwt true
-    allow_filtering false
 
     # Secondary indexes
     secondary_index :category
@@ -199,7 +198,7 @@ defmodule MyApp.OrderItem do
     data_layer: AshScylla.DataLayer,
     domain: MyApp.Domain
 
-  ash_scylla do
+  scylla do
     table "order_items"
   end
 
@@ -267,7 +266,7 @@ defmodule MyApp.Domain.User do
     data_layer: AshScylla.DataLayer,
     domain: MyApp.Domain
 
-  ash_scylla do
+  scylla do
     table "users"
   end
 
@@ -390,11 +389,13 @@ MyApp.User
 |> Ash.Query.limit(10)
 |> Ash.read!()
 
-# Offset raises an error
+# Keyset pagination using paging_state token (recommended for large datasets)
 MyApp.User
-|> Ash.Query.offset(10)
-# => ** (RuntimeError) OFFSET is not supported in ScyllaDB/Cassandra. Use keyset pagination instead.
+|> Ash.Query.limit(10)
+|> Ash.read!(paging_state: last_paging_state)
 ```
+
+> **Note:** ScyllaDB/Cassandra does not support `OFFSET` pagination. AshScylla defaults to keyset/`paging_state` token-based pagination for efficient, scalable result traversal.
 
 ---
 
@@ -464,13 +465,13 @@ attribute :status, :string, primary_key?: true  # Don't do this
 
 ```elixir
 defmodule MyApp.CriticalData do
-  ash_scylla do
+  scylla do
     consistency :quorum  # Strong consistency
   end
 end
 
 defmodule MyApp.CachedData do
-  ash_scylla do
+  scylla do
     consistency :one  # Fast, eventual consistency
   end
 end
@@ -482,7 +483,7 @@ Available levels: `:any`, `:one`, `:two`, `:three`, `:quorum`, `:all`, `:local_q
 
 ```elixir
 defmodule MyApp.Session do
-  ash_scylla do
+  scylla do
     ttl 3600  # Expire after 1 hour
   end
 
@@ -509,7 +510,7 @@ end
 
 ```elixir
 defmodule MyApp.User do
-  ash_scylla do
+  scylla do
     secondary_index :email                    # Single column
     secondary_index [:name, :age]             # Multi-column (separate indexes)
     secondary_index :status, name: "idx_status"  # Custom name
@@ -523,7 +524,7 @@ end
 
 ```elixir
 defmodule MyApp.User do
-  ash_scylla do
+  scylla do
     materialized_view :users_by_email,
       primary_key: [:email, :id],
       include_columns: [:name, :age],
@@ -629,6 +630,39 @@ mix ash_scylla.migrate --dry-run
 mix ash_scylla.migrate --schemas-only
 ```
 
+### Generating Migrations from DSL
+
+Run `mix ash_scylla.generate_migrations` to introspect your Ash resources and generate CQL migration files:
+
+```bash
+mix ash_scylla.generate_migrations
+# Generated migration: priv/repo/migrations/20240101120000_migration.cql
+```
+
+The generated file contains plain CQL:
+
+```sql
+-- 20240101120000_migration.cql
+
+CREATE TABLE IF NOT EXISTS users (
+  id uuid,
+  email text,
+  name text,
+  age int,
+  created_at timestamp,
+  PRIMARY KEY (id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
+```
+
+You can also generate for a specific name:
+
+```bash
+mix ash_scylla.generate_migrations --name add_users
+# Generated migration: priv/repo/migrations/20240101120000_add_users.cql
+```
+
 ### Ash Extension Callbacks
 
 AshScylla implements the `Ash.Extension` behaviour, enabling standard Ash Mix tasks:
@@ -657,13 +691,13 @@ All callbacks support `--dry-run` to preview actions without executing them.
 
 ```elixir
 defmodule MyApp.PageView do
-  ash_scylla do
+  scylla do
     consistency :one  # Fast writes, eventual consistency is fine
   end
 end
 
 defmodule MyApp.FinancialTransaction do
-  ash_scylla do
+  scylla do
     consistency :quorum  # Strong consistency required
   end
 end
@@ -688,7 +722,7 @@ pool_size = num_nodes * num_cores_per_node
 - Use primary key queries when possible
 - Create secondary indexes for non-primary key queries
 - Use materialized views for alternative query patterns
-- Avoid ALLOW FILTERING (raises error by default)
+- Avoid unfiltered queries on non-indexed columns (raises error by default); add a `secondary_index` instead
 - Use BATCH statements for multiple operations
 
 ### 4. Batch Operations
@@ -728,7 +762,7 @@ defmodule MyApp.Metric do
     data_layer: AshScylla.DataLayer,
     domain: MyApp.Domain
 
-  ash_scylla do
+  scylla do
     table "metrics"
   end
 
@@ -764,7 +798,7 @@ defmodule MyApp.PageViewCount do
     data_layer: AshScylla.DataLayer,
     domain: MyApp.Domain
 
-  ash_scylla do
+  scylla do
     table "page_view_counts"
   end
 
@@ -786,7 +820,7 @@ end
 | `Connection refused` | ScyllaDB not running | `podman-compose -f podman-compose.yml up -d` |
 | `Keyspace does not exist` | Keyspace not created | `mix ash_scylla.setup` or `mix ash_scylla.migrate --create-keyspace` |
 | `Table not found` | Migration not run | `mix ash_scylla.migrate` |
-| `Invalid filter` | Non-indexed column filter | Add `secondary_index` or enable `allow_filtering` |
+| `Invalid filter` | Non-indexed column filter | Add `secondary_index` to the resource |
 | `OFFSET not supported` | Used offset query | Use keyset pagination instead |
 | `timeout` | Query too slow | Increase `request_timeout`, add indexes, optimize query |
 

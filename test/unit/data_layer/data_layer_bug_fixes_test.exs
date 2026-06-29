@@ -159,7 +159,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       repo(FakeRepo)
       table("bug_items")
       keyspace("test_ks")
@@ -188,7 +188,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       repo(FakeRepo)
       table("float_items")
       keyspace("test_ks")
@@ -218,7 +218,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       repo(FakeRepo)
       table("struct_pk_items")
       keyspace("test_ks")
@@ -270,14 +270,13 @@ defmodule AshScylla.DataLayer.BugFixesTest do
 
   describe "Bug 1: LIMIT parameter marshaling" do
     test "integers are tagged as int not bigint to avoid ScyllaDB Int32Type marshaling error" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AtomResource,
         repo: FakeRepo,
         table: "test_ks.bug_items",
         filters: [%{operator: :eq, left: %{name: :privacy}, right: %{value: "public"}}],
         sorts: [],
         limit: 250,
-        offset: nil,
         select: nil,
         tenant: nil,
         context: %{}
@@ -291,14 +290,13 @@ defmodule AshScylla.DataLayer.BugFixesTest do
     end
 
     test "limit value within int32 range does not cause marshaling error" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AtomResource,
         repo: FakeRepo,
         table: "test_ks.bug_items",
         filters: [%{operator: :eq, left: %{name: :privacy}, right: %{value: "public"}}],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: nil,
         tenant: nil,
         context: %{}
@@ -317,14 +315,13 @@ defmodule AshScylla.DataLayer.BugFixesTest do
 
   describe "Bug 2: Atom type conversion" do
     test "atom fields are converted from strings to atoms when read" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AtomResource,
         repo: FakeRepo,
         table: "test_ks.bug_items",
         filters: [%{operator: :eq, left: %{name: :privacy}, right: %{value: "public"}}],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: nil,
         tenant: nil,
         context: %{}
@@ -340,14 +337,13 @@ defmodule AshScylla.DataLayer.BugFixesTest do
     end
 
     test "all atom values in results are proper atoms" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AtomResource,
         repo: FakeRepo,
         table: "test_ks.bug_items",
         filters: [%{operator: :eq, left: %{name: :privacy}, right: %{value: "public"}}],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: nil,
         tenant: nil,
         context: %{}
@@ -407,14 +403,13 @@ defmodule AshScylla.DataLayer.BugFixesTest do
 
   describe "Bug 4: In-memory sort fallback for secondary index scans" do
     test "results are sorted in-memory when ORDER BY is dropped for secondary index scan" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AtomResource,
         repo: FakeRepo,
         table: "test_ks.bug_items",
         filters: [%{operator: :eq, left: %{name: :privacy}, right: %{value: "public"}}],
         sorts: [:score],
         limit: 10,
-        offset: nil,
         select: nil,
         tenant: nil,
         context: %{}
@@ -428,14 +423,13 @@ defmodule AshScylla.DataLayer.BugFixesTest do
     end
 
     test "results are sorted by specified field when secondary index scan drops ORDER BY" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AtomResource,
         repo: FakeRepo,
         table: "test_ks.bug_items",
         filters: [%{operator: :eq, left: %{name: :privacy}, right: %{value: "public"}}],
         sorts: [:score],
         limit: 10,
-        offset: nil,
         select: nil,
         tenant: nil,
         context: %{}
@@ -509,14 +503,13 @@ defmodule AshScylla.DataLayer.BugFixesTest do
 
   describe "Bug 6: update_query/4 argument order" do
     test "update_query accepts (query, changeset, resource, opts)" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: FloatResource,
         repo: FakeRepo,
         table: "test_ks.float_items",
         filters: [%{operator: :eq, left: %{name: :name}, right: %{value: "Run"}}],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil,
         context: %{}
@@ -534,14 +527,13 @@ defmodule AshScylla.DataLayer.BugFixesTest do
     end
 
     test "update_query does not crash when opts contain keyword list" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: FloatResource,
         repo: FakeRepo,
         table: "test_ks.float_items",
         filters: [%{operator: :eq, left: %{name: :name}, right: %{value: "Run"}}],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil,
         context: %{}
@@ -607,14 +599,13 @@ defmodule AshScylla.DataLayer.BugFixesTest do
         data: data_struct
       }
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: StructPkResource,
         repo: FakeRepo,
         table: "test_ks.struct_pk_items",
         filters: [%{operator: :eq, left: %{name: :name}, right: %{value: "Bob"}}],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil,
         context: %{}

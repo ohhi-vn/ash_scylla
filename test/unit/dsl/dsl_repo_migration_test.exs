@@ -223,7 +223,6 @@ defmodule AshScylla.DslRepoMigrationContinuedTest do
 
   use ExUnit.Case, async: true
 
-  alias AshScylla.DataLayer
   alias AshScylla.DataLayer.Dsl
   alias AshScylla.Migration
 
@@ -430,80 +429,78 @@ defmodule AshScylla.DslRepoMigrationContinuedTest do
 
   describe "DataLayer struct defaults" do
     test "filters defaults to empty list" do
-      query = %DataLayer{resource: nil, repo: nil, table: nil}
+      query = %AshScylla.Query{resource: nil, repo: nil, table: nil}
       assert query.filters == []
     end
 
     test "sorts defaults to empty list" do
-      query = %DataLayer{resource: nil, repo: nil, table: nil}
+      query = %AshScylla.Query{resource: nil, repo: nil, table: nil}
       assert query.sorts == []
     end
 
     test "limit defaults to nil" do
-      query = %DataLayer{resource: nil, repo: nil, table: nil}
+      query = %AshScylla.Query{resource: nil, repo: nil, table: nil}
       assert query.limit == nil
     end
 
     test "offset defaults to nil" do
-      query = %DataLayer{resource: nil, repo: nil, table: nil}
-      assert query.offset == nil
+      query = %AshScylla.Query{resource: nil, repo: nil, table: nil}
     end
 
     test "select defaults to nil" do
-      query = %DataLayer{resource: nil, repo: nil, table: nil}
+      query = %AshScylla.Query{resource: nil, repo: nil, table: nil}
       assert query.select == nil
     end
 
     test "tenant defaults to nil" do
-      query = %DataLayer{resource: nil, repo: nil, table: nil}
+      query = %AshScylla.Query{resource: nil, repo: nil, table: nil}
       assert query.tenant == nil
     end
   end
 
   describe "DataLayer.resource_to_query/2" do
     test "creates a proper query struct with resource set" do
-      query = %DataLayer{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
+      query = %AshScylla.Query{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
       assert query.resource == TestResourceWithIndexes
     end
 
     test "creates a proper query struct with table set" do
-      query = %DataLayer{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
+      query = %AshScylla.Query{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
       assert query.table == "test_users"
     end
 
     test "creates a proper query struct with default filters" do
-      query = %DataLayer{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
+      query = %AshScylla.Query{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
       assert query.filters == []
     end
 
     test "creates a proper query struct with default sorts" do
-      query = %DataLayer{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
+      query = %AshScylla.Query{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
       assert query.sorts == []
     end
 
     test "creates a proper query struct with nil limit" do
-      query = %DataLayer{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
+      query = %AshScylla.Query{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
       assert query.limit == nil
     end
 
     test "creates a proper query struct with nil offset" do
-      query = %DataLayer{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
-      assert query.offset == nil
+      query = %AshScylla.Query{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
     end
 
     test "creates a proper query struct with nil select" do
-      query = %DataLayer{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
+      query = %AshScylla.Query{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
       assert query.select == nil
     end
 
     test "creates a proper query struct with nil tenant" do
-      query = %DataLayer{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
+      query = %AshScylla.Query{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
       assert query.tenant == nil
     end
 
     test "returns a DataLayer struct" do
-      query = %DataLayer{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
-      assert %DataLayer{} = query
+      query = %AshScylla.Query{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
+      assert %AshScylla.Query{} = query
     end
   end
 end

@@ -15,7 +15,7 @@ defmodule AshScylla.SourceCacheTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       repo(AshScylla.TestRepo)
       table("cache_test_table")
       keyspace("ash_scylla_test")

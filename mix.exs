@@ -4,7 +4,7 @@ defmodule AshScylla.MixProject do
   def project do
     [
       app: :ash_scylla,
-      version: "0.13.1",
+      version: "1.0.0",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -74,7 +74,8 @@ defmodule AshScylla.MixProject do
       groups_for_modules: [
         Core: [
           AshScylla,
-          AshScylla.DataLayer
+          AshScylla.DataLayer,
+          AshScylla.Query
         ],
         "Schema Helpers": [
           AshScylla.Migration
@@ -85,6 +86,7 @@ defmodule AshScylla.MixProject do
           AshScylla.DataLayer.Batch,
           AshScylla.DataLayer.FilterValidator,
           AshScylla.DataLayer.MaterializedView,
+          AshScylla.DataLayer.SecondaryIndex,
           AshScylla.DataLayer.Pagination,
           AshScylla.DataLayer.Udt,
           AshScylla.DataLayer.Collection,

@@ -9,7 +9,6 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
     - filter/3
     - sort/3
     - limit/3
-    - offset/3
     - select/3
     - lock/3
     - combination_of/3
@@ -30,14 +29,13 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
   # ---------------------------------------------------------------------------
 
   defp base_query do
-    %DataLayer{
+    %AshScylla.Query{
       resource: AshScylla.TestResource,
       repo: AshScylla.TestRepo,
       table: "test_resource",
       filters: [],
       sorts: [],
       limit: nil,
-      offset: nil,
       select: nil,
       tenant: nil,
       context: %{}
@@ -114,7 +112,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
     test "returns {:ok, updated_query} tuple" do
       query = base_query()
       result = DataLayer.set_tenant(nil, query, "t1")
-      assert match?({:ok, %DataLayer{}}, result)
+      assert match?({:ok, %AshScylla.Query{}}, result)
     end
   end
 
@@ -213,7 +211,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
       query = base_query()
       filter = %{operator: :eq, left: %{name: :id}, right: %{value: 1}}
       result = DataLayer.filter(query, filter, nil)
-      assert match?({:ok, %DataLayer{}}, result)
+      assert match?({:ok, %AshScylla.Query{}}, result)
     end
   end
 
@@ -238,7 +236,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
     test "returns {:ok, updated_query} tuple" do
       query = base_query()
       result = DataLayer.sort(query, [{:name, :asc}], nil)
-      assert match?({:ok, %DataLayer{}}, result)
+      assert match?({:ok, %AshScylla.Query{}}, result)
     end
   end
 
@@ -262,37 +260,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
     test "returns {:ok, updated_query} tuple" do
       query = base_query()
       result = DataLayer.limit(query, 10, nil)
-      assert match?({:ok, %DataLayer{}}, result)
-    end
-  end
-
-  # ---------------------------------------------------------------------------
-  # offset/3
-  # ---------------------------------------------------------------------------
-
-  describe "offset/3" do
-    test "raises because OFFSET is not supported in ScyllaDB" do
-      query = base_query()
-
-      assert_raise RuntimeError, ~r/OFFSET is not supported/, fn ->
-        DataLayer.offset(query, 100, nil)
-      end
-    end
-
-    test "raises even when overwriting a previous offset" do
-      query = %{base_query() | offset: 50}
-
-      assert_raise RuntimeError, ~r/OFFSET is not supported/, fn ->
-        DataLayer.offset(query, 200, nil)
-      end
-    end
-
-    test "raises for any offset value" do
-      query = base_query()
-
-      assert_raise RuntimeError, ~r/OFFSET is not supported/, fn ->
-        DataLayer.offset(query, 10, nil)
-      end
+      assert match?({:ok, %AshScylla.Query{}}, result)
     end
   end
 
@@ -316,7 +284,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
     test "returns {:ok, updated_query} tuple" do
       query = base_query()
       result = DataLayer.select(query, [:name], nil)
-      assert match?({:ok, %DataLayer{}}, result)
+      assert match?({:ok, %AshScylla.Query{}}, result)
     end
   end
 
@@ -334,7 +302,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
     test "returns {:ok, query} tuple" do
       query = base_query()
       result = DataLayer.lock(query, :for_update, nil)
-      assert match?({:ok, %DataLayer{}}, result)
+      assert match?({:ok, %AshScylla.Query{}}, result)
     end
   end
 
@@ -390,7 +358,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
       query = base_query()
       calculation = %{name: :test, expr: fn r -> r end}
       result = DataLayer.calculate(query, calculation, nil)
-      assert match?({:ok, %DataLayer{}}, result)
+      assert match?({:ok, %AshScylla.Query{}}, result)
     end
   end
 
@@ -421,7 +389,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
       query = base_query()
       aggregate = %{kind: :count, name: :total}
       result = DataLayer.add_aggregate(query, aggregate, nil)
-      assert match?({:ok, %DataLayer{}}, result)
+      assert match?({:ok, %AshScylla.Query{}}, result)
     end
   end
 
@@ -457,7 +425,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
       query = base_query()
       aggregates = [%{kind: :count, name: :total}]
       result = DataLayer.add_aggregates(query, aggregates, nil)
-      assert match?({:ok, %DataLayer{}}, result)
+      assert match?({:ok, %AshScylla.Query{}}, result)
     end
   end
 
@@ -504,7 +472,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
 
   describe "resource_to_query/2" do
     test "creates a proper query struct with resource set" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AshScylla.TestResourceWithIndexes,
         repo: nil,
         table: "test_users"
@@ -514,7 +482,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
     end
 
     test "creates a proper query struct with table set" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AshScylla.TestResourceWithIndexes,
         repo: nil,
         table: "test_users"
@@ -524,7 +492,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
     end
 
     test "creates a proper query struct with default filters" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AshScylla.TestResourceWithIndexes,
         repo: nil,
         table: "test_users"
@@ -534,7 +502,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
     end
 
     test "creates a proper query struct with default sorts" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AshScylla.TestResourceWithIndexes,
         repo: nil,
         table: "test_users"
@@ -544,7 +512,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
     end
 
     test "creates a proper query struct with nil limit" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AshScylla.TestResourceWithIndexes,
         repo: nil,
         table: "test_users"
@@ -554,7 +522,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
     end
 
     test "creates a proper query struct with nil tenant" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AshScylla.TestResourceWithIndexes,
         repo: nil,
         table: "test_users"
@@ -564,7 +532,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
     end
 
     test "creates a proper query struct with empty context" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AshScylla.TestResourceWithIndexes,
         repo: nil,
         table: "test_users"
@@ -642,11 +610,10 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
 
   describe "DataLayer struct defaults" do
     test "defaults have correct values" do
-      dl = %DataLayer{}
+      dl = %AshScylla.Query{}
       assert dl.filters == []
       assert dl.sorts == []
       assert dl.limit == nil
-      assert dl.offset == nil
       assert dl.select == nil
       assert dl.tenant == nil
       assert dl.context == %{}
@@ -675,14 +642,13 @@ defmodule AshScylla.DataLayer.ReturnQueryTest do
   alias AshScylla.DataLayer
 
   defp base_query do
-    %DataLayer{
+    %AshScylla.Query{
       resource: AshScylla.TestResource,
       repo: AshScylla.TestRepo,
       table: "test_resource",
       filters: [],
       sorts: [],
       limit: nil,
-      offset: nil,
       select: nil,
       tenant: nil,
       context: %{}
@@ -693,7 +659,7 @@ defmodule AshScylla.DataLayer.ReturnQueryTest do
     test "returns {:ok, data_layer_query} tuple" do
       query = base_query()
       assert {:ok, result} = DataLayer.return_query(query, AshScylla.TestResource)
-      assert %DataLayer{} = result
+      assert %AshScylla.Query{} = result
     end
 
     test "returns the same query struct" do
@@ -719,7 +685,7 @@ defmodule AshScylla.DataLayer.ReturnQueryTest do
 
     test "returns {:ok, _} even with empty filters" do
       query = base_query()
-      assert {:ok, %DataLayer{}} = DataLayer.return_query(query, AshScylla.TestResource)
+      assert {:ok, %AshScylla.Query{}} = DataLayer.return_query(query, AshScylla.TestResource)
     end
 
     test "does not return a plain string" do
@@ -734,7 +700,7 @@ defmodule AshScylla.DataLayer.ReturnQueryTest do
       query = base_query()
       {:ok, result} = DataLayer.return_query(query, AshScylla.TestResource)
       refute is_binary(result)
-      assert %DataLayer{} = result
+      assert %AshScylla.Query{} = result
     end
   end
 end

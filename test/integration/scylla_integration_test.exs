@@ -234,10 +234,6 @@ defmodule AshScylla.ScyllaIntegrationTest do
     if uuid?(value), do: {"uuid", value}, else: {"text", value}
   end
 
-  defp encode_param(value) when is_float(value), do: {"double", value}
-  defp encode_param(value) when is_integer(value), do: {"int", value}
-  defp encode_param(value) when is_boolean(value), do: {"boolean", value}
-  defp encode_param(nil), do: {"null", nil}
   defp encode_param(value), do: {"text", to_string(value)}
 
   defp connect_with_retry(host, port, retries) when is_integer(retries) do
@@ -1194,7 +1190,6 @@ defmodule AshScylla.ScyllaIntegrationTest do
   describe "DataLayer query struct against real DB" do
     test "build_optimized_query produces valid CQL", %{conn: conn} do
       if is_nil(conn), do: :ok
-      alias AshScylla.DataLayer
       alias AshScylla.DataLayer.QueryBuilder
 
       id = uid()
@@ -1205,7 +1200,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
         [id, "DL Test", "dl@test.com", "active", 35]
       )
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: TestRepo,
         table: "ash_scylla_test.users",
@@ -1214,7 +1209,6 @@ defmodule AshScylla.ScyllaIntegrationTest do
         ],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: [:id, :name, :email],
         tenant: nil
       }
@@ -1233,7 +1227,6 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
     test "build_optimized_query with IN operator", %{conn: conn} do
       if is_nil(conn), do: :ok
-      alias AshScylla.DataLayer
       alias AshScylla.DataLayer.QueryBuilder
 
       ids = Enum.map(1..3, fn _ -> uid() end)
@@ -1243,14 +1236,13 @@ defmodule AshScylla.ScyllaIntegrationTest do
         &xq(conn, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?)", [&1, "IN Test"])
       )
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: TestRepo,
         table: "ash_scylla_test.users",
         filters: [%{operator: :in, left: %{name: :id}, right: %{value: ids}}],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -1281,7 +1273,6 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
     test "uuid equality + datetime range filter executes successfully", %{conn: conn} do
       if is_nil(conn), do: :ok
-      alias AshScylla.DataLayer
       alias AshScylla.DataLayer.QueryBuilder
 
       user_id = uid()
@@ -1305,14 +1296,13 @@ defmodule AshScylla.ScyllaIntegrationTest do
         right: %{operator: :<=, left: %{name: :created_at}, right: end_dt}
       }
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: TestRepo,
         table: "ash_scylla_test.users",
         filters: [filter],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: [:id, :name, :email],
         tenant: nil
       }
@@ -1323,14 +1313,13 @@ defmodule AshScylla.ScyllaIntegrationTest do
       email_filter = %{operator: :eq, left: %{name: :email}, right: %{value: "range@test.com"}}
       range_filter = %{operator: :>=, left: %{name: :created_at}, right: %{value: start_dt}}
 
-      query2 = %DataLayer{
+      query2 = %AshScylla.Query{
         resource: nil,
         repo: TestRepo,
         table: "ash_scylla_test.users",
         filters: [email_filter, range_filter],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: [:id, :name, :email],
         tenant: nil
       }
@@ -1344,20 +1333,18 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
     test "raw datetime equality filter executes successfully", %{conn: conn} do
       if is_nil(conn), do: :ok
-      alias AshScylla.DataLayer
       alias AshScylla.DataLayer.QueryBuilder
 
       target_dt = ~U[2025-06-15 10:00:00Z]
       filter = %{operator: :eq, left: %{name: :created_at}, right: target_dt}
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: TestRepo,
         table: "ash_scylla_test.users",
         filters: [filter],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: [:id, :name],
         tenant: nil
       }
@@ -1370,19 +1357,17 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
     test "raw IN list filter executes successfully", %{conn: conn} do
       if is_nil(conn), do: :ok
-      alias AshScylla.DataLayer
       alias AshScylla.DataLayer.QueryBuilder
 
       filter = %{operator: :in, left: %{name: :status}, right: ["active", "pending"]}
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: TestRepo,
         table: "ash_scylla_test.users",
         filters: [filter],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: [:id, :name],
         tenant: nil
       }
@@ -1396,7 +1381,6 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
     test "raw is_nil filter executes successfully", %{conn: conn} do
       if is_nil(conn), do: :ok
-      alias AshScylla.DataLayer
       alias AshScylla.DataLayer.QueryBuilder
 
       null_id = uid()
@@ -1410,14 +1394,13 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
       filter = %{operator: :is_nil, left: %{name: :email}, right: true}
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: TestRepo,
         table: "ash_scylla_test.users",
         filters: [filter],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: [:id, :name],
         tenant: nil
       }
@@ -1435,7 +1418,6 @@ defmodule AshScylla.ScyllaIntegrationTest do
 
     test "nested AND/OR with raw values executes successfully", %{conn: conn} do
       if is_nil(conn), do: :ok
-      alias AshScylla.DataLayer
       alias AshScylla.DataLayer.QueryBuilder
 
       # Insert a record that will match the filter
@@ -1462,14 +1444,13 @@ defmodule AshScylla.ScyllaIntegrationTest do
         }
       }
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: TestRepo,
         table: "ash_scylla_test.users",
         filters: [filter],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: [:id, :name],
         tenant: nil
       }

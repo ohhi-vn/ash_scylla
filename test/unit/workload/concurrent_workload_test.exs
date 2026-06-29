@@ -41,7 +41,7 @@ defmodule AshScylla.WorkloadTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       table("workload_test")
       keyspace("workload_ks")
       consistency(:quorum)
@@ -106,7 +106,7 @@ defmodule AshScylla.WorkloadTest do
       tasks =
         Enum.map(1..100, fn i ->
           Task.async(fn ->
-            QueryBuilder.build_optimized_query(%DataLayer{
+            QueryBuilder.build_optimized_query(%AshScylla.Query{
               resource: WorkloadResource,
               repo: nil,
               table: "workload_test",
@@ -116,7 +116,6 @@ defmodule AshScylla.WorkloadTest do
               ],
               sorts: [{:name, :asc}],
               limit: 25,
-              offset: nil,
               select: [:id, :name, :email],
               tenant: nil
             })
@@ -140,12 +139,11 @@ defmodule AshScylla.WorkloadTest do
       tasks = [
         # Simple select all
         Task.async(fn ->
-          QueryBuilder.build_optimized_query(%DataLayer{
+          QueryBuilder.build_optimized_query(%AshScylla.Query{
             table: "t",
             filters: [],
             sorts: [],
             limit: nil,
-            offset: nil,
             select: nil,
             resource: nil,
             repo: nil,
@@ -159,12 +157,11 @@ defmodule AshScylla.WorkloadTest do
               %{operator: :eq, left: %{name: :"col_#{i}"}, right: %{value: i}}
             end)
 
-          QueryBuilder.build_optimized_query(%DataLayer{
+          QueryBuilder.build_optimized_query(%AshScylla.Query{
             table: "t",
             filters: filters,
             sorts: [{:a, :asc}, {:b, :desc}],
             limit: 100,
-            offset: nil,
             select: [:a, :b, :c],
             resource: nil,
             repo: nil,
@@ -173,12 +170,11 @@ defmodule AshScylla.WorkloadTest do
         end),
         # IN operator
         Task.async(fn ->
-          QueryBuilder.build_optimized_query(%DataLayer{
+          QueryBuilder.build_optimized_query(%AshScylla.Query{
             table: "t",
             filters: [%{operator: :in, left: %{name: :id}, right: %{value: Enum.to_list(1..50)}}],
             sorts: [],
             limit: 10,
-            offset: nil,
             select: nil,
             resource: nil,
             repo: nil,
@@ -647,12 +643,11 @@ defmodule AshScylla.WorkloadTest do
       read_tasks =
         Enum.map(1..read_count, fn i ->
           Task.async(fn ->
-            QueryBuilder.build_optimized_query(%DataLayer{
+            QueryBuilder.build_optimized_query(%AshScylla.Query{
               table: "users",
               filters: [%{operator: :eq, left: %{name: :id}, right: %{value: "uuid-#{i}"}}],
               sorts: [],
               limit: 1,
-              offset: nil,
               select: nil,
               resource: WorkloadResource,
               repo: nil,
@@ -699,12 +694,11 @@ defmodule AshScylla.WorkloadTest do
             case rem(i, 4) do
               0 ->
                 # Read query
-                QueryBuilder.build_optimized_query(%DataLayer{
+                QueryBuilder.build_optimized_query(%AshScylla.Query{
                   table: "users",
                   filters: [],
                   sorts: [{:name, :asc}],
                   limit: 10,
-                  offset: nil,
                   select: [:id, :name],
                   resource: nil,
                   repo: nil,
@@ -839,14 +833,13 @@ defmodule AshScylla.WorkloadTest do
 
   describe "data layer query struct operations under load" do
     test "concurrent filter/sort/limit/offset operations on query struct" do
-      base_query = %DataLayer{
+      base_query = %AshScylla.Query{
         resource: WorkloadResource,
         repo: nil,
         table: "users",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -909,14 +902,13 @@ defmodule AshScylla.WorkloadTest do
 
             # Step 2: Build query
             {cql, params} =
-              QueryBuilder.build_optimized_query(%DataLayer{
+              QueryBuilder.build_optimized_query(%AshScylla.Query{
                 table: "users",
                 filters: [
                   %{operator: :eq, left: %{name: :email}, right: %{value: "user#{i}@example.com"}}
                 ],
                 sorts: [{:name, :asc}],
                 limit: 10,
-                offset: nil,
                 select: [:id, :name, :email],
                 resource: WorkloadResource,
                 repo: nil,

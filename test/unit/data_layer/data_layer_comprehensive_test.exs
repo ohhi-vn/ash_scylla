@@ -63,7 +63,7 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       repo(FakeRepo)
       table("comp_items")
       keyspace("test_ks")
@@ -93,7 +93,7 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       repo(FakeRepo)
       table("direct_repo_items")
     end
@@ -159,14 +159,13 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
   # ---------------------------------------------------------------------------
 
   defp base_query do
-    %DataLayer{
+    %AshScylla.Query{
       resource: Resource,
       repo: FakeRepo,
       table: "comp_items",
       filters: [],
       sorts: [],
       limit: nil,
-      offset: nil,
       select: nil,
       distinct: nil,
       tenant: nil,
@@ -685,14 +684,13 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
 
   describe "DataLayer struct defaults" do
     test "all default values are correct" do
-      dl = %DataLayer{}
+      dl = %AshScylla.Query{}
       assert dl.resource == nil
       assert dl.repo == nil
       assert dl.table == nil
       assert dl.filters == []
       assert dl.sorts == []
       assert dl.limit == nil
-      assert dl.offset == nil
       assert dl.select == nil
       assert dl.distinct == nil
       assert dl.tenant == nil
@@ -838,7 +836,7 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       repo(ColumnTupleRepo)
       table("column_tuple_items")
       keyspace("test_ks")
@@ -878,14 +876,13 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
     end
 
     test "run_query/2 maps column-tuple rows to struct attributes" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: ColumnTupleResource,
         repo: ColumnTupleRepo,
         table: "column_tuple_items",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         distinct: nil,
         tenant: nil,
@@ -910,14 +907,13 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
     end
 
     test "run_query/2 with select maps only requested columns" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: ColumnTupleResource,
         repo: ColumnTupleRepo,
         table: "column_tuple_items",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: [:name, :age],
         distinct: nil,
         tenant: nil,

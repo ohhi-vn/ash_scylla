@@ -24,11 +24,12 @@ defmodule AshScylla.AtomTypeRoundtripTest do
     def query(query, params, opts \\ []) do
       send(self(), {:atom_query, query, params, opts})
 
-      case query do
-        "INSERT INTO atom_test" <> _ ->
+      cond do
+        String.contains?(query, "INSERT INTO") and String.contains?(query, "atom_test") ->
           {:ok, %Xandra.Page{content: []}}
 
-        "SELECT * FROM atom_test WHERE id = ? LIMIT 1" ->
+        String.contains?(query, "SELECT * FROM") and String.contains?(query, "atom_test") and
+            String.contains?(query, "WHERE id = ?") ->
           [id] = params
 
           row = %{
@@ -46,13 +47,13 @@ defmodule AshScylla.AtomTypeRoundtripTest do
              columns: ["id", "status", "privacy", "priority", "category", "empty_val"]
            }}
 
-        "UPDATE atom_test SET" <> _ ->
+        String.contains?(query, "UPDATE") and String.contains?(query, "atom_test") ->
           {:ok, %Xandra.Page{content: []}}
 
-        "DELETE FROM atom_test" <> _ ->
+        String.contains?(query, "DELETE") and String.contains?(query, "atom_test") ->
           {:ok, %Xandra.Page{content: []}}
 
-        _ ->
+        true ->
           {:error, %Xandra.Error{reason: :overloaded, message: nil, warnings: []}}
       end
     end
@@ -71,7 +72,7 @@ defmodule AshScylla.AtomTypeRoundtripTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       repo(AtomFakeRepo)
       table("atom_test")
       keyspace("test_ks")
@@ -123,7 +124,8 @@ defmodule AshScylla.AtomTypeRoundtripTest do
       assert {:ok, _record} = DataLayer.create(AtomResource, cs)
 
       assert_receive {:atom_query, insert_query, insert_params, _opts}
-      assert insert_query =~ "INSERT INTO atom_test"
+      assert insert_query =~ "INSERT INTO"
+      assert insert_query =~ "atom_test"
 
       # Atoms should be converted to strings in the params (wrapped as {"text", value})
       assert {"text", "active"} in insert_params

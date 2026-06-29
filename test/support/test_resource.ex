@@ -6,7 +6,7 @@ defmodule AshScylla.TestResource do
 
   import AshScylla.DataLayer.Dsl
 
-  ash_scylla do
+  scylla do
     repo(AshScylla.TestRepo)
     table("test_resource")
     keyspace("ash_scylla_test")

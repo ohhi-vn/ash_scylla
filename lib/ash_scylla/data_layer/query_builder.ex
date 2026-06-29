@@ -35,12 +35,12 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   ## Keyset Pagination
 
   Token-based pagination using the CQL TOKEN() function on partition keys,
-  enabling efficient pagination without OFFSET overhead.
+  enabling efficient pagination without offset overhead.
   """
 
   require Logger
 
-  alias AshScylla.DataLayer
+  alias AshScylla.Query
   alias AshScylla.DataLayer.Dsl
   alias AshScylla.Identifier
 
@@ -59,14 +59,13 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   - CONTAINS / CONTAINS KEY for collection types
   - TOKEN() function for partition key queries
   """
-  @spec build_optimized_query(DataLayer.t()) :: {String.t(), list()}
-  def build_optimized_query(%DataLayer{
+  @spec build_optimized_query(Query.t()) :: {String.t(), list()}
+  def build_optimized_query(%Query{
         resource: resource,
         table: table,
         filters: filters,
         sorts: sorts,
         limit: limit,
-        offset: offset,
         select: select,
         distinct: distinct,
         keyset: keyset,
@@ -149,30 +148,8 @@ defmodule AshScylla.DataLayer.QueryBuilder do
         {query_acc, params}
       end
 
-    # Append ALLOW FILTERING when enabled and there are filters
-    # that involve non-primary-key columns (secondary index scans or
-    # non-indexed column scans).
-    query_acc =
-      if resource != nil and Dsl.allow_filtering(resource) and filters != [] and
-           needs_allow_filtering?(resource, filters) do
-        Logger.debug("AshScylla: Appending ALLOW FILTERING for query on #{table}")
-        [query_acc, " ALLOW FILTERING"]
-      else
-        query_acc
-      end
-
     query = IO.iodata_to_binary(query_acc)
-
-    # Add OFFSET (note: OFFSET in CQL requires special handling)
-    if offset do
-      Logger.warning(
-        "AshScylla: OFFSET is not natively supported in ScyllaDB/Cassandra; ignoring offset=#{offset}"
-      )
-
-      {query, params}
-    else
-      {query, params}
-    end
+    {query, params}
   end
 
   # ============================================================================
@@ -980,23 +957,6 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   defp extract_filter_columns(%{expression: expr}), do: get_filter_columns([expr])
   defp extract_filter_columns(%{left: left, right: right}), do: get_filter_columns([left, right])
   defp extract_filter_columns(_), do: []
-
-  @doc false
-  @spec needs_allow_filtering?(term(), list()) :: boolean()
-  def needs_allow_filtering?(resource, filters) do
-    filter_columns = get_filter_columns(filters)
-
-    pk_columns =
-      if Ash.Resource.Info.resource?(resource) do
-        resource
-        |> Ash.Resource.Info.primary_key()
-        |> MapSet.new()
-      else
-        MapSet.new([:id])
-      end
-
-    Enum.any?(filter_columns, fn col -> not MapSet.member?(pk_columns, col) end)
-  end
 
   @doc false
   @spec secondary_index_scan?(term(), list()) :: boolean()

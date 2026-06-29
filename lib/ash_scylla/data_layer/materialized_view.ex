@@ -28,7 +28,7 @@ defmodule AshScylla.DataLayer.MaterializedView do
         use Ash.Resource,
           data_layer: AshScylla.DataLayer
 
-        ash_scylla do
+        scylla do
           table "users"
           materialized_view :users_by_email,
             primary_key: [:email, :id],

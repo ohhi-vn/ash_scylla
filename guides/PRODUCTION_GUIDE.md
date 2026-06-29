@@ -460,7 +460,7 @@ config :my_app, MyApp.Repo,
 defmodule MyApp.CriticalTransaction do
   use Ash.Resource, data_layer: AshScylla.DataLayer
 
-  ash_scylla do
+  scylla do
     consistency :all        # Strongest consistency for financial data
     lwt true                # Lightweight transactions for conditional writes
   end
@@ -469,7 +469,7 @@ end
 defmodule MyApp.AnalyticsEvent do
   use Ash.Resource, data_layer: AshScylla.DataLayer
 
-  ash_scylla do
+  scylla do
     consistency :one        # Fastest writes for analytics
     ttl 86_400              # Auto-expire after 24 hours
   end
@@ -551,7 +551,7 @@ config :my_app, MyApp.Repo,
 defmodule MyApp.Order do
   use Ash.Resource, data_layer: AshScylla.DataLayer
 
-  ash_scylla do
+  scylla do
     # Default consistency for most operations
     consistency :quorum
 
@@ -574,7 +574,7 @@ Use LWT for operations that require linearizable consistency:
 defmodule MyApp.Inventory do
   use Ash.Resource, data_layer: AshScylla.DataLayer
 
-  ash_scylla do
+  scylla do
     lwt true  # Enables IF NOT EXISTS / IF conditions
   end
 

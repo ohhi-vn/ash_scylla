@@ -20,7 +20,7 @@ defmodule AshScylla.DslPaginationConsistencyTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       table("users")
       pagination(:token)
     end
@@ -44,7 +44,7 @@ defmodule AshScylla.DslPaginationConsistencyTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       table("users")
       consistency(:quorum)
       per_action_consistency(read: :one, create: :quorum, update: :local_quorum)
@@ -69,7 +69,7 @@ defmodule AshScylla.DslPaginationConsistencyTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       table("users")
       pagination(:token)
       per_action_consistency(read: :one, create: :all)
@@ -94,7 +94,7 @@ defmodule AshScylla.DslPaginationConsistencyTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       table("users")
     end
 
@@ -117,12 +117,12 @@ defmodule AshScylla.DslPaginationConsistencyTest do
       assert Dsl.pagination(ResourceWithTokenPagination) == :token
     end
 
-    test "returns :offset for resource with default pagination" do
-      assert Dsl.pagination(ResourceWithDefaults) == :offset
+    test "returns :token for resource with default pagination" do
+      assert Dsl.pagination(ResourceWithDefaults) == :token
     end
 
-    test "returns :offset for resource without ash_scylla config" do
-      assert Dsl.pagination(String) == :offset
+    test "returns :token for resource without scylla config" do
+      assert Dsl.pagination(String) == :token
     end
 
     test "returns :token for resource with both new options" do
@@ -174,8 +174,8 @@ defmodule AshScylla.DslPaginationConsistencyTest do
       assert ResourceWithTokenPagination.__ash_scylla__(:pagination) == :token
     end
 
-    test "ResourceWithDefaults returns :offset from callback" do
-      assert ResourceWithDefaults.__ash_scylla__(:pagination) == :offset
+    test "ResourceWithDefaults returns :token from callback" do
+      assert ResourceWithDefaults.__ash_scylla__(:pagination) == :token
     end
 
     test "ResourceWithPerActionConsistency returns map from callback" do

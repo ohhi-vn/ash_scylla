@@ -24,7 +24,6 @@ AshScylla provides structured error handling for ScyllaDB-specific errors. It ca
 │  • wrap_xandra_error/1  - Convert errors           │
 │  • format_error/1      - Format for display        │
 │  • retryable?/1        - Check if retryable        │
-│  • retry_delay/1       - Get retry delay           │
 └──────────────────┬───────────────────────────────────┘
                    │
                    ▼
@@ -71,12 +70,11 @@ case AshScylla.DataLayer.run_query(query, resource) do
     Logger.error("Database error: #{AshScylla.Error.format_error(error)}")
 
     # Check if we should retry
-    if AshScylla.Error.retryable?(error) do
-      delay = AshScylla.Error.retry_delay(error)
-      {:retry, delay}
-    else
-      {:error, error}
-    end
+      if AshScylla.Error.retryable?(error) do
+        {:retry, error}
+      else
+        {:error, error}
+      end
 
   {:error, error} ->
     # Handle other errors
@@ -114,24 +112,31 @@ end
 
 ### Retryable Errors
 
-| Error Type | Retryable? | Delay (ms) |
-|------------|-------------|------------|
-| `:overloaded` | ✅ Yes | 1000 |
-| `:connection_timeout` | ✅ Yes | 2000 |
-| `:timeout` | ✅ Yes | 500 |
-| `:connection_closed` | ✅ Yes | 1000 |
-| `:connection_error` | ✅ Yes | 2000 |
-| `:syntax_error` | ❌ No | - |
-| `:schema_error` | ❌ No | - |
-| `:unauthorized` | ❌ No | - |
-| `:already_exists` | ❌ No | - |
-| `:not_found` | ❌ No | - |
+| Error Type | Retryable? |
+|------------|-------------|
+| `:overloaded` | ✅ Yes |
+| `:connection_timeout` | ✅ Yes |
+| `:timeout` | ✅ Yes |
+| `:connection_closed` | ✅ Yes |
+| `:connection_error` | ✅ Yes |
+| `:syntax_error` | ❌ No |
+| `:schema_error` | ❌ No |
+| `:unauthorized` | ❌ No |
+| `:already_exists` | ❌ No |
+| `:not_found` | ❌ No |
 
 ### Implementing Retry with Backoff
 
 ```elixir
 defmodule MyApp.Database do
   @max_retries 3
+  @base_delays %{
+    overloaded: 1000,
+    timeout: 500,
+    connection_timeout: 2000,
+    connection_closed: 1000,
+    connection_error: 2000
+  }
 
   def execute_with_retry(operation, retries \\ 0) do
     case operation.() do
@@ -140,11 +145,9 @@ defmodule MyApp.Database do
 
       {:error, %AshScylla.Error.ScyllaError{} = error} ->
         if AshScylla.Error.retryable?(error) and retries < @max_retries do
-          delay = AshScylla.Error.retry_delay(error)
-          # Add exponential backoff
+          delay = Map.get(@base_delays, error.type, 500)
           sleep_time = delay * :math.pow(2, retries)
           Process.sleep(round(sleep_time))
-
           execute_with_retry(operation, retries + 1)
         else
           {:error, error}
@@ -155,11 +158,6 @@ defmodule MyApp.Database do
     end
   end
 end
-
-# Usage
-result = MyApp.Database.execute_with_retry(fn ->
-  AshScylla.DataLayer.run_query(query, resource)
-end)
 ```
 
 ---
@@ -285,7 +283,7 @@ When `run_aggregate_query` returns an empty result set from ScyllaDB, it gracefu
 {:ok, %{total: 0}} = DataLayer.run_aggregate_query(query, [%{kind: :count, name: :total}], resource)
 ```
 
-### 8. ALLOW FILTERING / Schema Error (Non-Indexed Column Filter)
+### 8. Non-Indexed Column Filter
 
 ```
 %AshScylla.Error.ScyllaError{
@@ -294,24 +292,16 @@ When `run_aggregate_query` returns an empty result set from ScyllaDB, it gracefu
 }
 ```
 
-This error occurs when a query filters on a column that is neither part of the primary key nor has a secondary index. ScyllaDB rejects such queries because they would require a full cluster scan.
+AshScylla rejects such queries at query-plan time when a query filters on a column that is neither part of the primary key nor has a secondary index.
 
 **Solution A (Recommended): Add a secondary index**
 ```elixir
-ash_scylla do
+scylla do
   secondary_index :game_id
 end
 ```
 
 **Solution B: Use a materialized view** for the query pattern.
-
-**Solution C: Enable `allow_filtering`** (NOT recommended for production):
-```elixir
-ash_scylla do
-  allow_filtering true
-end
-```
-When `allow_filtering` is enabled, the `FilterValidator` is skipped and `ALLOW FILTERING` is appended to the generated CQL. A warning is logged at runtime.
 
 ### 9. Consistency Level Not Met
 
@@ -324,7 +314,7 @@ When `allow_filtering` is enabled, the `FilterValidator` is skipped and `ALLOW F
 ```
 
 **Solution:**
-- Lower consistency level: `ash_scylla do consistency :one end`
+- Lower consistency level: `scylla do consistency :one end`
 - Check if replicas are available
 - Verify replication factor in keyspace
 
@@ -353,10 +343,10 @@ mix test test/unit/error/
 ### Test Coverage
 
 - All error types and categorization
-- Retry logic with backoff
+- Retryability classification
 - Error formatting
 - Connection error subclassification
-- Filter validation (ALLOW FILTERING prevention)
+- Filter validation (unindexed column rejection)
 - CQL injection prevention (identifier sanitization)
 
 ---
@@ -381,8 +371,8 @@ end
 ```elixir
 # Retry connection and timeout errors
 if AshScylla.Error.retryable?(error) do
-  delay = AshScylla.Error.retry_delay(error)
-  Process.sleep(delay)
+  # Implement your own delay logic based on error.type
+  Process.sleep(1000)
   # retry
 end
 ```

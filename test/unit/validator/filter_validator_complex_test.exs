@@ -21,7 +21,7 @@ defmodule AshScylla.FilterValidatorComplexTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       table("users")
       keyspace("ash_scylla_test")
       secondary_index(:email)
@@ -52,7 +52,7 @@ defmodule AshScylla.FilterValidatorComplexTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       table("authors")
       keyspace("ash_scylla_test")
       secondary_index(:name)
@@ -77,7 +77,7 @@ defmodule AshScylla.FilterValidatorComplexTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       table("strict_resource")
       keyspace("ash_scylla_test")
     end

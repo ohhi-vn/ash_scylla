@@ -157,8 +157,6 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
     Regex.match?(~r/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, value)
   end
 
-  defp uuid?(_), do: false
-
   # ── Setup ──────────────────────────────────────────────────────────────────
 
   setup_all do
@@ -240,7 +238,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       )
 
       # Read back via DataLayer
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_type_test.roundtrip",
@@ -269,7 +267,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         [id, large_int]
       )
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_type_test.roundtrip",
@@ -297,7 +295,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         [id, 3.14]
       )
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_type_test.roundtrip",
@@ -326,7 +324,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         [id, true]
       )
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_type_test.roundtrip",
@@ -357,7 +355,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         [id, now]
       )
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_type_test.roundtrip",
@@ -387,7 +385,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         [id, today]
       )
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_type_test.roundtrip",
@@ -416,7 +414,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         [id, now_time]
       )
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_type_test.roundtrip",
@@ -443,7 +441,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         [id, ["elixir", "phoenix", "scylla"]]
       )
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_type_test.roundtrip",
@@ -471,7 +469,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         [id, MapSet.new([1, 2, 3])]
       )
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_type_test.roundtrip",
@@ -499,7 +497,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         [id, %{"key1" => "value1", "key2" => "value2"}]
       )
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_type_test.roundtrip",
@@ -528,7 +526,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         [id, binary_data]
       )
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_type_test.roundtrip",
@@ -558,7 +556,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       )
 
       # Read back - the value should be a string from ScyllaDB
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_type_test.roundtrip",
@@ -586,7 +584,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         [id, "limit test"]
       )
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_type_test.roundtrip",
@@ -620,7 +618,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         [id, "test", 42, 3.14, true, ~U[2024-06-15 10:30:00Z], ~D[2024-06-15], ~T[10:30:00]]
       )
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_type_test.roundtrip",

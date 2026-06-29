@@ -235,7 +235,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
   describe "DSL → DataLayer: resource_to_query" do
     test "builds query struct with table from DSL" do
       query = DataLayer.resource_to_query(AshScylla.TestResourceWithIndexes, nil)
-      assert %DataLayer{} = query
+      assert %AshScylla.Query{} = query
       assert query.resource == AshScylla.TestResourceWithIndexes
       assert query.table == "test_users"
     end
@@ -250,7 +250,6 @@ defmodule AshScylla.DataLayer.PipelineTest do
       assert query.filters == []
       assert query.sorts == []
       assert query.limit == nil
-      assert query.offset == nil
       assert query.select == nil
       assert query.tenant == nil
       assert query.context == %{}
@@ -283,14 +282,13 @@ defmodule AshScylla.DataLayer.PipelineTest do
 
   describe "DataLayer → QueryBuilder: CQL generation" do
     test "generates SELECT with WHERE filter" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AshScylla.TestResourceWithIndexes,
         repo: TestRepo,
         table: "users",
         filters: [%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -303,14 +301,13 @@ defmodule AshScylla.DataLayer.PipelineTest do
     end
 
     test "generates SELECT with specific columns" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AshScylla.TestResourceWithIndexes,
         repo: TestRepo,
         table: "users",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: [:id, :name, :email],
         tenant: nil
       }
@@ -320,14 +317,13 @@ defmodule AshScylla.DataLayer.PipelineTest do
     end
 
     test "generates SELECT with LIMIT" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AshScylla.TestResourceWithIndexes,
         repo: TestRepo,
         table: "users",
         filters: [],
         sorts: [],
         limit: 25,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -338,14 +334,13 @@ defmodule AshScylla.DataLayer.PipelineTest do
     end
 
     test "generates SELECT with ORDER BY" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AshScylla.TestResourceWithIndexes,
         repo: TestRepo,
         table: "users",
         filters: [],
         sorts: [%{field: :name, direction: :ASC}],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -356,14 +351,13 @@ defmodule AshScylla.DataLayer.PipelineTest do
     end
 
     test "generates SELECT with combined filter + sort + limit" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AshScylla.TestResourceWithIndexes,
         repo: TestRepo,
         table: "users",
         filters: [%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}],
         sorts: [{:created_at, :desc}],
         limit: 10,
-        offset: nil,
         select: [:id, :name],
         tenant: nil
       }
@@ -379,14 +373,13 @@ defmodule AshScylla.DataLayer.PipelineTest do
       assert {"int", 10} in params
 
       # Test with a filter on a non-indexed column — ORDER BY should be preserved
-      query_no_idx = %DataLayer{
+      query_no_idx = %AshScylla.Query{
         resource: AshScylla.TestResourceWithIndexes,
         repo: TestRepo,
         table: "users",
         filters: [%{operator: :eq, left: %{name: :created_at}, right: %{value: "2024-01-01"}}],
         sorts: [{:created_at, :desc}],
         limit: 10,
-        offset: nil,
         select: [:id, :name],
         tenant: nil
       }
@@ -398,14 +391,13 @@ defmodule AshScylla.DataLayer.PipelineTest do
     test "generates SELECT with IN operator" do
       ids = Enum.map(1..3, fn _ -> uid() end)
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AshScylla.TestResourceWithIndexes,
         repo: TestRepo,
         table: "users",
         filters: [%{operator: :in, left: %{name: :id}, right: %{value: ids}}],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -416,14 +408,13 @@ defmodule AshScylla.DataLayer.PipelineTest do
     end
 
     test "handles empty filters" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: AshScylla.TestResourceWithIndexes,
         repo: TestRepo,
         table: "users",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }

@@ -17,7 +17,6 @@ defmodule AshScylla.DataLayer.IntegrationTest do
     :ok
   end
 
-  alias AshScylla.DataLayer
   alias AshScylla.DataLayer.QueryBuilder
   alias AshScylla.ScyllaContainer, warn: false
 
@@ -194,10 +193,6 @@ defmodule AshScylla.DataLayer.IntegrationTest do
     if uuid?(value), do: {"uuid", value}, else: {"text", value}
   end
 
-  defp encode_param(value) when is_float(value), do: {"double", value}
-  defp encode_param(value) when is_integer(value), do: {"int", value}
-  defp encode_param(value) when is_boolean(value), do: {"boolean", value}
-  defp encode_param(nil), do: {"null", nil}
   defp encode_param(value), do: {"text", to_string(value)}
 
   defp connect_with_retry(host, port, retries \\ 20) do
@@ -313,14 +308,13 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         "active"
       ])
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_dl_test.items",
         filters: [%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: [:id, :name],
         tenant: nil
       }
@@ -348,7 +342,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         "pending"
       ])
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_dl_test.items",
@@ -357,7 +351,6 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         ],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -382,7 +375,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         50
       ])
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_dl_test.items",
@@ -392,7 +385,6 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         ],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -418,14 +410,13 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         100
       ])
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "ash_scylla_dl_test.items",
         filters: [],
         sorts: [value: :desc],
         limit: 10,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -651,13 +642,14 @@ defmodule AshScylla.DataLayer.IntegrationTest do
       end
     end
 
-    test "filter on non-indexed column requires ALLOW FILTERING", %{conn: conn} do
+    test "filter on non-indexed column is rejected by ScyllaDB", %{conn: conn} do
       if is_nil(conn), do: :ok
       id = uid()
       xq(conn, "INSERT INTO ash_scylla_dl_test.items (id, name) VALUES (?, ?)", [id, "No Index"])
 
-      # name column has no secondary index, so filtering on it should fail without ALLOW FILTERING
-      assert_raise RuntimeError, ~r/Query failed|ALLOW FILTERING/, fn ->
+      # name column has no secondary index, so filtering on it should fail
+      # ScyllaDB rejects queries that would require ALLOW FILTERING
+      assert_raise RuntimeError, ~r/Query failed|filtering|ALLOW FILTERING/, fn ->
         xq(conn, "SELECT * FROM ash_scylla_dl_test.items WHERE name = ?", ["No Index"])
       end
     end

@@ -239,7 +239,6 @@ defmodule AshScylla.DataLayer.SchemaMigration do
     query = """
     SELECT * FROM system_schema.indexes
     WHERE keyspace_name = ? AND table_name = ?
-    ALLOW FILTERING
     """
 
     case repo.query(query, [keyspace, table_name], consistency: :quorum) do
@@ -273,7 +272,6 @@ defmodule AshScylla.DataLayer.SchemaMigration do
     query = """
     SELECT * FROM system_schema.views
     WHERE keyspace_name = ? AND base_table_name = ?
-    ALLOW FILTERING
     """
 
     case repo.query(query, [keyspace, table_name], consistency: :quorum) do

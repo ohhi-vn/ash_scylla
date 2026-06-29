@@ -70,7 +70,6 @@ defmodule AshScylla.DataLayer do
   - No complex WHERE clauses on non-primary key columns without secondary indexes
   - Cross-partition aggregates require materialized views
   - CQL ORDER BY only works on clustering columns within a partition
-  - OFFSET is not natively supported in ScyllaDB
   """
 
   @behaviour Ash.DataLayer
@@ -118,51 +117,10 @@ defmodule AshScylla.DataLayer do
                         :action_select
                       ])
 
-  # ============================================================================
-  # Data Layer Query Struct
-  # ============================================================================
+  # Query struct is owned by AshScylla.Query — this module operates on it.
+  alias AshScylla.Query
 
-  defstruct [
-    :resource,
-    :repo,
-    :table,
-    filters: [],
-    sorts: [],
-    limit: nil,
-    offset: nil,
-    select: nil,
-    distinct: nil,
-    tenant: nil,
-    context: %{},
-    atomic: nil,
-    upsert?: false,
-    upsert_fields: [],
-    upsert_identity: nil,
-    keyset: nil,
-    aggregates: [],
-    group_by: nil
-  ]
-
-  @type t :: %__MODULE__{
-          resource: Ash.Resource.t(),
-          repo: module() | nil,
-          table: String.t() | nil,
-          filters: list(),
-          sorts: list(),
-          limit: pos_integer() | nil,
-          offset: pos_integer() | nil,
-          select: list(atom()) | nil,
-          distinct: list(atom()) | nil,
-          tenant: term(),
-          context: map(),
-          atomic: atom() | nil,
-          upsert?: boolean(),
-          upsert_fields: list(atom()),
-          upsert_identity: atom() | nil,
-          keyset: term(),
-          aggregates: list(map()),
-          group_by: list(atom()) | nil
-        }
+  @type t :: Query.t()
 
   # ============================================================================
   # Required Callbacks
@@ -219,9 +177,6 @@ defmodule AshScylla.DataLayer do
 
   @impl Ash.DataLayer
   def can?(_resource_or_dsl, :lock), do: false
-
-  @impl Ash.DataLayer
-  def can?(_resource_or_dsl, :offset), do: false
 
   @impl Ash.DataLayer
   def can?(_resource_or_dsl, :nested_expressions), do: true
@@ -294,7 +249,7 @@ defmodule AshScylla.DataLayer do
   def resource_to_query(resource, _domain) do
     table = source(resource)
 
-    %__MODULE__{
+    %Query{
       resource: resource,
       repo: repo(resource),
       table: table,
@@ -381,19 +336,11 @@ defmodule AshScylla.DataLayer do
   @impl Ash.DataLayer
   @spec run_query(t(), Ash.Resource.t()) :: {:ok, [Ash.Resource.t()]} | {:error, term()}
   def run_query(data_layer_query, resource) do
-    %__MODULE__{repo: repo, table: table, tenant: tenant, filters: filters, sorts: sorts} =
+    %Query{repo: repo, table: table, tenant: tenant, filters: filters, sorts: sorts} =
       data_layer_query
 
     # Validate filters to prevent ALLOW FILTERING anti-pattern
-    # Skip validation when allow_filtering is explicitly enabled on the resource
-    if Dsl.allow_filtering(resource) do
-      Logger.warning(
-        "AshScylla: allow_filtering is enabled for #{table} — skipping filter validation. " <>
-          "This can cause full table scans and performance issues."
-      )
-    else
-      FilterValidator.validate_filters(resource, filters)
-    end
+    FilterValidator.validate_filters(resource, filters)
 
     # Build the optimized query with filters, sorts, limit, offset
     {query, params} = QueryBuilder.build_optimized_query(data_layer_query)
@@ -416,23 +363,23 @@ defmodule AshScylla.DataLayer do
           rows = content || []
           records = Enum.map(rows, &to_ash_record(&1, resource, columns))
           records = maybe_apply_in_memory_sort(records, sorts, order_dropped?)
-          %__MODULE__{context: context} = data_layer_query
+          %Query{context: context} = data_layer_query
           {:ok, apply_calculations(records, context)}
 
         {:ok, %Xandra.Page{content: content}} ->
           rows = content || []
           records = Enum.map(rows, &to_ash_record(&1, resource))
           records = maybe_apply_in_memory_sort(records, sorts, order_dropped?)
-          %__MODULE__{context: context} = data_layer_query
+          %Query{context: context} = data_layer_query
           {:ok, apply_calculations(records, context)}
 
         error ->
-          handle_query_result(error)
+          handle_result(error)
       end
     end)
   rescue
     e in [AshScylla.Error] -> reraise(e, __STACKTRACE__)
-    e -> handle_query_result({:error, e})
+    e -> handle_result({:error, e})
   end
 
   # When ORDER BY is dropped due to secondary index scan, apply sorting in-memory
@@ -456,7 +403,7 @@ defmodule AshScylla.DataLayer do
   @impl Ash.DataLayer
   @spec filter(t(), term(), Ash.Resource.t()) :: {:ok, t()}
   def filter(data_layer_query, filter, _resource) do
-    %__MODULE__{filters: filters} = data_layer_query
+    %Query{filters: filters} = data_layer_query
     filter = maybe_rewrite_or_to_in(filter)
     {:ok, %{data_layer_query | filters: [filter | filters]}}
   end
@@ -468,7 +415,7 @@ defmodule AshScylla.DataLayer do
   @impl Ash.DataLayer
   @spec sort(t(), term(), Ash.Resource.t()) :: {:ok, t()}
   def sort(data_layer_query, sort, _resource) do
-    %__MODULE__{sorts: sorts} = data_layer_query
+    %Query{sorts: sorts} = data_layer_query
 
     {:ok, %{data_layer_query | sorts: sort ++ sorts}}
   end
@@ -483,11 +430,7 @@ defmodule AshScylla.DataLayer do
     {:ok, %{data_layer_query | limit: limit}}
   end
 
-  @impl Ash.DataLayer
-  @spec offset(t(), pos_integer(), Ash.Resource.t()) :: {:ok, t()}
-  def offset(_data_layer_query, _offset, _resource) do
-    raise "OFFSET is not supported in ScyllaDB/Cassandra. Use keyset pagination instead."
-  end
+  # offset callback removed — CQL doesn't support OFFSET
 
   # ============================================================================
   # Optional Callbacks - Select
@@ -537,7 +480,7 @@ defmodule AshScylla.DataLayer do
   @impl Ash.DataLayer
   @spec set_context(Ash.Resource.t(), t(), map()) :: {:ok, t()}
   def set_context(_resource, data_layer_query, context) do
-    %__MODULE__{context: existing} = data_layer_query
+    %Query{context: existing} = data_layer_query
     merged = Map.merge(existing || %{}, context)
     {:ok, %{data_layer_query | context: merged}}
   end
@@ -610,7 +553,7 @@ defmodule AshScylla.DataLayer do
     case result do
       :ok when return_records? -> {:ok, stream_bulk_records(changesets, resource)}
       :ok -> {:ok, []}
-      {:error, error} -> handle_scylla_result({:error, error})
+      {:error, error} -> handle_result({:error, error})
     end
   end
 
@@ -716,7 +659,7 @@ defmodule AshScylla.DataLayer do
 
     {set_clauses, set_values} = build_set_clauses(attrs, resource)
 
-    %__MODULE__{filters: filters} = data_layer_query
+    %Query{filters: filters} = data_layer_query
 
     {where_clause, where_params} =
       case filters do
@@ -751,7 +694,7 @@ defmodule AshScylla.DataLayer do
     opts = build_opts(resource)
     sanitized_table = qualified_table(resource)
 
-    %__MODULE__{filters: filters} = data_layer_query
+    %Query{filters: filters} = data_layer_query
 
     {where_clause, where_params} =
       case filters do
@@ -782,7 +725,7 @@ defmodule AshScylla.DataLayer do
 
     if all_pk? do
       # Store distinct columns in the query struct via the select field
-      %__MODULE__{select: existing_select} = data_layer_query
+      %Query{select: existing_select} = data_layer_query
       select = ((existing_select || []) ++ distinct_columns) |> Enum.uniq()
       {:ok, %{data_layer_query | select: select}}
     else
@@ -823,7 +766,7 @@ defmodule AshScylla.DataLayer do
           {:ok, t()} | {:error, term()}
   def add_aggregate(data_layer_query, aggregate, _resource) do
     # Store aggregate info in the query struct for run_aggregate_query
-    %__MODULE__{context: context} = data_layer_query
+    %Query{context: context} = data_layer_query
     aggregates = Map.get(context, :aggregates, [])
     {:ok, %{data_layer_query | context: Map.put(context, :aggregates, [aggregate | aggregates])}}
   end
@@ -832,7 +775,7 @@ defmodule AshScylla.DataLayer do
   @spec add_aggregates(t(), [Ash.Query.Aggregate.t()], Ash.Resource.t()) ::
           {:ok, t()} | {:error, term()}
   def add_aggregates(data_layer_query, aggregates, _resource) do
-    %__MODULE__{context: context} = data_layer_query
+    %Query{context: context} = data_layer_query
     existing = Map.get(context, :aggregates, [])
     {:ok, %{data_layer_query | context: Map.put(context, :aggregates, aggregates ++ existing)}}
   end
@@ -844,7 +787,7 @@ defmodule AshScylla.DataLayer do
     repo = repo(resource)
     opts = build_opts(resource)
     sanitized_table = qualified_table(resource)
-    %__MODULE__{filters: filters} = data_layer_query
+    %Query{filters: filters} = data_layer_query
 
     {where_clause, where_params} =
       case filters do
@@ -883,7 +826,7 @@ defmodule AshScylla.DataLayer do
       end)
 
     case results do
-      {:error, error} -> handle_scylla_result({:error, error})
+      {:error, error} -> handle_result({:error, error})
       map when is_map(map) -> {:ok, map}
     end
   end
@@ -893,7 +836,7 @@ defmodule AshScylla.DataLayer do
           {:ok, t()} | {:error, term()}
   def calculate(data_layer_query, calculation, _resource) do
     # Expression calculations are done in Elixir post-processing
-    %__MODULE__{context: context} = data_layer_query
+    %Query{context: context} = data_layer_query
     calculations = Map.get(context, :calculations, [])
 
     {:ok,
@@ -906,17 +849,12 @@ defmodule AshScylla.DataLayer do
 
   @spec build_aggregate_query(Ash.Query.Aggregate.t(), String.t(), String.t(), module(), list()) ::
           {String.t(), list()} | {:error, term()}
-  defp build_aggregate_query(%{kind: :count}, table, where_clause, resource, filters) do
-    allow_filtering? =
-      Dsl.allow_filtering(resource) and
-        QueryBuilder.secondary_index_scan?(resource, filters)
-
+  defp build_aggregate_query(%{kind: :count}, table, where_clause, _resource, _filters) do
     query =
       IO.iodata_to_binary([
         "SELECT COUNT(*) FROM ",
         table,
-        if(where_clause != "", do: [" WHERE ", where_clause], else: []),
-        if(allow_filtering?, do: " ALLOW FILTERING", else: "")
+        if(where_clause != "", do: [" WHERE ", where_clause], else: [])
       ])
 
     {query, []}
@@ -1020,7 +958,7 @@ defmodule AshScylla.DataLayer do
         {:ok, to_ash_record(attrs, resource)}
 
       {:error, error} ->
-        handle_scylla_result({:error, error})
+        handle_result({:error, error})
     end
   end
 
@@ -1118,11 +1056,11 @@ defmodule AshScylla.DataLayer do
             raise """
             No repo configured for #{inspect(resource)}.
 
-            To fix this, add a repo to your resource's ash_scylla DSL block:
+            To fix this, add a repo to your resource's scylla DSL block:
 
                 import AshScylla.DataLayer.Dsl
 
-                ash_scylla do
+                scylla do
                   repo MyApp.Repo
                   table "my_table"
                 end
@@ -1231,7 +1169,7 @@ defmodule AshScylla.DataLayer do
          {:ok, record} <- fetch_by_primary_key(pk, resource, repo) do
       {:ok, to_ash_record(record, resource)}
     end
-    |> handle_scylla_result()
+    |> handle_result()
   end
 
   @spec do_update(map(), term(), module(), module()) :: {:ok, term()} | {:error, term()}
@@ -1247,7 +1185,7 @@ defmodule AshScylla.DataLayer do
 
       case fetch_by_primary_key(pk, resource, repo) do
         {:ok, record} -> {:ok, to_ash_record(record, resource)}
-        {:error, _} = error -> handle_scylla_result(error)
+        {:error, _} = error -> handle_result(error)
       end
     else
       do_update_non_empty(attrs, changeset, resource, repo)
@@ -1291,11 +1229,11 @@ defmodule AshScylla.DataLayer do
       {:ok, _} ->
         case fetch_by_pk(changeset, resource, repo) do
           {:ok, record} -> {:ok, to_ash_record(record, resource)}
-          {:error, _} = error -> handle_scylla_result(error)
+          {:error, _} = error -> handle_result(error)
         end
 
       {:error, error} ->
-        handle_scylla_result({:error, error})
+        handle_result({:error, error})
     end
   end
 
@@ -1332,7 +1270,7 @@ defmodule AshScylla.DataLayer do
         :ok
 
       {:error, error} ->
-        handle_scylla_result({:error, error})
+        handle_result({:error, error})
     end
   end
 
@@ -1379,7 +1317,7 @@ defmodule AshScylla.DataLayer do
         not_found_error(sanitized_table, pk)
 
       {:error, error} ->
-        handle_scylla_result({:error, error})
+        handle_result({:error, error})
     end
   end
 
@@ -1580,27 +1518,24 @@ defmodule AshScylla.DataLayer do
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
 
   # Normalize ScyllaDB/Xandra errors into AshScylla errors.
-  @spec handle_scylla_result({:ok, term()} | :ok | {:error, term()}) ::
+  @spec handle_result({:ok, term()} | :ok | {:error, term()}) ::
           {:ok, term()} | :ok | {:error, term()}
-  defp handle_scylla_result({:ok, _} = ok), do: ok
-  defp handle_scylla_result(:ok), do: :ok
+  defp handle_result({:ok, _} = ok), do: ok
+  defp handle_result(:ok), do: :ok
 
-  @spec handle_scylla_result({:error, Xandra.Error.t()}) :: {:error, term()}
-  defp handle_scylla_result({:error, %Xandra.Error{} = error}) do
+  defp handle_result({:error, %Xandra.Error{} = error}) do
     Logger.warning("Xandra error: #{Exception.message(error)}")
     {:error, AshScylla.Error.wrap_xandra_error(error)}
   end
 
-  @spec handle_scylla_result({:error, Xandra.ConnectionError.t()}) :: {:error, term()}
-  defp handle_scylla_result({:error, %Xandra.ConnectionError{} = error}) do
+  defp handle_result({:error, %Xandra.ConnectionError{} = error}) do
     Logger.warning("Xandra connection error: #{Exception.message(error)}")
     {:error, AshScylla.Error.wrap_xandra_error(error)}
   end
 
-  defp handle_scylla_result({:error, %AshScylla.Error.ScyllaError{}} = error), do: error
+  defp handle_result({:error, %AshScylla.Error.ScyllaError{}} = error), do: error
 
-  @spec handle_scylla_result({:error, term()}) :: {:error, term()}
-  defp handle_scylla_result({:error, error}) do
+  defp handle_result({:error, error}) do
     Logger.error("Unexpected error: #{inspect(error)}")
     {:error, AshScylla.Error.wrap_xandra_error(error)}
   end
@@ -1608,29 +1543,6 @@ defmodule AshScylla.DataLayer do
   # ---------------------------------------------------------------------------
   # SQL Construction Helpers
   # ---------------------------------------------------------------------------
-
-  @spec handle_query_result({:ok, term()} | {:error, term()}) :: {:ok, term()} | {:error, term()}
-  defp handle_query_result({:ok, _} = ok), do: ok
-
-  defp handle_query_result({:error, %Xandra.Error{} = error}) do
-    Logger.warning("Xandra error: #{Exception.message(error)}")
-    {:error, AshScylla.Error.wrap_xandra_error(error)}
-  end
-
-  defp handle_query_result({:error, %Xandra.ConnectionError{} = error}) do
-    Logger.warning("Xandra connection error: #{Exception.message(error)}")
-    {:error, AshScylla.Error.wrap_xandra_error(error)}
-  end
-
-  defp handle_query_result({:error, error}) when is_exception(error) do
-    Logger.error("Unexpected error in run_query: #{Exception.message(error)}")
-    {:error, AshScylla.Error.wrap_xandra_error(error)}
-  end
-
-  defp handle_query_result({:error, error}) do
-    Logger.error("Unexpected error: #{inspect(error)}")
-    {:error, AshScylla.Error.wrap_xandra_error(error)}
-  end
 
   @spec build_field_value_pairs(map(), module()) :: {[String.t()], [term()]}
   defp build_field_value_pairs(attrs, resource) do
@@ -1972,7 +1884,10 @@ defmodule AshScylla.DataLayer do
             end
           end)
 
-        save_codegen_meta(meta_file, merge_codegen_meta(previous_meta, changed_resources, current_meta))
+        save_codegen_meta(
+          meta_file,
+          merge_codegen_meta(previous_meta, changed_resources, current_meta)
+        )
 
         {:ok, generated_files}
       end

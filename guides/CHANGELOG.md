@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING**: Renamed DSL section from `ash_scylla do` to `scylla do` — matches other Ash data layers' naming convention
+- **BREAKING**: Removed `allow_filtering` DSL option — `ALLOW FILTERING` is never appended to queries; filter on unindexed columns is rejected at query-plan time with actionable error
+- **BREAKING**: Removed `offset/3` callback and `offset` field from query struct — CQL does not support OFFSET; use keyset pagination via `paging_state` instead
+- **BREAKING**: Default pagination mode changed from `:offset` to `:token`
+- **BREAKING**: Removed `AshScylla.Error.retry_delay/1` — callers should implement their own retry policy using `retryable?/1`
+- Moved query struct from `AshScylla.DataLayer` to new `AshScylla.Query` module — single ownership of query data
+- Created `AshScylla.DataLayer.SecondaryIndex` struct — replaces ad-hoc maps from `parse_secondary_index/1`
+- Added cursor encoding/decoding helpers to `AshScylla.DataLayer.Pagination`: `encode_cursor/1`, `decode_cursor/1`, `page_opts/2`, `extract_paging_state/1`
+- Consolidated `handle_scylla_result/1` and `handle_query_result/1` into single `handle_result/1` in DataLayer
+- Removed `ALLOW FILTERING` from all generated CQL including aggregate queries and system_schema queries
+- Removed `needs_allow_filtering?/2` from QueryBuilder
+- Updated `AshScylla.DataLayer.QueryOptimizer` to use `AshScylla.Query` and removed `allow_filtering` option
+- Updated all documentation, guides, and error messages to reference `scylla` block instead of `ash_scylla`
+
+### Added
+- `AshScylla.Query` module — owns the query struct, provides `new/1` and `new/2`
+- `AshScylla.DataLayer.SecondaryIndex` module — struct with `parse/1`, `default_name/2`, `effective_name/3`
+- `AshScylla.DataLayer.Pagination.encode_cursor/1` — base64url encoding of paging_state
+- `AshScylla.DataLayer.Pagination.decode_cursor/1` — base64url decoding of cursor
+- `AshScylla.DataLayer.Pagination.page_opts/2` — build query options from paging_state
+- `AshScylla.DataLayer.Pagination.extract_paging_state/1` — extract paging_state from result
+- Security test suite (130 tests): filter validation, query builder injection prevention, pagination safety, error handling safety, DataLayer security, DSL security, migration security
+
 ## [0.13.1]
 
 ### Added

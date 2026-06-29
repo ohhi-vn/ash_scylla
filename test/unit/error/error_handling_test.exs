@@ -85,15 +85,6 @@ defmodule AshScylla.ErrorTest do
     end
   end
 
-  describe "retry_delay/1" do
-    test "returns appropriate delays based on error type" do
-      assert Error.retry_delay(%ScyllaError{type: :overloaded}) == 1000
-      assert Error.retry_delay(%ScyllaError{type: :timeout}) == 500
-      assert Error.retry_delay(%ScyllaError{type: :connection_timeout}) == 2000
-      assert Error.retry_delay(%ScyllaError{type: :syntax_error}) == 500
-    end
-  end
-
   describe "format_error/1" do
     test "formats ScyllaError with suggestion" do
       error = %ScyllaError{

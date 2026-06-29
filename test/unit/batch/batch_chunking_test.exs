@@ -100,7 +100,7 @@ defmodule AshScylla.DataLayer.BatchChunkingTest do
       ChunkTrackingRepo.clear_calls()
 
       # Use same partition key so all statements group together
-      statements = for i <- 1..100, do: {"INSERT INTO t (id) VALUES (?)", ["same_pk"]}
+      statements = for _i <- 1..100, do: {"INSERT INTO t (id) VALUES (?)", ["same_pk"]}
 
       assert {:ok, _results} =
                Batch.batch_insert_async(ChunkTrackingRepo, statements, max_concurrency: 1)
@@ -114,7 +114,7 @@ defmodule AshScylla.DataLayer.BatchChunkingTest do
       ChunkTrackingRepo.clear_calls()
 
       # Use same partition key so grouping doesn't split them
-      statements = for i <- 1..50, do: {"INSERT INTO t (id) VALUES (?)", ["same_pk"]}
+      statements = for _i <- 1..50, do: {"INSERT INTO t (id) VALUES (?)", ["same_pk"]}
 
       assert {:ok, _results} =
                Batch.batch_insert_async(ChunkTrackingRepo, statements,

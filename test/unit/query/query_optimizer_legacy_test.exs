@@ -17,7 +17,7 @@ defmodule AshScylla.QueryOptimizerLegacyFormatTest do
 
   describe "estimate_cost/1 — cost estimation accuracy" do
     test "returns :low for partition key equality" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         resource: TestResource,
         filters: [
           %{operator: :eq, left: %{name: :id}, right: %{value: "abc-123"}}
@@ -30,7 +30,7 @@ defmodule AshScylla.QueryOptimizerLegacyFormatTest do
     end
 
     test "returns :full_scan for no filters" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         resource: TestResource,
         filters: [],
         limit: nil,
@@ -41,7 +41,7 @@ defmodule AshScylla.QueryOptimizerLegacyFormatTest do
     end
 
     test "returns :low for partition key equality only" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         resource: TestResource,
         filters: [
           %{operator: :eq, left: %{name: :id}, right: %{value: "abc-123"}}
@@ -57,7 +57,7 @@ defmodule AshScylla.QueryOptimizerLegacyFormatTest do
     test "returns :low for single equality filter (partition key assumed)" do
       # The estimate_cost function checks for partition key equality first
       # With a single eq filter, it assumes partition key lookup
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         resource: TestResource,
         filters: [
           %{operator: :eq, left: %{name: :unknown_col}, right: %{value: "test@example.com"}}
@@ -72,7 +72,7 @@ defmodule AshScylla.QueryOptimizerLegacyFormatTest do
     end
 
     test "returns :medium for range query (clustering column)" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         resource: TestResource,
         filters: [
           %{operator: :gt, left: %{name: :unknown_col}, right: %{value: "test@example.com"}},
@@ -87,7 +87,7 @@ defmodule AshScylla.QueryOptimizerLegacyFormatTest do
     end
 
     test "returns :medium for equality filter with sorts" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         resource: TestResource,
         filters: [
           %{operator: :eq, left: %{name: :col_a}, right: %{value: "a"}},
@@ -102,7 +102,7 @@ defmodule AshScylla.QueryOptimizerLegacyFormatTest do
     end
 
     test "returns :low for single equality filter with small limit" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         resource: TestResource,
         filters: [
           %{operator: :eq, left: %{name: :col_a}, right: %{value: "a"}}
@@ -116,7 +116,7 @@ defmodule AshScylla.QueryOptimizerLegacyFormatTest do
     end
 
     test "returns :medium for clustering column range query" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         resource: TestResource,
         filters: [
           %{operator: :gt, left: %{name: :id}, right: %{value: "abc-123"}}
@@ -131,7 +131,7 @@ defmodule AshScylla.QueryOptimizerLegacyFormatTest do
 
   describe "analyze/1 — query optimization suggestions" do
     test "suggests adding partition key filter for full table scan" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         resource: TestResource,
         filters: [],
         limit: nil,
@@ -144,7 +144,7 @@ defmodule AshScylla.QueryOptimizerLegacyFormatTest do
     end
 
     test "suggests adding LIMIT when not present" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         resource: TestResource,
         filters: [
           %{operator: :eq, left: %{name: :id}, right: %{value: "abc-123"}}
@@ -159,7 +159,7 @@ defmodule AshScylla.QueryOptimizerLegacyFormatTest do
     end
 
     test "suggests selecting specific columns when using SELECT *" do
-      query = %AshScylla.DataLayer{
+      query = %AshScylla.Query{
         resource: TestResource,
         filters: [
           %{operator: :eq, left: %{name: :id}, right: %{value: "abc-123"}}

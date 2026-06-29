@@ -62,7 +62,7 @@ defmodule AshScylla.Extension do
     if resources == [] do
       Mix.shell().info("No AshScylla resources found for codegen.")
     else
-      {repo_name, migrations_path} =
+      {_repo_name, migrations_path} =
         try do
           repo = AshScylla.MixHelpers.find_default_repo()
           repo_name = repo |> Module.split() |> List.last() |> Macro.underscore()

@@ -27,7 +27,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("valid_table")
           end
 
@@ -51,14 +51,13 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("full_config_table")
             keyspace("test_ks")
             consistency(:quorum)
             ttl(3600)
             pagination(:token)
             lwt(true)
-            allow_filtering(false)
           end
 
           attributes do
@@ -82,7 +81,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("indexed_table")
             secondary_index(:email)
             secondary_index([:name, :age])
@@ -111,7 +110,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("mv_table")
             materialized_view({:by_email, primary_key: [:email, :id]})
           end
@@ -137,7 +136,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("consistency_table")
             per_action_consistency(read: :one, create: :quorum, update: :local_quorum)
           end
@@ -155,10 +154,10 @@ defmodule AshScylla.DslVerifierTest do
   end
 
   # ---------------------------------------------------------------------------
-  # Edge case: DSL with only Ash.Resource (no ash_scylla block)
+  # Edge case: DSL with only Ash.Resource (no scylla block)
   # ---------------------------------------------------------------------------
 
-  describe "resource without ash_scylla block" do
+  describe "resource without scylla block" do
     test "compiles without verifier errors" do
       refute_dsl_errors do
         defmodule Elixir.BareAshResource do
@@ -193,7 +192,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("mt_table")
             multitenancy(strategy: :context, attribute: :tenant_id)
           end
@@ -225,7 +224,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("identity_table")
             identity(:unique_email, [:email])
           end
@@ -257,7 +256,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("agg_table")
             aggregate(:count_users, :count, :id)
           end
@@ -288,7 +287,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("bf_table")
             base_filter(is_active: true)
           end
@@ -320,7 +319,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("prep_table")
             preparation(AshScylla.Preparations.DefaultPreparation)
           end
@@ -351,7 +350,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("val_table")
             validation(AshScylla.Validations.DefaultValidation)
           end
@@ -382,7 +381,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("chg_table")
             change(AshScylla.Changes.DefaultChange)
           end
@@ -413,7 +412,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("ci_table")
             code_interface(definitions: [create: :default, read: :default])
           end
@@ -444,7 +443,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("ac_table")
             action(:create, :custom_create, [])
           end
@@ -475,7 +474,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("dc_table")
             default_context(%{source: "test"})
           end
@@ -506,7 +505,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("desc_table")
             description("A test resource for verifier testing")
           end
@@ -537,7 +536,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("pipe_table")
             pipeline(AshScylla.Pipelines.DefaultPipeline)
           end
@@ -555,10 +554,10 @@ defmodule AshScylla.DslVerifierTest do
   end
 
   # ---------------------------------------------------------------------------
-  # Edge case: empty ash_scylla block
+  # Edge case: empty scylla block
   # ---------------------------------------------------------------------------
 
-  describe "empty ash_scylla block" do
+  describe "empty scylla block" do
     test "compiles cleanly with empty block" do
       refute_dsl_errors do
         defmodule Elixir.EmptyBlockResource do
@@ -568,7 +567,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
           end
 
           attributes do
@@ -597,7 +596,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("multi_a_table")
           end
 
@@ -617,7 +616,7 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("multi_b_table")
             secondary_index(:email)
           end
@@ -649,14 +648,13 @@ defmodule AshScylla.DslVerifierTest do
 
           import AshScylla.DataLayer.Dsl
 
-          ash_scylla do
+          scylla do
             table("all_opts_table")
             keyspace("all_opts_ks")
             consistency(:quorum)
             ttl(7200)
             pagination(:token)
             lwt(true)
-            allow_filtering(true)
             secondary_index(:email)
             materialized_view({:by_status, primary_key: [:status, :id]})
             identity(:unique_email, [:email])

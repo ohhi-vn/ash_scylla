@@ -15,14 +15,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
   describe "build_optimized_query/1" do
     test "simple SELECT * with no filters, sorts, or limit" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "users",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -33,14 +32,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     end
 
     test "SELECT with specific columns" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "users",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: [:name, :email],
         tenant: nil
       }
@@ -52,14 +50,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     test "SELECT with single equality filter" do
       filter = %{operator: :eq, left: %{name: "status"}, right: %{value: "active"}}
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "users",
         filters: [filter],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -73,14 +70,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
       f1 = %{operator: :eq, left: %{name: "status"}, right: %{value: "active"}}
       f2 = %{operator: :gt, left: %{name: "age"}, right: %{value: 18}}
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "users",
         filters: [f1, f2],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -91,14 +87,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     end
 
     test "SELECT with ORDER BY" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "users",
         filters: [],
         sorts: [{:name, :asc}],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -108,14 +103,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     end
 
     test "SELECT with LIMIT" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "users",
         filters: [],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -128,14 +122,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     test "combined: filter + sort + limit" do
       filter = %{operator: :eq, left: %{name: "status"}, right: %{value: "active"}}
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "users",
         filters: [filter],
         sorts: [{:created_at, :desc}],
         limit: 25,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -151,14 +144,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     test "IN operator filter" do
       filter = %{operator: :in, left: %{name: "status"}, right: %{value: ["active", "pending"]}}
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "users",
         filters: [filter],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -175,14 +167,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         right: %{operator: :gt, left: %{name: "age"}, right: %{value: 18}}
       }
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "users",
         filters: [filter],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: nil,
         tenant: nil
       }
@@ -208,14 +199,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         right: %{operator: :lte, left: %{name: "started_at"}, right: %{value: "2026-12-31"}}
       }
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "game_members",
         filters: [outer],
         sorts: [{:started_at, :desc}],
         limit: nil,
-        offset: nil,
         select: [:id, :started_at, :user_id, :game_id, :is_admin],
         tenant: nil
       }
@@ -248,14 +238,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     test "ORDER BY is dropped when scanning via secondary index" do
       filter = %{operator: :eq, left: %{name: :user_id}, right: %{value: "u1"}}
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: IndexedMember,
         repo: nil,
         table: "game_members",
         filters: [filter],
         sorts: [{:started_at, :desc}],
         limit: nil,
-        offset: nil,
         select: [:id, :started_at, :user_id, :game_id],
         tenant: nil
       }
@@ -274,14 +263,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     test "ORDER BY is preserved when querying via primary key (not secondary index)" do
       filter = %{operator: :eq, left: %{name: :game_id}, right: %{value: "g1"}}
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: IndexedMember,
         repo: nil,
         table: "game_members",
         filters: [filter],
         sorts: [{:started_at, :desc}],
         limit: nil,
-        offset: nil,
         select: [:id, :started_at, :user_id, :game_id],
         tenant: nil
       }
@@ -293,14 +281,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     test "ORDER BY is dropped when filter uses Ash.Query.Ref on secondary index column" do
       filter = %Ash.Query.Ref{attribute: %{name: :user_id}}
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: IndexedMember,
         repo: nil,
         table: "game_members",
         filters: [filter],
         sorts: [{:started_at, :desc}],
         limit: nil,
-        offset: nil,
         select: [:id, :started_at, :user_id, :game_id],
         tenant: nil
       }
@@ -314,14 +301,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     test "ORDER BY is dropped when filter uses Ash.Query.Ref with atom attribute on indexed column" do
       filter = %Ash.Query.Ref{attribute: :status}
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: IndexedMember,
         repo: nil,
         table: "game_members",
         filters: [filter],
         sorts: [{:started_at, :desc}],
         limit: nil,
-        offset: nil,
         select: [:id, :started_at, :user_id, :game_id],
         tenant: nil
       }
@@ -335,14 +321,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     test "ORDER BY is preserved when Ash.Query.Ref points to non-indexed column" do
       filter = %Ash.Query.Ref{attribute: %{name: :game_id}}
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: IndexedMember,
         repo: nil,
         table: "game_members",
         filters: [filter],
         sorts: [{:started_at, :desc}],
         limit: nil,
-        offset: nil,
         select: [:id, :started_at, :user_id, :game_id],
         tenant: nil
       }
@@ -356,14 +341,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     test "ORDER BY is preserved when resource has NO secondary indexes" do
       filter = %{operator: :eq, left: %{name: :user_id}, right: %{value: "u1"}}
 
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: NonIndexedMember,
         repo: nil,
         table: "game_members",
         filters: [filter],
         sorts: [{:started_at, :desc}],
         limit: nil,
-        offset: nil,
         select: [:id, :started_at, :user_id, :game_id],
         tenant: nil
       }
@@ -375,203 +359,33 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     end
   end
 
-  describe "build_optimized_query/1 with allow_filtering" do
-    defmodule AllowFilteringResource do
-      @moduledoc false
-      def __ash_scylla__(:secondary_indexes), do: [%{columns: [:email, :status]}]
-      def __ash_scylla__(:allow_filtering), do: true
-    end
-
-    defmodule DisallowFilteringResource do
-      @moduledoc false
-      def __ash_scylla__(:secondary_indexes), do: [%{columns: [:email, :status]}]
-      def __ash_scylla__(:allow_filtering), do: false
-    end
-
-    defmodule DefaultFilteringResource do
+  describe "build_optimized_query/1 with multiple indexed columns" do
+    defmodule ScanTestResource do
       @moduledoc false
       def __ash_scylla__(:secondary_indexes), do: [%{columns: [:email, :status]}]
     end
 
-    test "appends ALLOW FILTERING when enabled and secondary index scan detected" do
-      filter = %{operator: :eq, left: %{name: :email}, right: %{value: "a@b.com"}}
-
-      query = %DataLayer{
-        resource: AllowFilteringResource,
-        repo: nil,
-        table: "users",
-        filters: [filter],
-        sorts: [],
-        limit: nil,
-        offset: nil,
-        select: [:id, :email],
-        tenant: nil
-      }
-
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
-
-      assert String.contains?(cql, "ALLOW FILTERING"),
-             "ALLOW FILTERING must be present when enabled and secondary index scan detected"
-
-      assert cql ==
-               "SELECT id, email FROM users WHERE email = ? ALLOW FILTERING"
-    end
-
-    test "does NOT append ALLOW FILTERING when disabled even with secondary index scan" do
-      filter = %{operator: :eq, left: %{name: :email}, right: %{value: "a@b.com"}}
-
-      query = %DataLayer{
-        resource: DisallowFilteringResource,
-        repo: nil,
-        table: "users",
-        filters: [filter],
-        sorts: [],
-        limit: nil,
-        offset: nil,
-        select: [:id, :email],
-        tenant: nil
-      }
-
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
-
-      refute String.contains?(cql, "ALLOW FILTERING"),
-             "ALLOW FILTERING must NOT be present when disabled"
-
-      assert cql == "SELECT id, email FROM users WHERE email = ?"
-    end
-
-    test "does NOT append ALLOW FILTERING when not set (default false) with secondary index scan" do
-      filter = %{operator: :eq, left: %{name: :email}, right: %{value: "a@b.com"}}
-
-      query = %DataLayer{
-        resource: DefaultFilteringResource,
-        repo: nil,
-        table: "users",
-        filters: [filter],
-        sorts: [],
-        limit: nil,
-        offset: nil,
-        select: [:id, :email],
-        tenant: nil
-      }
-
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
-
-      refute String.contains?(cql, "ALLOW FILTERING"),
-             "ALLOW FILTERING must NOT be present when not configured (default false)"
-    end
-
-    test "does NOT append ALLOW FILTERING when enabled but no secondary index scan" do
-      filter = %{operator: :eq, left: %{name: :id}, right: %{value: "uuid-123"}}
-
-      query = %DataLayer{
-        resource: AllowFilteringResource,
-        repo: nil,
-        table: "users",
-        filters: [filter],
-        sorts: [],
-        limit: nil,
-        offset: nil,
-        select: [:id, :email],
-        tenant: nil
-      }
-
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
-
-      refute String.contains?(cql, "ALLOW FILTERING"),
-             "ALLOW FILTERING must NOT be present when filter is not on indexed column"
-    end
-
-    test "appends ALLOW FILTERING with multiple indexed filter columns" do
+    test "builds correct query with multiple indexed filter columns" do
       f1 = %{operator: :eq, left: %{name: :email}, right: %{value: "a@b.com"}}
       f2 = %{operator: :eq, left: %{name: :status}, right: %{value: "active"}}
 
-      query = %DataLayer{
-        resource: AllowFilteringResource,
+      query = %AshScylla.Query{
+        resource: ScanTestResource,
         repo: nil,
         table: "users",
         filters: [f1, f2],
         sorts: [],
         limit: 10,
-        offset: nil,
         select: [:id, :email, :status],
         tenant: nil
       }
 
       {cql, params} = QueryBuilder.build_optimized_query(query)
 
-      assert String.contains?(cql, "ALLOW FILTERING"),
-             "ALLOW FILTERING must be present for multi-column secondary index scan"
-
       assert String.contains?(cql, "LIMIT ?")
       assert "a@b.com" in params
       assert "active" in params
       assert {"int", 10} in params
-    end
-
-    test "appends ALLOW FILTERING with Ash.Query.Ref filter on indexed column" do
-      filter = %Ash.Query.Ref{attribute: %{name: :email}}
-
-      query = %DataLayer{
-        resource: AllowFilteringResource,
-        repo: nil,
-        table: "users",
-        filters: [filter],
-        sorts: [],
-        limit: nil,
-        offset: nil,
-        select: [:id, :email],
-        tenant: nil
-      }
-
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
-
-      assert String.contains?(cql, "ALLOW FILTERING"),
-             "ALLOW FILTERING must be present when Ash.Query.Ref filter targets indexed column"
-    end
-
-    test "does NOT append ALLOW FILTERING when resource is nil" do
-      filter = %{operator: :eq, left: %{name: :email}, right: %{value: "a@b.com"}}
-
-      query = %DataLayer{
-        resource: nil,
-        repo: nil,
-        table: "users",
-        filters: [filter],
-        sorts: [],
-        limit: nil,
-        offset: nil,
-        select: [:id, :email],
-        tenant: nil
-      }
-
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
-
-      refute String.contains?(cql, "ALLOW FILTERING"),
-             "ALLOW FILTERING must NOT be appended when resource is nil"
-    end
-
-    test "ALLOW FILTERING appears after LIMIT in the CQL string" do
-      filter = %{operator: :eq, left: %{name: :email}, right: %{value: "a@b.com"}}
-
-      query = %DataLayer{
-        resource: AllowFilteringResource,
-        repo: nil,
-        table: "users",
-        filters: [filter],
-        sorts: [],
-        limit: 5,
-        offset: nil,
-        select: [:id, :email],
-        tenant: nil
-      }
-
-      {cql, params} = QueryBuilder.build_optimized_query(query)
-
-      assert cql ==
-               "SELECT id, email FROM users WHERE email = ? LIMIT ? ALLOW FILTERING"
-
-      assert params == ["a@b.com", {"int", 5}]
     end
   end
 
@@ -782,7 +596,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
     import AshScylla.DataLayer.Dsl
 
-    ash_scylla do
+    scylla do
       repo(AshScylla.TestRepo)
       table("messages")
       secondary_index(:order)
@@ -803,14 +617,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     test "columns with reserved keyword names are quoted" do
       # 'order' is a reserved keyword in ScyllaDB/CQL
       # Without quoting, this would cause: ScyllaError: no viable alternative at input 'order'
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "messages",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: [:id, :order, :status],
         tenant: nil
       }
@@ -825,14 +638,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     end
 
     test "all columns are quoted when they are reserved keywords" do
-      query = %DataLayer{
+      query = %AshScylla.Query{
         resource: nil,
         repo: nil,
         table: "t",
         filters: [],
         sorts: [],
         limit: nil,
-        offset: nil,
         select: [:select, :from, :where],
         tenant: nil
       }
@@ -847,14 +659,13 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     test "DISTINCT columns with reserved keywords are quoted" do
       {:ok, query} =
         DataLayer.distinct(
-          %DataLayer{
+          %AshScylla.Query{
             resource: ReservedKeywordDistinctResource,
             repo: nil,
             table: "messages",
             filters: [],
             sorts: [],
             limit: nil,
-            offset: nil,
             select: nil,
             tenant: nil
           },

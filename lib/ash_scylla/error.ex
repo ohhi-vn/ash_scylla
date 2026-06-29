@@ -26,7 +26,6 @@ defmodule AshScylla.Error do
   - `wrap_xandra_error/1` — Convert Xandra errors to `ScyllaError`
   - `format_error/1` — Format any error for display
   - `retryable?/1` — Check if an error is retryable
-  - `retry_delay/1` — Get suggested retry delay in milliseconds
 
   See `AshScylla.Error.ScyllaError` for the structured error type with
   categorization and suggestions.
@@ -72,6 +71,29 @@ defmodule AshScylla.Error do
 
   @doc """
   Checks if an error is retryable.
+
+  Public utility intended for callers implementing their own retry policy.
+  Returns `true` for transient ScyllaDB errors such as timeouts, connection
+  failures, and overloaded nodes — cases where retrying the same operation
+  may succeed. Returns `false` for all other errors, including unknown types.
+
+  ## Retryable error types
+
+  - `:connection_timeout`
+  - `:connection_closed`
+  - `:overloaded`
+  - `:timeout`
+  - `:connection_error`
+
+  ## Examples
+
+      iex> error = %AshScylla.Error.ScyllaError{type: :timeout, message: "timeout"}
+      iex> AshScylla.Error.retryable?(error)
+      true
+
+      iex> error = %AshScylla.Error.ScyllaError{type: :invalid, message: "bad query"}
+      iex> AshScylla.Error.retryable?(error)
+      false
   """
   @spec retryable?(ScyllaError.t() | term()) :: boolean()
   def retryable?(%ScyllaError{type: type}) do
@@ -81,25 +103,5 @@ defmodule AshScylla.Error do
   def retryable?(error) do
     Logger.warning("retryable?/1 called with unknown error type: #{inspect(error)}")
     false
-  end
-
-  @doc """
-  Returns a suggested retry delay in milliseconds.
-  """
-  @spec retry_delay(ScyllaError.t() | term()) :: non_neg_integer()
-  def retry_delay(%ScyllaError{type: type}) do
-    case type do
-      :overloaded -> 1000
-      :timeout -> 500
-      :connection_timeout -> 2000
-      :connection_closed -> 1000
-      :connection_error -> 2000
-      _ -> 500
-    end
-  end
-
-  def retry_delay(error) do
-    Logger.warning("retry_delay/1 called with unknown error type: #{inspect(error)}")
-    500
   end
 end

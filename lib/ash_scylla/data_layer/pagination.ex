@@ -16,15 +16,14 @@ defmodule AshScylla.DataLayer.Pagination do
   @moduledoc """
   Token-based pagination support for AshScylla.
 
-  ScyllaDB/Cassandra doesn't support OFFSET natively. Instead, it uses
-  Xandra's native paging state mechanism for efficient pagination.
+  ScyllaDB/Cassandra uses Xandra's native paging state mechanism for efficient
+  pagination.
 
   ## Token-Based Pagination
 
   AshScylla uses keyset pagination by default (`data_layer_keyset_by_default?/0`
-  returns `true`). When `pagination :token` is set in the ash_scylla DSL,
-  queries use Xandra's built-in paging state to efficiently page through results
-  without OFFSET.
+  returns `true`). When `pagination :token` is set in the scylla DSL,
+  queries use Xandra's built-in paging state to efficiently page through results.
 
   ## Usage
 
@@ -192,6 +191,28 @@ defmodule AshScylla.DataLayer.Pagination do
   end
 
   @doc """
+  Encodes a paging state binary to an opaque cursor string (base64url).
+  """
+  @spec encode_cursor(binary()) :: String.t()
+  def encode_cursor(paging_state) when is_binary(paging_state) do
+    Base.url_encode64(paging_state, padding: false)
+  end
+
+  @doc """
+  Decodes a cursor string back to a paging state binary.
+  Returns `{:ok, binary}` on success or `{:error, :invalid_cursor}` on failure.
+  """
+  @spec decode_cursor(String.t()) :: {:ok, binary()} | {:error, :invalid_cursor}
+  def decode_cursor(cursor) when is_binary(cursor) do
+    case Base.url_decode64(cursor, padding: false) do
+      {:ok, binary} when is_binary(binary) -> {:ok, binary}
+      _ -> {:error, :invalid_cursor}
+    end
+  end
+
+  def decode_cursor(_), do: {:error, :invalid_cursor}
+
+  @doc """
   Encodes a paging state binary to an opaque page token string.
   """
   @spec encode_page_token(binary()) :: String.t()
@@ -213,6 +234,26 @@ defmodule AshScylla.DataLayer.Pagination do
   end
 
   def decode_page_token(_), do: {:error, :invalid_token}
+
+  @doc """
+  Build query options for a given page request.
+  Pass `nil` for the first page, or a previously returned `paging_state`
+  binary for subsequent pages.
+  """
+  @spec page_opts(page_token() | nil, pos_integer()) :: keyword()
+  def page_opts(nil, page_size), do: [page_size: page_size]
+
+  def page_opts(paging_state, page_size) when is_binary(paging_state) do
+    [page_size: page_size, paging_state: paging_state]
+  end
+
+  @doc """
+  Extract the `paging_state` from a query result for use in the next page request.
+  Returns `nil` if this was the last page.
+  """
+  @spec extract_paging_state(term()) :: binary() | nil
+  def extract_paging_state(%{paging_state: ps}), do: ps
+  def extract_paging_state(_), do: nil
 
   @doc """
   Returns the default page size.

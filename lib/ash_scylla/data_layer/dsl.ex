@@ -26,7 +26,7 @@ defmodule AshScylla.DataLayer.Dsl do
         use Ash.Resource,
           data_layer: AshScylla.DataLayer
 
-        ash_scylla do
+        scylla do
           table "my_table"
           keyspace "my_keyspace"
           consistency :quorum
@@ -142,10 +142,10 @@ defmodule AshScylla.DataLayer.Dsl do
   - `:consistency` - The consistency level for reads/writes
   - `:ttl` - Default TTL for inserted records (in seconds)
   - `:lwt` - Enable Lightweight Transactions (LWT) for atomic upserts using `INSERT ... IF NOT EXISTS` (default: `false`)
-  - `:allow_filtering` - When `true`, appends `ALLOW FILTERING` to queries that use secondary indexes (default: `false`)
+
   - `:secondary_index` - Define secondary indexes for non-primary key columns
   - `:materialized_view` - Define materialized views with different primary key structure
-  - `:pagination` - Pagination mode: `:offset` (default) or `:token` for token-based pagination
+  - `:pagination` - Pagination mode: `:token` (default) or `:offset` for offset-based pagination
   - `:per_action_consistency` - Per-action consistency overrides as a keyword list, e.g. `[read: :one, create: :quorum]`
   - `:base_filter` - A filter expression applied to all queries on this resource (Ash 3.0)
   - `:default_context` - Default context map merged into every query/changeset (Ash 3.0)
@@ -184,7 +184,7 @@ defmodule AshScylla.DataLayer.Dsl do
 
   ## Examples
 
-      ash_scylla do
+      scylla do
         table "users"
         keyspace "my_keyspace"
         consistency :quorum
@@ -257,8 +257,8 @@ defmodule AshScylla.DataLayer.Dsl do
         end
       end
   """
-  @spec ash_scylla(keyword()) :: Macro.t()
-  defmacro ash_scylla(do: block) do
+  @spec scylla(keyword()) :: Macro.t()
+  defmacro scylla(do: block) do
     transformed =
       Macro.prewalk(block, fn
         # ── Existing ScyllaDB options ──
@@ -335,11 +335,6 @@ defmodule AshScylla.DataLayer.Dsl do
         {:lwt, meta, [value]} ->
           {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_lwt__]}, meta,
            [{:__MODULE__, [], nil}, value]}
-
-        {:allow_filtering, meta, [value]} ->
-          {{:., meta,
-            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_allow_filtering__]},
-           meta, [{:__MODULE__, [], nil}, value]}
 
         {:repo, meta, [value]} ->
           {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_repo__]},
@@ -546,10 +541,9 @@ defmodule AshScylla.DataLayer.Dsl do
       @ash_scylla_ttl nil
       @ash_scylla_secondary_indexes []
       @ash_scylla_materialized_views []
-      @ash_scylla_pagination :offset
+      @ash_scylla_pagination :token
       @ash_scylla_per_action_consistency %{}
       @ash_scylla_lwt false
-      @ash_scylla_allow_filtering false
       @ash_scylla_repo nil
       @ash_scylla_migrate true
 
@@ -604,7 +598,6 @@ defmodule AshScylla.DataLayer.Dsl do
         pagination: @ash_scylla_pagination,
         per_action_consistency: @ash_scylla_per_action_consistency,
         lwt: @ash_scylla_lwt,
-        allow_filtering: @ash_scylla_allow_filtering,
         repo: @ash_scylla_repo,
         migrate: @ash_scylla_migrate,
         base_filter: @ash_scylla_base_filter,
@@ -632,21 +625,10 @@ defmodule AshScylla.DataLayer.Dsl do
   # ============================================================================
 
   @doc false
-  @spec parse_secondary_index(atom() | list(atom()) | {atom(), keyword()}) :: map()
-  def parse_secondary_index(column) when is_atom(column) do
-    %{columns: [column], name: nil, options: []}
-  end
-
-  def parse_secondary_index(columns) when is_list(columns) do
-    %{columns: columns, name: nil, options: []}
-  end
-
-  def parse_secondary_index({column, opts}) when is_atom(column) do
-    %{columns: [column], name: opts[:name], options: opts}
-  end
-
-  def parse_secondary_index(invalid) do
-    raise "Invalid secondary_index configuration: #{inspect(invalid)}"
+  @spec parse_secondary_index(atom() | list(atom()) | {atom(), keyword()}) ::
+          AshScylla.DataLayer.SecondaryIndex.t()
+  def parse_secondary_index(input) do
+    AshScylla.DataLayer.SecondaryIndex.parse(input)
   end
 
   # ============================================================================
@@ -735,8 +717,8 @@ defmodule AshScylla.DataLayer.Dsl do
 
   Returns `:offset` or `:token`.
   """
-  @spec pagination(module()) :: :offset | :token
-  def pagination(resource), do: get_config(resource, :pagination, :offset)
+  @spec pagination(module()) :: :token | :offset
+  def pagination(resource), do: get_config(resource, :pagination, :token)
 
   @doc """
   Gets the per-action consistency configuration for a resource.
@@ -757,18 +739,6 @@ defmodule AshScylla.DataLayer.Dsl do
 
   @spec lwt(module()) :: boolean()
   def lwt(resource), do: get_config(resource, :lwt, false)
-
-  @doc """
-  Gets the allow_filtering setting for a resource.
-
-  When `true`, `ALLOW FILTERING` is appended to queries that use
-  secondary indexes, allowing ScyllaDB to execute them without
-  requiring partition key filters.
-
-  Defaults to `false`.
-  """
-  @spec allow_filtering(module()) :: boolean()
-  def allow_filtering(resource), do: get_config(resource, :allow_filtering, false)
 
   @doc """
   Gets the configured repo for a resource.
@@ -955,11 +925,6 @@ defmodule AshScylla.DataLayer.Dsl do
   @spec __set_lwt__(module(), boolean()) :: :ok
   def __set_lwt__(module, value) when is_boolean(value),
     do: put_attr(module, :ash_scylla_lwt, value)
-
-  @doc false
-  @spec __set_allow_filtering__(module(), boolean()) :: :ok
-  def __set_allow_filtering__(module, value) when is_boolean(value),
-    do: put_attr(module, :ash_scylla_allow_filtering, value)
 
   @doc false
   @spec __set_repo__(module(), module()) :: :ok

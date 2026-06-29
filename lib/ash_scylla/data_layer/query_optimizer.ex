@@ -46,7 +46,7 @@ defmodule AshScylla.DataLayer.QueryOptimizer do
 
   require Logger
 
-  alias AshScylla.DataLayer
+  alias AshScylla.Query
   alias AshScylla.Identifier
 
   @default_page_size 50
@@ -83,9 +83,8 @@ defmodule AshScylla.DataLayer.QueryOptimizer do
   - `:speculative_retry_delay_ms` - Custom delay for speculative retry (ms)
   - `:serial_consistency` - Serial consistency for LWT (`:serial`, `:local_serial`)
   - `:profiling` - Enable query profiling (default: false)
-  - `:allow_filtering` - Allow filtering (default: false, not recommended)
   """
-  @spec optimize(DataLayer.t(), keyword()) :: keyword()
+  @spec optimize(Query.t(), keyword()) :: keyword()
   def optimize(_data_layer_query, opts \\ []) do
     []
     |> maybe_put_consistency(opts[:consistency])
@@ -94,7 +93,6 @@ defmodule AshScylla.DataLayer.QueryOptimizer do
     |> maybe_put_speculative_retry(opts[:speculative_retry], opts[:speculative_retry_delay_ms])
     |> maybe_put_serial_consistency(opts[:serial_consistency])
     |> maybe_put_profiling(opts[:profiling])
-    |> maybe_put_allow_filtering(opts[:allow_filtering])
   end
 
   @doc """
@@ -121,8 +119,8 @@ defmodule AshScylla.DataLayer.QueryOptimizer do
   - Whether the query is a full table scan (large page)
   - The number of clustering columns
   """
-  @spec optimal_page_size(DataLayer.t()) :: non_neg_integer()
-  def optimal_page_size(%DataLayer{filters: filters, limit: limit}) do
+  @spec optimal_page_size(Query.t()) :: non_neg_integer()
+  def optimal_page_size(%Query{filters: filters, limit: limit}) do
     cond do
       # If there's a small explicit limit, use it
       is_integer(limit) and limit <= @default_page_size ->
@@ -151,8 +149,8 @@ defmodule AshScylla.DataLayer.QueryOptimizer do
   - "Query performs full table scan - add partition key filter"
   - "Use token-based pagination for large result sets"
   """
-  @spec analyze(DataLayer.t()) :: [String.t()]
-  def analyze(%DataLayer{filters: filters, limit: limit, select: select} = query) do
+  @spec analyze(Query.t()) :: [String.t()]
+  def analyze(%Query{filters: filters, limit: limit, select: select}) do
     suggestions = []
 
     suggestions =
@@ -163,14 +161,12 @@ defmodule AshScylla.DataLayer.QueryOptimizer do
       end
 
     suggestions =
-      if has_non_indexed_filter?(query) do
-        non_indexed = non_indexed_filter_columns(query)
-
-        Enum.reduce(non_indexed, suggestions, fn col, acc ->
-          ["Consider adding secondary index on #{inspect(col)} for faster lookups" | acc]
-        end)
-      else
+      if has_indexed_filter?(filters) do
         suggestions
+      else
+        if filters != [],
+          do: ["Consider adding secondary index for faster lookups" | suggestions],
+          else: suggestions
       end
 
     suggestions =
@@ -295,8 +291,8 @@ defmodule AshScylla.DataLayer.QueryOptimizer do
 
   Returns `:low`, `:medium`, `:high`, or `:full_scan`.
   """
-  @spec estimate_cost(DataLayer.t()) :: atom()
-  def estimate_cost(%DataLayer{filters: filters, limit: limit, sorts: sorts}) do
+  @spec estimate_cost(Query.t()) :: atom()
+  def estimate_cost(%Query{filters: filters, limit: limit, sorts: sorts}) do
     base_cost =
       cond do
         filters == [] ->
@@ -330,8 +326,8 @@ defmodule AshScylla.DataLayer.QueryOptimizer do
   Returns `[token: partition_key_value]` for Xandra's token-aware routing,
   or an empty keyword list if no partition key can be determined.
   """
-  @spec token_aware_hint(DataLayer.t()) :: keyword()
-  def token_aware_hint(%DataLayer{filters: filters, resource: resource}) do
+  @spec token_aware_hint(Query.t()) :: keyword()
+  def token_aware_hint(%Query{filters: filters, resource: resource}) do
     case extract_partition_key_value(filters, resource) do
       nil ->
         []
@@ -425,17 +421,6 @@ defmodule AshScylla.DataLayer.QueryOptimizer do
     Keyword.put(opts, :profiling, true)
   end
 
-  defp maybe_put_allow_filtering(opts, nil), do: opts
-  defp maybe_put_allow_filtering(opts, false), do: opts
-
-  defp maybe_put_allow_filtering(opts, true) do
-    Logger.warning(
-      "allow_filtering is enabled. This can cause full table scans and performance issues."
-    )
-
-    Keyword.put(opts, :allow_filtering, true)
-  end
-
   ## optimal_page_size/1 helpers
 
   defp has_partition_key_filter?(filters) do
@@ -463,26 +448,6 @@ defmodule AshScylla.DataLayer.QueryOptimizer do
   end
 
   ## analyze/1 helpers
-
-  defp has_non_indexed_filter?(%DataLayer{filters: filters}) do
-    Enum.any?(filters, fn
-      %{left: %{name: name}} when is_atom(name) ->
-        true
-
-      _ ->
-        false
-    end)
-  end
-
-  defp non_indexed_filter_columns(%DataLayer{filters: filters}) do
-    filters
-    |> Enum.filter(fn
-      %{left: %{name: name}} when is_atom(name) -> true
-      _ -> false
-    end)
-    |> Enum.map(fn %{left: %{name: name}} -> name end)
-    |> Enum.uniq()
-  end
 
   ## estimate_cost/1 helpers
 
