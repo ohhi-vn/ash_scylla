@@ -284,7 +284,11 @@ defmodule AshScylla.Benchmarks.Integration do
     @moduledoc "Benchmark test resource."
     use Ash.Resource,
       data_layer: AshScylla.DataLayer,
+
+  import AshScylla.DataLayer.Dsl
       repo: __MODULE__.Repo
+
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       table("bench_users")

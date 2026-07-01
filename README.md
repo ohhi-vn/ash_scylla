@@ -78,6 +78,7 @@ defmodule MyApp.User do
     data_layer: AshScylla.DataLayer,
     domain: MyApp.Domain
 
+
   scylla do
     table "users"
     consistency :quorum
@@ -168,6 +169,7 @@ defmodule MyApp.User do
   use Ash.Resource,
     data_layer: AshScylla.DataLayer,
     domain: MyApp.Domain
+
 
   scylla do
     table "users"

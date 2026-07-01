@@ -19,7 +19,8 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-    import AshScylla.DataLayer.Dsl
+  import AshScylla.DataLayer.Dsl
+
 
     scylla do
       table("tenant_resource")
@@ -50,7 +51,8 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-    import AshScylla.DataLayer.Dsl
+  import AshScylla.DataLayer.Dsl
+
 
     scylla do
       table("multi_pk_resource")

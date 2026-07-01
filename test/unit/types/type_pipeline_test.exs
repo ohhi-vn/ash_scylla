@@ -82,7 +82,8 @@ defmodule AshScylla.DataLayer.TypePipelineTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-    import AshScylla.DataLayer.Dsl
+  import AshScylla.DataLayer.Dsl
+
 
     scylla do
       repo(FakeTypeRepo)

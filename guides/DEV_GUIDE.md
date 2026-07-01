@@ -247,6 +247,7 @@ defmodule MyApp.User do
     data_layer: AshScylla.DataLayer,
     domain: MyApp.Domain
 
+
   scylla do
     table "users"
     consistency :quorum

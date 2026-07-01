@@ -61,7 +61,8 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-    import AshScylla.DataLayer.Dsl
+  import AshScylla.DataLayer.Dsl
+
 
     scylla do
       repo(FakeRepo)
@@ -91,7 +92,8 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-    import AshScylla.DataLayer.Dsl
+  import AshScylla.DataLayer.Dsl
+
 
     scylla do
       repo(FakeRepo)
@@ -116,6 +118,8 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
+  import AshScylla.DataLayer.Dsl
+
     attributes do
       attribute(:id, :string, primary_key?: true, allow_nil?: false)
       attribute(:name, :string)
@@ -133,6 +137,8 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
     use Ash.Resource,
       domain: nil,
       data_layer: AshScylla.DataLayer
+
+  import AshScylla.DataLayer.Dsl
 
     attributes do
       attribute(:id, :string, primary_key?: true, allow_nil?: false)
@@ -834,7 +840,8 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-    import AshScylla.DataLayer.Dsl
+  import AshScylla.DataLayer.Dsl
+
 
     scylla do
       repo(ColumnTupleRepo)

@@ -6,6 +6,7 @@ defmodule AshScylla.TestResourceCompositePK do
 
   import AshScylla.DataLayer.Dsl
 
+
   scylla do
     repo(AshScylla.TestRepo)
     table("test_composite_pk")

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **BREAKING**: Renamed DSL section from `ash_scylla do` to `scylla do` — matches other Ash data layers' naming convention
+- **BREAKING**: Moved DSL from `AshScylla.DataLayer.Dsl` into `AshScylla.DataLayer` — resources still need `import AshScylla.DataLayer.Dsl` (which now re-exports the macro from `AshScylla.DataLayer`)
 - **BREAKING**: Removed `allow_filtering` DSL option — `ALLOW FILTERING` is never appended to queries; filter on unindexed columns is rejected at query-plan time with actionable error
 - **BREAKING**: Removed `offset/3` callback and `offset` field from query struct — CQL does not support OFFSET; use keyset pagination via `paging_state` instead
 - **BREAKING**: Default pagination mode changed from `:offset` to `:token`

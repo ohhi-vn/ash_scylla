@@ -119,6 +119,18 @@ defmodule AshScylla.DataLayer.MaterializedView do
     """
   end
 
+  @doc """
+  Returns the schema for the materialized view DSL options.
+  """
+  @spec schema() :: keyword()
+  def schema do
+    [
+      primary_key: [type: {:list, :atom}, required: true],
+      include_columns: [type: {:list, :atom}],
+      clustering_order: [type: :keyword_list]
+    ]
+  end
+
   # Uses AshScylla.Identifier.quote_name/1 for all identifier quoting
 
   @doc """

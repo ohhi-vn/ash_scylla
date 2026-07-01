@@ -1,7 +1,10 @@
 defmodule BasicApp.Resources.User do
   use Ash.Resource,
     data_layer: AshScylla.DataLayer,
+
+  import AshScylla.DataLayer.Dsl
     domain: BasicApp.Domain
+
 
   scylla do
     table("users")
