@@ -4,7 +4,7 @@ defmodule AshScylla.MixProject do
   def project do
     [
       app: :ash_scylla,
-      version: "1.0.3",
+      version: "1.0.4",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -119,7 +119,7 @@ defmodule AshScylla.MixProject do
       {:xandra, "~> 0.19"},
       {:decimal, "~> 3.1", override: true, only: [:dev, :test]},
       {:hackney, "~> 4.3", override: true, only: [:dev, :test]},
-      {:testcontainer_ex, "~> 0.7", only: [:test], runtime: false},
+      {:testcontainer_ex, "~> 0.8", only: [:test], runtime: false},
       # {:testcontainer_ex, path: "../testcontainer_ex", only: [:test, :dev]},
       {:benchee, "~> 1.5", only: [:dev, :test]},
       {:benchee_html, "~> 1.0", only: [:dev, :test]},

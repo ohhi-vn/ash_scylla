@@ -218,18 +218,24 @@ defmodule AshScylla.Extension do
           else
             Logger.info("Executing migration #{Path.basename(file)}...")
 
-            nodes = repo.nodes()
+            if repo do
+              nodes = repo.nodes()
 
-            case AshScylla.Migrator.run(nodes, statements, keyspace: repo.keyspace()) do
-              {:ok, _results} ->
-                Mix.shell().info(
-                  "  Executed #{Path.basename(file)}: #{length(statements)} statement(s)"
-                )
+              case AshScylla.Migrator.run(nodes, statements, keyspace: repo.keyspace()) do
+                {:ok, _results} ->
+                  Mix.shell().info(
+                    "  Executed #{Path.basename(file)}: #{length(statements)} statement(s)"
+                  )
 
-              {:error, {index, reason}} ->
-                Mix.shell().error(
-                  "  FAILED #{Path.basename(file)} at statement #{index}: #{inspect(reason)}"
-                )
+                {:error, {index, reason}} ->
+                  Mix.shell().error(
+                    "  FAILED #{Path.basename(file)} at statement #{index}: #{inspect(reason)}"
+                  )
+              end
+            else
+              Mix.shell().error(
+                "  Cannot run migration #{Path.basename(file)}: no repo configured"
+              )
             end
           end
         end

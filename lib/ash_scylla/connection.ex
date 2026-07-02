@@ -73,13 +73,14 @@ defmodule AshScylla.Connection do
 
   use GenServer
 
-  defstruct [:conn, :keyspace, :nodes, :keyspace_used]
+  defstruct [:conn, :keyspace, :nodes, :keyspace_used, :cluster?]
 
   @type t :: %__MODULE__{
           conn: pid(),
           keyspace: String.t() | nil,
           nodes: [String.t()],
-          keyspace_used: boolean()
+          keyspace_used: boolean(),
+          cluster?: boolean()
         }
 
   # Client API
@@ -148,16 +149,16 @@ defmodule AshScylla.Connection do
   @spec query(t() | module(), String.t(), list(), keyword()) :: {:ok, term()} | {:error, term()}
   def query(conn_or_name, query, params, opts \\ [])
 
-  def query(%__MODULE__{conn: conn}, query, params, opts) do
+  def query(%__MODULE__{conn: conn, cluster?: cluster?}, query, params, opts) do
     case Keyword.pop(opts, :keyspace) do
       {nil, opts} ->
-        Xandra.execute(conn, query, typed_params(params), opts)
+        execute_module(cluster?).execute(conn, query, typed_params(params), opts)
 
       {keyspace, opts} ->
         validate_keyspace!(keyspace)
 
-        with {:ok, _} <- Xandra.execute(conn, "USE #{keyspace}", []) do
-          Xandra.execute(conn, query, typed_params(params), opts)
+        with {:ok, _} <- execute_module(cluster?).execute(conn, "USE #{keyspace}", []) do
+          execute_module(cluster?).execute(conn, query, typed_params(params), opts)
         end
     end
   end
@@ -225,16 +226,16 @@ defmodule AshScylla.Connection do
   @spec query!(t() | module(), String.t(), list(), keyword()) :: term() | no_return()
   def query!(conn_or_name, query, params, opts \\ [])
 
-  def query!(%__MODULE__{conn: conn}, query, params, opts) do
+  def query!(%__MODULE__{conn: conn, cluster?: cluster?}, query, params, opts) do
     case Keyword.pop(opts, :keyspace) do
       {nil, opts} ->
-        Xandra.execute!(conn, query, typed_params(params), opts)
+        execute_module(cluster?).execute!(conn, query, typed_params(params), opts)
 
       {keyspace, opts} ->
         validate_keyspace!(keyspace)
 
-        with {:ok, _} <- Xandra.execute(conn, "USE #{keyspace}", []) do
-          Xandra.execute!(conn, query, typed_params(params), opts)
+        with {:ok, _} <- execute_module(cluster?).execute(conn, "USE #{keyspace}", []) do
+          execute_module(cluster?).execute!(conn, query, typed_params(params), opts)
         end
     end
   end
@@ -270,8 +271,8 @@ defmodule AshScylla.Connection do
           {:ok, Xandra.Prepared.t()} | {:error, term()}
   def prepare(conn_or_name, query, opts \\ [])
 
-  def prepare(%__MODULE__{conn: conn}, query, opts) do
-    Xandra.prepare(conn, query, opts)
+  def prepare(%__MODULE__{conn: conn, cluster?: cluster?}, query, opts) do
+    prepare_module(cluster?).prepare(conn, query, opts)
   end
 
   def prepare(name, query, opts) when is_atom(name) do
@@ -289,8 +290,8 @@ defmodule AshScylla.Connection do
   @spec prepare!(t() | module(), String.t(), keyword()) :: Xandra.Prepared.t() | no_return()
   def prepare!(conn_or_name, query, opts \\ [])
 
-  def prepare!(%__MODULE__{conn: conn}, query, opts) do
-    Xandra.prepare!(conn, query, opts)
+  def prepare!(%__MODULE__{conn: conn, cluster?: cluster?}, query, opts) do
+    prepare_module(cluster?).prepare!(conn, query, opts)
   end
 
   def prepare!(name, query, opts) when is_atom(name) do
@@ -344,8 +345,8 @@ defmodule AshScylla.Connection do
 
   @doc "Stops the connection."
   @spec stop(t() | module()) :: :ok
-  def stop(%__MODULE__{conn: conn}) do
-    Xandra.stop(conn)
+  def stop(%__MODULE__{conn: conn, cluster?: cluster?}) do
+    stop_module(cluster?).stop(conn)
   end
 
   def stop(name) when is_atom(name) do
@@ -451,6 +452,8 @@ defmodule AshScylla.Connection do
         {&Xandra.start_link/1, xandra_opts}
       end
 
+    cluster? = length(nodes) > 1
+
     case start_fun.(xandra_opts) do
       {:ok, conn} ->
         # Try to USE keyspace, but don't fail if it doesn't exist yet
@@ -469,7 +472,7 @@ defmodule AshScylla.Connection do
                 false
             end
 
-            case Xandra.execute(conn, "USE #{keyspace}", []) do
+            case execute_module(cluster?).execute(conn, "USE #{keyspace}", []) do
               {:ok, _} ->
                 Logger.info(
                   "AshScylla: Connected to ScyllaDB at #{inspect(nodes)}, keyspace: #{keyspace}"
@@ -498,7 +501,8 @@ defmodule AshScylla.Connection do
            conn: conn,
            keyspace: keyspace,
            nodes: nodes_as_strings,
-           keyspace_used: keyspace_used?
+           keyspace_used: keyspace_used?,
+           cluster?: cluster?
          }}
 
       {:error, reason} ->
@@ -517,7 +521,11 @@ defmodule AshScylla.Connection do
   end
 
   @impl GenServer
-  def handle_call(:ensure_keyspace, _from, %__MODULE__{conn: conn, keyspace: keyspace} = state) do
+  def handle_call(
+        :ensure_keyspace,
+        _from,
+        %__MODULE__{conn: conn, keyspace: keyspace, cluster?: cluster?} = state
+      ) do
     try do
       validate_keyspace!(keyspace)
     rescue
@@ -525,7 +533,7 @@ defmodule AshScylla.Connection do
         {:reply, {:error, :invalid_keyspace}, state}
     end
 
-    case Xandra.execute(conn, "USE #{keyspace}", []) do
+    case execute_module(cluster?).execute(conn, "USE #{keyspace}", []) do
       {:ok, _} ->
         Logger.info("AshScylla: Keyspace '#{keyspace}' is now active")
         {:reply, {:ok, :set}, %{state | keyspace_used: true}}
@@ -537,7 +545,11 @@ defmodule AshScylla.Connection do
   end
 
   @impl GenServer
-  def handle_call({:set_keyspace, new_keyspace}, _from, %__MODULE__{conn: conn} = state) do
+  def handle_call(
+        {:set_keyspace, new_keyspace},
+        _from,
+        %__MODULE__{conn: conn, cluster?: cluster?} = state
+      ) do
     try do
       validate_keyspace!(new_keyspace)
     rescue
@@ -545,7 +557,7 @@ defmodule AshScylla.Connection do
         {:reply, {:error, :invalid_keyspace}, state}
     end
 
-    case Xandra.execute(conn, "USE #{new_keyspace}", []) do
+    case execute_module(cluster?).execute(conn, "USE #{new_keyspace}", []) do
       {:ok, _} ->
         Logger.info("AshScylla: Keyspace set to '#{new_keyspace}'")
         {:reply, {:ok, :set}, %{state | keyspace: new_keyspace, keyspace_used: true}}
@@ -555,6 +567,19 @@ defmodule AshScylla.Connection do
         {:reply, {:error, reason}, state}
     end
   end
+
+  @doc false
+  # Dispatches to Xandra or Xandra.Cluster based on connection type.
+  def execute_module(true), do: Xandra.Cluster
+  def execute_module(_), do: Xandra
+
+  @doc false
+  def prepare_module(true), do: Xandra.Cluster
+  def prepare_module(_), do: Xandra
+
+  @doc false
+  def stop_module(true), do: Xandra.Cluster
+  def stop_module(_), do: Xandra
 
   # Parses a node string like "127.0.0.1:9042" or "host:port" into {host, port}.
   # Returns {host, nil} if no port is specified.

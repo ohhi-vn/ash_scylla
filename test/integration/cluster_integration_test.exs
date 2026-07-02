@@ -889,4 +889,80 @@ defmodule AshScylla.ClusterIntegrationTest do
       assert result.num_rows == 1
     end
   end
+
+  # ── AshScylla.Connection cluster mode ─────────────────────────────────────
+
+  describe "AshScylla.Connection with multi-node cluster" do
+    @tag :skip
+    test "Connection struct has cluster? true for multi-node", %{conn: _raw_conn} do
+      # This test verifies that starting an AshScylla.Connection with multiple
+      # nodes sets cluster? correctly, preventing the function_clause crash
+      # where Xandra.execute is called on a Xandra.Cluster PID.
+      #
+      # See: https://github.com/lexhide/xandra/issues
+      #
+      # The cluster_integration_test setup uses raw Xandra, not AshScylla,
+      # so we start our own AshScylla.Connection here.
+      nodes = direct_nodes()
+      name = Module.concat(__MODULE__, :"AshScyllaCluster_#{System.unique_integer([:positive])}")
+
+      {:ok, _pid} =
+        AshScylla.Connection.start_link(
+          name: name,
+          nodes: nodes,
+          keyspace: @keyspace,
+          connect_timeout: 10_000
+        )
+
+      on_exit(fn -> AshScylla.Connection.stop(name) end)
+
+      conn = AshScylla.Connection.get_conn(name)
+      assert conn.cluster? == true, "multi-node should have cluster? true"
+
+      # Query via AshScylla.Connection — this must not crash with function_clause
+      assert {:ok, result} =
+               AshScylla.Connection.query(name, "SELECT * FROM #{@keyspace}.users LIMIT 1", [])
+
+      assert result.num_rows == 0
+    end
+
+    @tag :skip
+    test "query via AshScylla.Connection in cluster mode does not crash", %{conn: _raw_conn} do
+      nodes = direct_nodes()
+      name = Module.concat(__MODULE__, :"AshScyllaCluster_#{System.unique_integer([:positive])}")
+
+      {:ok, _pid} =
+        AshScylla.Connection.start_link(
+          name: name,
+          nodes: nodes,
+          keyspace: @keyspace,
+          connect_timeout: 10_000
+        )
+
+      on_exit(fn -> AshScylla.Connection.stop(name) end)
+
+      conn = AshScylla.Connection.get_conn(name)
+      assert conn.cluster?
+
+      id = uid()
+
+      # Insert
+      assert {:ok, _} =
+               AshScylla.Connection.query(
+                 name,
+                 "INSERT INTO #{@keyspace}.users (id, name, status) VALUES (?, ?, ?)",
+                 [id, "cluster_test", "active"]
+               )
+
+      # Read
+      assert {:ok, result} =
+               AshScylla.Connection.query(
+                 name,
+                 "SELECT * FROM #{@keyspace}.users WHERE id = ?",
+                 [id]
+               )
+
+      assert result.num_rows == 1
+    end
+  end
 end

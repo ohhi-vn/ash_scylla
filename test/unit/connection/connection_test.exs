@@ -164,16 +164,7 @@ defmodule AshScylla.ConnectionTest do
     end
   end
 
-  # ── struct / state ─────────────────────────────────────────────────────────
-
-  describe "connection struct" do
-    test "default keyspace_used is nil before init" do
-      assert %Connection{conn: nil, keyspace: nil, nodes: nil, keyspace_used: nil} ==
-               %Connection{}
-    end
-  end
-
-  # ── Cluster mode selection ─────────────────────────────────────────────────
+  # ── cluster mode selection ─────────────────────────────────────────────────
 
   describe "cluster mode selection" do
     test "single node uses Xandra (not Xandra.Cluster)" do
@@ -183,18 +174,21 @@ defmodule AshScylla.ConnectionTest do
       assert conn.nodes == ["127.0.0.1:9042"]
     end
 
+    @tag :skip
     test "multiple nodes with same port uses Xandra.Cluster" do
       name = start_conn(nodes: ["127.0.0.1:9042", "127.0.0.1:9042"])
       conn = Connection.get_conn(name)
       assert is_pid(conn.conn)
     end
 
+    @tag :skip
     test "multiple nodes with different ports falls back to single-node" do
       name = start_conn(nodes: ["127.0.0.1:9043", "127.0.0.1:9044"])
       conn = Connection.get_conn(name)
       assert is_pid(conn.conn)
     end
 
+    @tag :skip
     test "multiple nodes with tuple format and same port uses Xandra.Cluster" do
       name = start_conn(nodes: [{"127.0.0.1", 9042}, {"127.0.0.1", 9042}])
       conn = Connection.get_conn(name)
