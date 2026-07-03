@@ -356,6 +356,8 @@ defmodule AshScylla.DataLayer do
     opts = build_query_opts(resource, tenant)
 
     Logger.debug("Executing run_query on #{table}")
+    Logger.debug("AshScylla: Final query: #{inspect(query)}")
+    Logger.debug("AshScylla: Final params: #{inspect(params)}")
 
     Telemetry.span(resource, :read, query, fn ->
       case repo.query(query, params, opts) do
@@ -1043,8 +1045,17 @@ defmodule AshScylla.DataLayer do
     collect_or_values(right, name, acc)
   end
 
-  @spec collect_or_values(%{name: atom(), right: %{value: term()}}, atom(), list()) :: list()
   defp collect_or_values(%{name: name, right: %{value: value}}, name, acc) do
+    [value | acc]
+  end
+
+  defp collect_or_values(%{operator: op, left: %{name: name}, right: %{value: value}}, name, acc)
+       when op in [:eq, :==] do
+    [value | acc]
+  end
+
+  defp collect_or_values(%{op: op, left: %{name: name}, right: %{value: value}}, name, acc)
+       when op in [:eq, :==] do
     [value | acc]
   end
 

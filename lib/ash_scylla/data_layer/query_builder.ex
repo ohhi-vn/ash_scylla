@@ -159,6 +159,8 @@ defmodule AshScylla.DataLayer.QueryBuilder do
       end
 
     query = IO.iodata_to_binary(query_acc)
+    Logger.debug("AshScylla: Raw query before parameterization: #{inspect(query)}")
+    Logger.debug("AshScylla: Params: #{inspect(params)}")
     {query, params}
   end
 
@@ -564,7 +566,27 @@ defmodule AshScylla.DataLayer.QueryBuilder do
                 {[left_cql, " AND ", right_cql], left_params ++ right_params}
 
               :or ->
-                {["(", left_cql, " OR ", right_cql, ")"], left_params ++ right_params}
+                # CQL does not support OR. Try to rewrite as IN if both sides
+                # are eq on the same field.
+                case rewrite_or_to_in(left, right) do
+                  {:ok, {field_name, values}} ->
+                    placeholders =
+                      values
+                      |> Enum.map(fn _ -> "?" end)
+                      |> Enum.intersperse(", ")
+                      |> IO.iodata_to_binary()
+
+                    {["#{cql_identifier(field_name)} IN (#{placeholders})"],
+                     Enum.map(values, &maybe_atom_to_string/1)}
+
+                  :error ->
+                    Logger.warning(
+                      "AshScylla: CQL does not support OR in WHERE clauses. " <>
+                        "Skipping OR expression: #{inspect(%{op: :or, left: left, right: right})}"
+                    )
+
+                    {"", []}
+                end
 
               _ ->
                 filter_to_cql(%{operator: op, left: left, right: right})
@@ -967,6 +989,61 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   defp extract_filter_columns(%{expression: expr}), do: get_filter_columns([expr])
   defp extract_filter_columns(%{left: left, right: right}), do: get_filter_columns([left, right])
   defp extract_filter_columns(_), do: []
+
+  # Attempt to rewrite an OR-of-eq on the same field to IN (CQL doesn't support OR).
+  # Returns {:ok, {field_name, values}} or :error.
+  defp rewrite_or_to_in(left, right) do
+    left = deeply_unwrap_expr(left)
+    right = deeply_unwrap_expr(right)
+
+    Logger.debug(
+      "AshScylla: rewrite_or_to_in left: #{inspect(left, pretty: true, limit: :infinity)}"
+    )
+
+    Logger.debug(
+      "AshScylla: rewrite_or_to_in right: #{inspect(right, pretty: true, limit: :infinity)}"
+    )
+
+    case {left, right} do
+      {%{left: %{name: name1}, operator: op1, right: v1},
+       %{left: %{name: name2}, operator: op2, right: v2}}
+      when name1 == name2 and name1 != nil and op1 in [:eq, :==] and op2 in [:eq, :==] ->
+        {:ok, {name1, [extract_value(v1), extract_value(v2)]}}
+
+      {%{left: %{name: name1}, op: op1, right: v1}, %{left: %{name: name2}, op: op2, right: v2}}
+      when name1 == name2 and name1 != nil and op1 in [:eq, :==] and op2 in [:eq, :==] ->
+        {:ok, {name1, [extract_value(v1), extract_value(v2)]}}
+
+      _ ->
+        :error
+    end
+  end
+
+  defp unwrap_expr(%{expression: expr}), do: unwrap_expr(expr)
+  defp unwrap_expr(other), do: other
+
+  defp deeply_unwrap_expr(%{expression: expr}), do: deeply_unwrap_expr(expr)
+
+  defp deeply_unwrap_expr(%{left: left, op: op, right: right}) do
+    %{left: deeply_unwrap_expr(left), op: op, right: deeply_unwrap_expr(right)}
+  end
+
+  defp deeply_unwrap_expr(%{left: left, operator: op, right: right}) do
+    %{left: deeply_unwrap_expr(left), operator: op, right: deeply_unwrap_expr(right)}
+  end
+
+  defp deeply_unwrap_expr(%Ash.Query.Ref{attribute: %{name: name}}), do: %{name: name}
+  defp deeply_unwrap_expr(%Ash.Query.Ref{attribute: name}) when is_atom(name), do: %{name: name}
+
+  defp deeply_unwrap_expr(%{name: _} = n), do: n
+  defp deeply_unwrap_expr(%{value: _} = v), do: v
+  defp deeply_unwrap_expr(other), do: other
+
+  defp maybe_atom_to_string(value) when is_atom(value), do: Atom.to_string(value)
+  defp maybe_atom_to_string(value), do: value
+
+  defp extract_value(%{value: v}), do: extract_value(v)
+  defp extract_value(v), do: v
 
   @doc false
   @spec secondary_index_scan?(term(), list()) :: boolean()
