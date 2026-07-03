@@ -167,32 +167,53 @@ defmodule AshScylla.ConnectionTest do
   # ── cluster mode selection ─────────────────────────────────────────────────
 
   describe "cluster mode selection" do
-    test "single node uses Xandra (not Xandra.Cluster)" do
+    test "single node has cluster? false" do
       name = start_conn(nodes: ["127.0.0.1:9042"])
       conn = Connection.get_conn(name)
       assert is_pid(conn.conn)
       assert conn.nodes == ["127.0.0.1:9042"]
+      assert conn.cluster? == false
     end
 
     @tag :skip
-    test "multiple nodes with same port uses Xandra.Cluster" do
+    test "multiple nodes with same port has cluster? true" do
       name = start_conn(nodes: ["127.0.0.1:9042", "127.0.0.1:9042"])
       conn = Connection.get_conn(name)
       assert is_pid(conn.conn)
+      assert conn.cluster? == true
     end
 
-    @tag :skip
-    test "multiple nodes with different ports falls back to single-node" do
-      name = start_conn(nodes: ["127.0.0.1:9043", "127.0.0.1:9044"])
+    test "multiple nodes with different ports has cluster? false (fallback)" do
+      name = start_conn(nodes: ["127.0.0.1:9043", "127.0.0.1:9044", "127.0.0.1:9045"])
       conn = Connection.get_conn(name)
       assert is_pid(conn.conn)
+
+      assert conn.cluster? == false,
+             "Expected cluster? false for mixed-port fallback, got true — " <>
+               "this would cause FunctionClauseError when dispatching to Xandra.Cluster " <>
+               "for a plain Xandra connection"
     end
 
     @tag :skip
-    test "multiple nodes with tuple format and same port uses Xandra.Cluster" do
+    test "multiple nodes with tuple format and same port has cluster? true" do
       name = start_conn(nodes: [{"127.0.0.1", 9042}, {"127.0.0.1", 9042}])
       conn = Connection.get_conn(name)
       assert is_pid(conn.conn)
+      assert conn.cluster? == true
+    end
+
+    test "multiple nodes with tuple format and different ports has cluster? false" do
+      name = start_conn(nodes: [{"127.0.0.1", 9043}, {"127.0.0.1", 9044}])
+      conn = Connection.get_conn(name)
+      assert is_pid(conn.conn)
+      assert conn.cluster? == false
+    end
+
+    test "single node with tuple format has cluster? false" do
+      name = start_conn(nodes: [{"127.0.0.1", 9042}])
+      conn = Connection.get_conn(name)
+      assert is_pid(conn.conn)
+      assert conn.cluster? == false
     end
   end
 

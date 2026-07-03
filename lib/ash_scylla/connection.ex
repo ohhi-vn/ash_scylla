@@ -401,7 +401,7 @@ defmodule AshScylla.Connection do
         ])
       )
 
-    {start_fun, xandra_opts} =
+    {start_fun, xandra_opts, cluster?} =
       if length(nodes) > 1 do
         # Check if all nodes use the same port. Xandra.Cluster uses a single
         # autodiscovered_nodes_port for all peers, so mixed-port clusters
@@ -434,7 +434,7 @@ defmodule AshScylla.Connection do
               Keyword.put(xandra_opts, :sync_connect, 5_000)
             end
 
-          {&Xandra.Cluster.start_link/1, xandra_opts}
+          {&Xandra.Cluster.start_link/1, xandra_opts, true}
         else
           # Nodes have different ports — Xandra.Cluster can't handle this.
           # Fall back to a single-node connection to the first node.
@@ -446,13 +446,11 @@ defmodule AshScylla.Connection do
 
           # Override nodes to only use the first node for single connection
           xandra_opts = Keyword.put(xandra_opts, :nodes, [hd(nodes_as_strings)])
-          {&Xandra.start_link/1, xandra_opts}
+          {&Xandra.start_link/1, xandra_opts, false}
         end
       else
-        {&Xandra.start_link/1, xandra_opts}
+        {&Xandra.start_link/1, xandra_opts, false}
       end
-
-    cluster? = length(nodes) > 1
 
     case start_fun.(xandra_opts) do
       {:ok, conn} ->

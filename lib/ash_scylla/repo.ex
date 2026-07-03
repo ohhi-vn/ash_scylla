@@ -149,7 +149,7 @@ defmodule AshScylla.Repo do
       @doc false
       @spec build_replication_clause(keyword()) :: String.t()
       def build_replication_clause(opts) do
-        case Keyword.get(opts, :strategy, :simple) do
+        case Keyword.get(opts, :strategy, :network_topology) do
           :simple ->
             factor = Keyword.get(opts, :replication_factor, 1)
             "{'class': 'SimpleStrategy', 'replication_factor': #{factor}}"
@@ -158,10 +158,19 @@ defmodule AshScylla.Repo do
             topologies = Keyword.get(opts, :topologies, [])
 
             topology_str =
-              Enum.map_join(topologies, ", ", fn {dc, count} ->
-                dc_str = to_string(dc) |> AshScylla.Identifier.sanitize!()
-                "'#{dc_str}': #{count}"
-              end)
+              if topologies == [] do
+                # Default to a single datacenter with replication factor 1
+                # when no topologies are configured. This is required for
+                # ScyllaDB 6.x+ which uses tablet replication by default
+                # and does not support SimpleStrategy.
+                factor = Keyword.get(opts, :replication_factor, 1)
+                "'replication_factor': #{factor}"
+              else
+                Enum.map_join(topologies, ", ", fn {dc, count} ->
+                  dc_str = to_string(dc) |> AshScylla.Identifier.sanitize!()
+                  "'#{dc_str}': #{count}"
+                end)
+              end
 
             "{'class': 'NetworkTopologyStrategy', #{topology_str}}"
         end
