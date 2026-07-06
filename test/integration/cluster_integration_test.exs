@@ -474,7 +474,11 @@ defmodule AshScylla.ClusterIntegrationTest do
                "org.apache.cassandra.locator.NetworkTopologyStrategy"
              ]
 
-      assert replication["replication_factor"] == to_string(@replication_factor)
+      # When using the 'replication_factor' shorthand in NetworkTopologyStrategy,
+      # Scylla expands it to the actual datacenter name (e.g., 'datacenter1').
+      # Check both the shorthand key and the expanded per-datacenter form.
+      rf = replication["replication_factor"] || replication["datacenter1"]
+      assert rf == to_string(@replication_factor)
     end
 
     test "tables exist in cluster keyspace", %{conn: conn} do

@@ -97,6 +97,21 @@ defmodule AshScylla.Release do
   def migrate(repo, all_repos, opts \\ []) do
     Logger.info("AshScylla.Release: Starting migration for #{inspect(repo)}")
 
+    # Auto-create keyspace if requested. This must happen before resource
+    # migration since table/index/view CQL requires the keyspace to exist.
+    if Keyword.get(opts, :create_keyspace, true) do
+      Logger.info("AshScylla.Release: Creating keyspace for #{inspect(repo)}")
+
+      case create_keyspace(repo, opts) do
+        :ok ->
+          Logger.info("AshScylla.Release: Keyspace ready")
+
+        {:error, reason} ->
+          Logger.error("AshScylla.Release: Failed to create keyspace: #{inspect(reason)}")
+          {:error, "Keyspace creation failed: #{inspect(reason)}"}
+      end
+    end
+
     resources = find_resources(all_repos, opts)
 
     dry_run = Keyword.get(opts, :dry_run, false)

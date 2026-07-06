@@ -119,6 +119,9 @@ defmodule AshScylla.Migrator do
   defp execute_statements(conn_name, [stmt | rest], index, acc) do
     Logger.info("AshScylla.Migrator: Executing statement #{index}")
 
+    # Always pass keyspace in opts so that each statement explicitly runs
+    # `USE keyspace` before execution. This is critical for Xandra.Cluster
+    # where pooled connections may not share keyspace context.
     conn_opts = connection_keyspace_opts(conn_name)
 
     case AshScylla.Connection.query(conn_name, stmt, [], conn_opts ++ [consistency: :quorum]) do
@@ -133,9 +136,22 @@ defmodule AshScylla.Migrator do
 
   defp connection_keyspace_opts(conn_name) do
     case AshScylla.Connection.get_conn(conn_name) do
-      nil -> []
-      %AshScylla.Connection{keyspace: keyspace} when is_binary(keyspace) -> [keyspace: keyspace]
-      _ -> []
+      nil ->
+        []
+
+      %AshScylla.Connection{keyspace: keyspace, cluster?: cluster?} when is_binary(keyspace) ->
+        # For cluster connections, always pass keyspace in opts so that
+        # `query/4` executes `USE keyspace` before each statement.
+        # This ensures every statement runs in the correct keyspace context
+        # regardless of which pooled connection handles it.
+        if cluster? do
+          [keyspace: keyspace]
+        else
+          [keyspace: keyspace]
+        end
+
+      _ ->
+        []
     end
   end
 end

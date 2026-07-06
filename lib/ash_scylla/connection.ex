@@ -157,8 +157,16 @@ defmodule AshScylla.Connection do
       {keyspace, opts} ->
         validate_keyspace!(keyspace)
 
-        with {:ok, _} <- execute_module(cluster?).execute(conn, "USE #{keyspace}", []) do
-          execute_module(cluster?).execute(conn, query, typed_params(params), opts)
+        # Try USE first, but if it fails (e.g. keyspace doesn't exist yet),
+        # still attempt the actual statement. Statements like CREATE KEYSPACE
+        # don't require keyspace context; if the statement itself needs a
+        # keyspace, it will fail with its own descriptive error.
+        case execute_module(cluster?).execute(conn, "USE #{keyspace}", []) do
+          {:ok, _} ->
+            execute_module(cluster?).execute(conn, query, typed_params(params), opts)
+
+          {:error, _} ->
+            execute_module(cluster?).execute(conn, query, typed_params(params), opts)
         end
     end
   end
@@ -169,7 +177,6 @@ defmodule AshScylla.Connection do
         {:error, :not_connected}
 
       %__MODULE__{} = conn ->
-        # Set keyspace from opts if provided and different from current
         request_keyspace = Keyword.get(opts, :keyspace)
 
         if request_keyspace && request_keyspace != conn.keyspace do
@@ -184,8 +191,24 @@ defmodule AshScylla.Connection do
           )
         else
           ensure_keyspace!(conn, name)
-          opts = Keyword.delete(opts, :keyspace)
-          query(conn, query, params, opts)
+
+          # Re-fetch connection to get updated `keyspace_used` state after
+          # `ensure_keyspace!` (the GenServer may have tried `USE keyspace`
+          # again and updated the state).
+          updated_conn = get_conn(name) || conn
+
+          # Keep keyspace in opts when:
+          # 1. Cluster connection — pooled connections don't share keyspace context
+          # 2. keyspace_used is still false — keyspace doesn't exist yet (e.g.
+          #    migration will create it), so we must retry `USE` each time
+          opts =
+            if updated_conn.cluster? or not updated_conn.keyspace_used do
+              opts
+            else
+              Keyword.delete(opts, :keyspace)
+            end
+
+          query(updated_conn, query, params, opts)
         end
     end
   end
@@ -234,8 +257,12 @@ defmodule AshScylla.Connection do
       {keyspace, opts} ->
         validate_keyspace!(keyspace)
 
-        with {:ok, _} <- execute_module(cluster?).execute(conn, "USE #{keyspace}", []) do
-          execute_module(cluster?).execute!(conn, query, typed_params(params), opts)
+        case execute_module(cluster?).execute(conn, "USE #{keyspace}", []) do
+          {:ok, _} ->
+            execute_module(cluster?).execute!(conn, query, typed_params(params), opts)
+
+          {:error, _} ->
+            execute_module(cluster?).execute!(conn, query, typed_params(params), opts)
         end
     end
   end
@@ -260,8 +287,17 @@ defmodule AshScylla.Connection do
           )
         else
           ensure_keyspace!(conn, name)
-          opts = Keyword.delete(opts, :keyspace)
-          query!(conn, query, params, opts)
+
+          updated_conn = get_conn(name) || conn
+
+          opts =
+            if updated_conn.cluster? or not updated_conn.keyspace_used do
+              opts
+            else
+              Keyword.delete(opts, :keyspace)
+            end
+
+          query!(updated_conn, query, params, opts)
         end
     end
   end

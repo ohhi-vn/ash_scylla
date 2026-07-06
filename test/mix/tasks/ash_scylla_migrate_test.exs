@@ -200,6 +200,7 @@ defmodule Mix.Tasks.AshScylla.MigrateTest do
 
   describe "migration file path" do
     test "uses priv/repo/migrations directory" do
+      Code.ensure_loaded(Mix.Tasks.AshScylla.Migrate)
       migrate_task = Mix.Tasks.AshScylla.Migrate
       assert function_exported?(migrate_task, :run, 1)
     end
