@@ -377,6 +377,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
     table_name = SchemaUtils.get_table_name(resource)
     resource_indexes = Dsl.secondary_indexes(resource)
     unindexable = SchemaUtils.unindexable_columns(resource)
+    ks = AshScylla.Migration.keyspace(resource)
 
     existing_index_names =
       live_indexes
@@ -396,6 +397,12 @@ defmodule AshScylla.DataLayer.SchemaMigration do
       # ScyllaDB OSS doesn't support multi-column secondary indexes.
       # Generate a separate single-column index per column.
       # Skip the sole partition key column — already indexed by the partitioner.
+      qualified =
+        if ks,
+          do:
+            "#{AshScylla.Identifier.quote_name(ks)}.#{AshScylla.Identifier.quote_name(table_name)}",
+          else: AshScylla.Identifier.quote_name(table_name)
+
       idx.columns
       |> Enum.reject(fn col -> col in unindexable end)
       |> Enum.map(fn col ->
@@ -406,7 +413,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
             "idx_#{table_name}_#{col}"
           end
 
-        "CREATE INDEX IF NOT EXISTS #{index_name} ON #{AshScylla.Identifier.quote_name(table_name)} (#{AshScylla.Identifier.quote_name(col)})"
+        "CREATE INDEX IF NOT EXISTS #{index_name} ON #{qualified} (#{AshScylla.Identifier.quote_name(col)})"
       end)
     end)
   end
@@ -424,6 +431,8 @@ defmodule AshScylla.DataLayer.SchemaMigration do
       |> Enum.map(fn v -> v.view_name end)
       |> MapSet.new()
 
+    ks = AshScylla.Migration.keyspace(resource)
+
     resource_views
     |> Enum.filter(fn view_config ->
       view_name = view_config[:name]
@@ -431,7 +440,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
     end)
     |> Enum.map(fn view_config ->
       view_name = view_config[:name]
-      config = view_config[:config] || []
+      config = Keyword.put(view_config[:config] || [], :keyspace, ks)
       MaterializedView.create_view_cql(view_name, table_name, config)
     end)
   end
@@ -444,12 +453,13 @@ defmodule AshScylla.DataLayer.SchemaMigration do
   @spec generate_views(module()) :: [String.t()]
   defp generate_views(resource) do
     table_name = SchemaUtils.get_table_name(resource)
+    ks = AshScylla.Migration.keyspace(resource)
     views = Dsl.materialized_views(resource)
 
     views
     |> Enum.map(fn view_config ->
       view_name = view_config[:name]
-      config = view_config[:config] || []
+      config = Keyword.put(view_config[:config] || [], :keyspace, ks)
       MaterializedView.create_view_cql(view_name, table_name, config)
     end)
   end

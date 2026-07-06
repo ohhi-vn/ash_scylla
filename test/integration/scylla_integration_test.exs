@@ -303,7 +303,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
       :ok ->
         Enum.each(
           [
-            "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}",
+            "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}",
             "CREATE TABLE IF NOT EXISTS ash_scylla_test.users (id UUID PRIMARY KEY, name TEXT, email TEXT, age INT, status TEXT, created_at TIMESTAMP)",
             "CREATE INDEX IF NOT EXISTS idx_users_email ON ash_scylla_test.users (email)",
             "CREATE INDEX IF NOT EXISTS idx_users_status ON ash_scylla_test.users (status)",

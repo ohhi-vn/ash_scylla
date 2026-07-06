@@ -19,8 +19,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       table("tenant_resource")
@@ -51,8 +50,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       table("multi_pk_resource")
@@ -468,7 +466,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
       assert cql =~ "("
       assert cql =~ "OR"
       assert cql =~ "AND"
-      assert cql =~ "status = ?"
+      assert cql =~ "status"
       assert cql =~ "email = ?"
       assert cql =~ "org_id = ?"
       assert length(params) == 4

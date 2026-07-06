@@ -566,8 +566,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
                 {[left_cql, " AND ", right_cql], left_params ++ right_params}
 
               :or ->
-                # CQL does not support OR. Try to rewrite as IN if both sides
-                # are eq on the same field.
+                # Try to rewrite same-field OR as IN (more efficient for CQL).
                 case rewrite_or_to_in(left, right) do
                   {:ok, {field_name, values}} ->
                     placeholders =
@@ -580,12 +579,8 @@ defmodule AshScylla.DataLayer.QueryBuilder do
                      Enum.map(values, &maybe_atom_to_string/1)}
 
                   :error ->
-                    Logger.warning(
-                      "AshScylla: CQL does not support OR in WHERE clauses. " <>
-                        "Skipping OR expression: #{inspect(%{op: :or, left: left, right: right})}"
-                    )
-
-                    {"", []}
+                    # Different-field OR: wrap in parens as best-effort CQL.
+                    {["(", left_cql, " OR ", right_cql, ")"], left_params ++ right_params}
                 end
 
               _ ->
@@ -1019,8 +1014,8 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     end
   end
 
-  defp unwrap_expr(%{expression: expr}), do: unwrap_expr(expr)
-  defp unwrap_expr(other), do: other
+  # defp unwrap_expr(%{expression: expr}), do: unwrap_expr(expr)
+  # defp unwrap_expr(other), do: other
 
   defp deeply_unwrap_expr(%{expression: expr}), do: deeply_unwrap_expr(expr)
 

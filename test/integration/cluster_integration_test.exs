@@ -58,7 +58,7 @@ defmodule AshScylla.ClusterIntegrationTest do
   @moduletag :integration
 
   @keyspace "ash_scylla_cluster_test"
-  @replication_factor 3
+  @replication_factor 1
 
   @scylla_image "scylladb/scylla:latest"
   @scylla_wait_timeout 180_000
@@ -213,7 +213,7 @@ defmodule AshScylla.ClusterIntegrationTest do
     cql = """
     CREATE KEYSPACE IF NOT EXISTS #{@keyspace}
     WITH REPLICATION = {
-      'class': 'SimpleStrategy',
+      'class': 'NetworkTopologyStrategy',
       'replication_factor': #{@replication_factor}
     }
     AND DURABLE_WRITES = true
@@ -470,8 +470,8 @@ defmodule AshScylla.ClusterIntegrationTest do
       [%{"replication" => replication}] = result.rows
 
       assert replication["class"] in [
-               "SimpleStrategy",
-               "org.apache.cassandra.locator.SimpleStrategy"
+               "NetworkTopologyStrategy",
+               "org.apache.cassandra.locator.NetworkTopologyStrategy"
              ]
 
       assert replication["replication_factor"] == to_string(@replication_factor)

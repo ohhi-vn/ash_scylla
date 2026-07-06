@@ -168,7 +168,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
       # Create keyspace and table for type round-trip tests
       execute_cql(
         conn,
-        "CREATE KEYSPACE IF NOT EXISTS ash_scylla_type_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}"
+        "CREATE KEYSPACE IF NOT EXISTS ash_scylla_type_test WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}"
       )
 
       execute_cql(

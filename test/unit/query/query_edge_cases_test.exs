@@ -509,7 +509,7 @@ defmodule AshScylla.EdgeCasesTest do
 
       {q, params} = QueryBuilder.build_optimized_query(dlq)
 
-      assert q == "SELECT * FROM tasks WHERE (status = ? OR status = ?)"
+      assert q == "SELECT * FROM tasks WHERE status IN (?, ?)"
       assert params == ["active", "pending"]
     end
 
@@ -540,7 +540,7 @@ defmodule AshScylla.EdgeCasesTest do
       {q, params} = QueryBuilder.build_optimized_query(dlq)
 
       assert q ==
-               "SELECT * FROM items WHERE (status = ? OR status = ?) AND created_at >= ? ORDER BY created_at asc LIMIT ?"
+               "SELECT * FROM items WHERE status IN (?, ?) AND created_at >= ? ORDER BY created_at asc LIMIT ?"
 
       assert params == ["active", "pending", dt, {"int", 25}]
 

@@ -110,7 +110,7 @@ defmodule AshScylla.Test do
 
       {cql, params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
       assert String.contains?(cql, "AND")
-      assert String.contains?(cql, "OR")
+      assert String.contains?(cql, "IN")
       assert params == ["active", "pending", 18]
     end
 

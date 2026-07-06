@@ -191,6 +191,8 @@ defmodule AshScylla.Migration do
         table_name = get_table_name(resource)
         unindexable = unindexable_columns(resource)
 
+        ks = keyspace(resource)
+
         indexes
         |> Enum.flat_map(fn idx ->
           # ScyllaDB OSS doesn't support multi-column secondary indexes.
@@ -206,7 +208,12 @@ defmodule AshScylla.Migration do
                 "idx_#{table_name}_#{col}"
               end
 
-            "CREATE INDEX IF NOT EXISTS #{index_name} ON #{quote_name(table_name)} (#{AshScylla.Identifier.quote_name(col)})"
+            qualified =
+              if ks,
+                do: "#{quote_name(ks)}.#{quote_name(table_name)}",
+                else: quote_name(table_name)
+
+            "CREATE INDEX IF NOT EXISTS #{index_name} ON #{qualified} (#{AshScylla.Identifier.quote_name(col)})"
           end)
         end)
     end

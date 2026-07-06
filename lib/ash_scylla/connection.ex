@@ -211,7 +211,7 @@ defmodule AshScylla.Connection do
   defp type_value(value) when is_float(value), do: {"double", value}
   defp type_value(true), do: {"boolean", true}
   defp type_value(false), do: {"boolean", false}
-  defp type_value(nil), do: {"text", nil}
+  defp type_value(nil), do: nil
   defp type_value(value) when is_list(value), do: {"list", value}
   defp type_value(value) when is_map(value), do: {"map", value}
   defp type_value(value), do: {"text", to_string(value)}
@@ -384,22 +384,18 @@ defmodule AshScylla.Connection do
       end)
 
     xandra_opts =
-      [
-        nodes: nodes_as_strings
-      ]
-      |> Keyword.merge(
-        Keyword.take(opts, [
-          :connect_timeout,
-          :authentication,
-          :compressor,
-          :encryption,
-          :protocol_version,
-          :transport_options,
-          :backoff_min,
-          :backoff_max,
-          :backoff_type
-        ])
-      )
+      Keyword.take(opts, [
+        :connect_timeout,
+        :authentication,
+        :compressor,
+        :encryption,
+        :protocol_version,
+        :transport_options,
+        :backoff_min,
+        :backoff_max,
+        :backoff_type
+      ])
+      |> Keyword.put(:nodes, nodes_as_strings)
 
     {start_fun, xandra_opts, cluster?} =
       if length(nodes) > 1 do

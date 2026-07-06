@@ -141,7 +141,7 @@ defmodule AshScylla.MigratorTest do
         Connection.query(
           setup_conn,
           "CREATE KEYSPACE IF NOT EXISTS #{keyspace} " <>
-            "WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}",
+            "WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}",
           []
         )
 
@@ -181,7 +181,7 @@ defmodule AshScylla.MigratorTest do
                  "127.0.0.1:9042",
                  [
                    "CREATE KEYSPACE IF NOT EXISTS #{keyspace} " <>
-                     "WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}"
+                     "WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}"
                  ],
                  keyspace: keyspace
                )

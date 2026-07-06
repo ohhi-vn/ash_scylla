@@ -252,7 +252,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
 
         xq(
           conn,
-          "CREATE KEYSPACE IF NOT EXISTS ash_scylla_dl_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}"
+          "CREATE KEYSPACE IF NOT EXISTS ash_scylla_dl_test WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}"
         )
 
         xq(

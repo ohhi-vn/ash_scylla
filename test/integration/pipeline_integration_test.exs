@@ -146,7 +146,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
         {:ok, _} =
           Xandra.execute(
             conn,
-            "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}"
+            "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}"
           )
 
         {:ok, _} =
@@ -174,7 +174,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
 
         Xandra.execute!(
           conn,
-          "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'SimpleStrategy', 'replication_factor': 1}"
+          "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}"
         )
 
         Xandra.execute!(
@@ -473,7 +473,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
       }
 
       {cql, _values} = QueryBuilder.filter_to_cql!(filter)
-      assert cql =~ "OR"
+      assert cql =~ "IN"
     end
 
     test "handles empty expressions" do

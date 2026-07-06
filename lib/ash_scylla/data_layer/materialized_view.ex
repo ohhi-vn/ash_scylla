@@ -70,10 +70,24 @@ defmodule AshScylla.DataLayer.MaterializedView do
     include_columns = Keyword.get(view_config, :include_columns, [])
     clustering_order = Keyword.get(view_config, :clustering_order, [])
     where_clause = Keyword.get(view_config, :where_clause)
+    keyspace = Keyword.get(view_config, :keyspace)
 
     # Build column list (primary key columns + included columns)
     all_columns = Enum.uniq(primary_key ++ include_columns)
     columns_str = all_columns |> Enum.map_join(", ", &AshScylla.Identifier.quote_name/1)
+
+    # Qualify base table with keyspace if provided
+    qualified_table =
+      if keyspace,
+        do:
+          "#{AshScylla.Identifier.quote_name(keyspace)}.#{AshScylla.Identifier.quote_name(base_table)}",
+        else: AshScylla.Identifier.quote_name(base_table)
+
+    # Qualify view name with keyspace if provided
+    qualified_view_name =
+      if keyspace,
+        do: "#{AshScylla.Identifier.quote_name(keyspace)}.#{view_name}",
+        else: to_string(view_name)
 
     # Build WHERE clause for NOT NULL constraints
     not_null_clause =
@@ -111,9 +125,9 @@ defmodule AshScylla.DataLayer.MaterializedView do
       end
 
     """
-    CREATE MATERIALIZED VIEW IF NOT EXISTS #{view_name}
+    CREATE MATERIALIZED VIEW IF NOT EXISTS #{qualified_view_name}
     AS SELECT #{columns_str}
-    FROM #{AshScylla.Identifier.quote_name(base_table)}
+    FROM #{qualified_table}
     WHERE #{not_null_clause}
     PRIMARY KEY #{pk_def}#{clustering_order_clause}
     """
