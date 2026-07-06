@@ -1,37 +1,116 @@
 defmodule AshScylla.Test do
   use ExUnit.Case, async: false
 
-  describe "DataLayer can?/2" do
-    test "returns true for supported features" do
+  describe "DataLayer can?/2 — supported features" do
+    test "returns true for CRUD features" do
       assert AshScylla.DataLayer.can?(nil, :create) == true
       assert AshScylla.DataLayer.can?(nil, :read) == true
       assert AshScylla.DataLayer.can?(nil, :update) == true
       assert AshScylla.DataLayer.can?(nil, :destroy) == true
+    end
+
+    test "returns true for query features" do
       assert AshScylla.DataLayer.can?(nil, :filter) == true
       assert AshScylla.DataLayer.can?(nil, :limit) == true
       assert AshScylla.DataLayer.can?(nil, :select) == true
-      assert AshScylla.DataLayer.can?(nil, :multitenancy) == true
-      assert AshScylla.DataLayer.can?(nil, :keyset) == true
-      assert AshScylla.DataLayer.can?(nil, :upsert) == true
-      assert AshScylla.DataLayer.can?(nil, :boolean_filter) == true
+      assert AshScylla.DataLayer.can?(nil, :sort) == true
+      assert AshScylla.DataLayer.can?(nil, {:sort, :string}) == true
       assert AshScylla.DataLayer.can?(nil, :distinct) == true
-      assert AshScylla.DataLayer.can?(nil, {:atomic, :update}) == true
-      assert AshScylla.DataLayer.can?(nil, {:atomic, :upsert}) == true
-      assert AshScylla.DataLayer.can?(nil, {:aggregate, :count}) == true
+      assert AshScylla.DataLayer.can?(nil, :keyset) == true
+      assert AshScylla.DataLayer.can?(nil, :boolean_filter) == true
+      assert AshScylla.DataLayer.can?(nil, :nested_expressions) == true
+      assert AshScylla.DataLayer.can?(nil, {:filter_expr, %{}}) == true
+    end
+
+    test "returns true for action features" do
+      assert AshScylla.DataLayer.can?(nil, :upsert) == true
       assert AshScylla.DataLayer.can?(nil, :bulk_create) == true
       assert AshScylla.DataLayer.can?(nil, :update_query) == true
       assert AshScylla.DataLayer.can?(nil, :destroy_query) == true
+      assert AshScylla.DataLayer.can?(nil, :transact) == true
+      assert AshScylla.DataLayer.can?(nil, :changeset_filter) == true
+      assert AshScylla.DataLayer.can?(nil, :calculate) == true
+      assert AshScylla.DataLayer.can?(nil, :action_select) == true
+      assert AshScylla.DataLayer.can?(nil, :async_engine) == true
     end
 
-    test "returns false for unsupported features" do
-      assert AshScylla.DataLayer.can?(nil, :transact) == true
+    test "returns true for structural features" do
+      assert AshScylla.DataLayer.can?(nil, :multitenancy) == true
+      assert AshScylla.DataLayer.can?(nil, :composite_primary_key) == true
+    end
+
+    test "returns true for atomic operations" do
+      assert AshScylla.DataLayer.can?(nil, {:atomic, :update}) == true
+      assert AshScylla.DataLayer.can?(nil, {:atomic, :upsert}) == true
+      assert AshScylla.DataLayer.can?(nil, {:atomic, :create}) == true
+    end
+
+    test "returns true for count aggregate" do
+      assert AshScylla.DataLayer.can?(nil, {:aggregate, :count}) == true
+    end
+  end
+
+  describe "DataLayer can?/2 — unsupported features" do
+    test "returns false for pagination features not in ScyllaDB" do
       assert AshScylla.DataLayer.can?(nil, :offset) == false
+      assert AshScylla.DataLayer.can?(nil, :distinct_sort) == false
+    end
+
+    test "returns false for expression/calculation features" do
+      assert AshScylla.DataLayer.can?(nil, :expr_error) == false
+      assert AshScylla.DataLayer.can?(nil, :expression_calculation) == false
+      assert AshScylla.DataLayer.can?(nil, :expression_calculation_sort) == false
+    end
+
+    test "returns false for aggregate features beyond count" do
       assert AshScylla.DataLayer.can?(nil, {:aggregate, :sum}) == false
+      assert AshScylla.DataLayer.can?(nil, {:aggregate, :avg}) == false
+      assert AshScylla.DataLayer.can?(nil, {:aggregate, :min}) == false
+      assert AshScylla.DataLayer.can?(nil, {:aggregate, :max}) == false
+      assert AshScylla.DataLayer.can?(nil, {:aggregate, :exists}) == false
+      assert AshScylla.DataLayer.can?(nil, {:aggregate, :unrelated}) == false
+      assert AshScylla.DataLayer.can?(nil, {:aggregate_relationship, nil}) == false
+      assert AshScylla.DataLayer.can?(nil, {:query_aggregate, :count}) == false
+      assert AshScylla.DataLayer.can?(nil, :aggregate_filter) == false
+      assert AshScylla.DataLayer.can?(nil, :aggregate_sort) == false
+    end
+
+    test "returns false for join/relationship features" do
       assert AshScylla.DataLayer.can?(nil, {:join, nil}) == false
       assert AshScylla.DataLayer.can?(nil, {:lateral_join, []}) == false
       assert AshScylla.DataLayer.can?(nil, :lateral_join) == false
-      assert AshScylla.DataLayer.can?(nil, :lock) == false
+      assert AshScylla.DataLayer.can?(nil, {:filter_relationship, nil}) == false
+      assert AshScylla.DataLayer.can?(nil, :through_relationship) == false
+    end
+
+    test "returns false for combination queries" do
       assert AshScylla.DataLayer.can?(nil, {:combine, :union}) == false
+      assert AshScylla.DataLayer.can?(nil, {:combine, :union_all}) == false
+      assert AshScylla.DataLayer.can?(nil, {:combine, :intersection}) == false
+    end
+
+    test "returns false for locking" do
+      assert AshScylla.DataLayer.can?(nil, :lock) == false
+      assert AshScylla.DataLayer.can?(nil, {:lock, :for_update}) == false
+    end
+
+    test "returns false for bulk/update features not implemented" do
+      assert AshScylla.DataLayer.can?(nil, :bulk_create_with_partial_success) == false
+      assert AshScylla.DataLayer.can?(nil, :update_many) == false
+      assert AshScylla.DataLayer.can?(nil, :bulk_upsert_return_skipped) == false
+    end
+
+    test "returns false for type/composite features" do
+      assert AshScylla.DataLayer.can?(nil, :composite_type) == false
+    end
+
+    test "returns false for exists queries" do
+      assert AshScylla.DataLayer.can?(nil, {:exists, :unrelated}) == false
+    end
+
+    test "returns false for unknown features" do
+      assert AshScylla.DataLayer.can?(nil, :non_existent_feature) == false
+      assert AshScylla.DataLayer.can?(nil, {:unknown, :tuple}) == false
     end
   end
 

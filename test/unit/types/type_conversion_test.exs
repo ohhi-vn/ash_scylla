@@ -39,16 +39,36 @@ defmodule AshScylla.TypeConversionTest do
       assert Connection.typed_params([false]) == [{"boolean", false}]
     end
 
-    test "encodes nil as nil" do
-      assert Connection.typed_params([nil]) == [nil]
+    test "encodes nil as typed nil" do
+      assert Connection.typed_params([nil]) == [{"text", nil}]
+    end
+
+    test "nil in mixed params is wrapped so Xandra encode_query_value/1 handles it" do
+      # Regression: raw nil hits encode_query_value(nil) which has no clause.
+      # Wrapping as {"text", nil} routes through the typed-tuple path.
+      params = Connection.typed_params(["hello", nil, 42])
+      assert params == [{"text", "hello"}, {"text", nil}, {"bigint", 42}]
+    end
+
+    test "nil in typed_params produces valid Xandra-compatible output" do
+      # Verify that nil values go through typed_params and produce output
+      # that Xandra's encode_query_value/1 can handle (typed tuple, not raw nil).
+      params = Connection.typed_params([nil, nil, nil])
+      assert params == [{"text", nil}, {"text", nil}, {"text", nil}]
+
+      # Each element is a {binary, nil} tuple — Xandra matches encode_query_value({type, value})
+      for {type, value} <- params do
+        assert is_binary(type)
+        assert is_nil(value)
+      end
     end
 
     test "encodes list as list" do
-      assert Connection.typed_params([[1, 2, 3]]) == [{"list", [1, 2, 3]}]
+      assert Connection.typed_params([[1, 2, 3]]) == [{"list<text>", [1, 2, 3]}]
     end
 
     test "encodes map as map" do
-      assert Connection.typed_params([%{key: "value"}]) == [{"map", %{key: "value"}}]
+      assert Connection.typed_params([%{key: "value"}]) == [{"map<text, text>", %{key: "value"}}]
     end
 
     test "encodes Date as date struct" do
@@ -89,13 +109,13 @@ defmodule AshScylla.TypeConversionTest do
     end
 
     test "encodes empty list and map" do
-      assert Connection.typed_params([[]]) == [{"list", []}]
-      assert Connection.typed_params([%{}]) == [{"map", %{}}]
+      assert Connection.typed_params([[]]) == [{"list<text>", []}]
+      assert Connection.typed_params([%{}]) == [{"map<text, text>", %{}}]
     end
 
     test "encodes nested structures" do
       nested = %{"key" => [1, 2, 3]}
-      assert Connection.typed_params([nested]) == [{"map", nested}]
+      assert Connection.typed_params([nested]) == [{"map<text, text>", nested}]
     end
 
     test "encodes Decimal struct" do
@@ -113,7 +133,13 @@ defmodule AshScylla.TypeConversionTest do
       @moduledoc false
 
       def query(query, params, opts \\ []) do
-        send(self(), {:type_query, query, params, opts})
+        raw_params =
+          Enum.map(params, fn
+            {_type, value} -> value
+            value -> value
+          end)
+
+        send(self(), {:type_query, query, raw_params, opts})
 
         cond do
           String.contains?(query, "INSERT INTO") and String.contains?(query, "type_roundtrip") ->
@@ -121,7 +147,7 @@ defmodule AshScylla.TypeConversionTest do
 
           String.contains?(query, "SELECT * FROM") and String.contains?(query, "type_roundtrip") and
               String.contains?(query, "WHERE id = ?") ->
-            [id] = params
+            [id] = raw_params
 
             row =
               case id do
@@ -273,8 +299,7 @@ defmodule AshScylla.TypeConversionTest do
         domain: nil,
         data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+      import AshScylla.DataLayer.Dsl
 
       scylla do
         repo(FakeTypeRepo)

@@ -73,7 +73,7 @@ defmodule AshScylla.DataLayer.CrudTest do
 
         # --- selects (real Xandra format: positional rows + string column names) ---
         "SELECT * FROM test_ks.crud_items WHERE id = ? LIMIT 1" ->
-          [id] = params
+          [id] = raw_params
 
           if id == "bad-fetch" do
             {:error, %Xandra.ConnectionError{reason: :timeout, action: nil}}
@@ -87,7 +87,7 @@ defmodule AshScylla.DataLayer.CrudTest do
           end
 
         "SELECT * FROM test_ks.lwt_items WHERE id = ? LIMIT 1" ->
-          [id] = params
+          [id] = raw_params
 
           {:ok,
            %Xandra.Page{
@@ -143,8 +143,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(FakeRepo)
@@ -174,8 +173,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(FakeRepo)
@@ -204,8 +202,7 @@ defmodule AshScylla.DataLayer.CrudTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(FakeRepo)

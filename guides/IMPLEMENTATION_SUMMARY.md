@@ -134,9 +134,9 @@ Current version: **0.13.1**
 | `:update` | ✅ | Update existing records |
 | `:destroy` | ✅ | Delete records |
 | `:filter` | ✅ | Filter queries with CQL WHERE conversion |
-| `:sort` | ✅ | ORDER BY on clustering columns (within partition) |
+| `:sort` / `{:sort, _}` | ✅ | ORDER BY on clustering columns (within partition) |
 | `:limit` | ✅ | LIMIT is natively supported |
-| `:offset` | ❌ | Raises error — use keyset pagination instead |
+| `:offset` | ❌ | ScyllaDB has no OFFSET — use keyset pagination |
 | `:select` | ✅ | Select specific fields |
 | `:multitenancy` | ✅ | Keyspace-based multitenancy |
 | `:bulk_create` | ✅ | Batch INSERT operations |
@@ -146,15 +146,47 @@ Current version: **0.13.1**
 | `:distinct` | ✅ | DISTINCT on partition key columns |
 | `:keyset` | ✅ | Token-based keyset pagination (default mode) |
 | `:boolean_filter` | ✅ | OR filter rewriting to IN where possible |
+| `:nested_expressions` | ✅ | Nested filter expressions |
+| `{:filter_expr, _}` | ✅ | Filter expression support |
 | `:composite_primary_key` | ✅ | Composite PK support |
 | `:changeset_filter` | ✅ | Changeset-based filtering |
 | `:calculate` | ✅ | In-memory calculations |
 | `:action_select` | ✅ | Action-specific select |
+| `:async_engine` | ✅ | Async engine support |
 | `{:aggregate, :count}` | ✅ | Per-partition COUNT |
 | `{:atomic, :update}` | ✅ | Atomic updates via LWT (IF clauses) |
 | `{:atomic, :upsert}` | ✅ | Atomic upserts via LWT |
 | `{:atomic, :create}` | ✅ | Atomic creates |
 | `:transact` | ✅ | Transaction wrapper (no-op for CWT, function-based for LWT) |
+
+### Features NOT Supported
+
+| Feature | Reason |
+|---------|--------|
+| `:offset` | ScyllaDB has no OFFSET; use keyset pagination |
+| `:expr_error` | Expression error handling not implemented |
+| `:expression_calculation` | Expression calculations done in Elixir post-processing |
+| `:expression_calculation_sort` | Not supported |
+| `:aggregate_filter` | Aggregate filtering not supported |
+| `:aggregate_sort` | Aggregate sorting not supported |
+| `:bulk_create_with_partial_success` | Bulk create is all-or-nothing |
+| `:update_many` | Update-many not implemented |
+| `:composite_type` | Composite types not supported |
+| `:through_relationship` | Through relationships not supported |
+| `:bulk_upsert_return_skipped` | Not supported |
+| `:distinct_sort` | Not supported |
+| `{:combine, :union}` | No combination queries (UNION/INTERSECT) |
+| `{:combine, :union_all}` | No combination queries |
+| `{:combine, :intersection}` | No combination queries |
+| `{:lock, :for_update}` | Locking is a no-op; use LWT for conditional operations |
+| `{:join, _}` | No JOINs; use denormalization or multiple queries |
+| `{:lateral_join, _}` | No lateral joins |
+| `{:filter_relationship, _}` | Relationship filtering not supported |
+| `{:exists, :unrelated}` | Exists queries not supported |
+| `{:aggregate, :unrelated}` | Unrelated aggregates not supported |
+| `{:aggregate_relationship, _}` | Aggregate relationships not supported |
+| `{:query_aggregate, _}` | Query aggregates not supported |
+| `{:aggregate, :sum}` / `:avg` / `:min` / `:max` / `:exists` | Only COUNT is supported |
 
 ### ScyllaDB-Specific Features
 

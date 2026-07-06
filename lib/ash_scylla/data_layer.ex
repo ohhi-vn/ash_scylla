@@ -52,10 +52,46 @@ defmodule AshScylla.DataLayer do
   - `:destroy_query` - Bulk delete via filtered queries
   - `:keyset` - Token-based keyset pagination (the default pagination mode)
   - `:distinct` - DISTINCT on partition key columns
+  - `:sort` / `{:sort, _}` - ORDER BY on clustering columns
+  - `:boolean_filter` - OR filter rewriting to IN where possible
+  - `:nested_expressions` - Nested filter expressions
+  - `{:filter_expr, _}` - Filter expression support
+  - `:changeset_filter` - Changeset-based filtering
+  - `:calculate` - In-memory calculations
+  - `:action_select` - Action-specific select
+  - `:async_engine` - Async engine support
+  - `:bulk_create` - Batch INSERT operations
+  - `:transact` - Transaction wrapper
+  - `:composite_primary_key` - Composite primary key support
   - `{:aggregate, :count}` - Per-partition COUNT aggregates
   - `{:atomic, :update}` - Atomic updates via LWT (IF clauses)
   - `{:atomic, :upsert}` - Atomic upserts via LWT
-  - `:boolean_filter` - OR filter rewriting to IN where possible
+  - `{:atomic, :create}` - Atomic creates
+
+  ## Features NOT Supported
+
+  - `:offset` - ScyllaDB has no OFFSET; use keyset pagination
+  - `:expr_error` - Expression error handling not implemented
+  - `:expression_calculation` - Expression calculations done in Elixir
+  - `:expression_calculation_sort` - Not supported
+  - `:aggregate_filter` - Aggregate filtering not supported
+  - `:aggregate_sort` - Aggregate sorting not supported
+  - `:bulk_create_with_partial_success` - Bulk create is all-or-nothing
+  - `:update_many` - Update-many not implemented
+  - `:composite_type` - Composite types not supported
+  - `:through_relationship` - Through relationships not supported
+  - `:bulk_upsert_return_skipped` - Not supported
+  - `:distinct_sort` - Not supported
+  - `{:combine, :union}` / `{:combine, :union_all}` / `{:combine, :intersection}` - No combination queries
+  - `{:lock, :for_update}` - Locking is a no-op
+  - `{:join, _}` - No JOINs (use denormalization)
+  - `{:lateral_join, _}` - No lateral joins
+  - `{:filter_relationship, _}` - Relationship filtering not supported
+  - `{:exists, :unrelated}` - Exists queries not supported
+  - `{:aggregate, :unrelated}` - Unrelated aggregates not supported
+  - `{:aggregate_relationship, _}` - Aggregate relationships not supported
+  - `{:query_aggregate, _}` - Query aggregates not supported
+  - `{:aggregate, :sum}` / `{:aggregate, :avg}` / etc. - Only COUNT is supported
 
   ## Limitations
 
@@ -108,13 +144,16 @@ defmodule AshScylla.DataLayer do
                         :update_query,
                         :destroy_query,
                         :distinct,
+                        :keyset,
                         :boolean_filter,
                         :transact,
                         :composite_primary_key,
                         :changeset_filter,
                         :sort,
                         :calculate,
-                        :action_select
+                        :action_select,
+                        :nested_expressions,
+                        :async_engine
                       ])
 
   # Query struct is owned by AshScylla.Query — this module operates on it.
@@ -149,9 +188,6 @@ defmodule AshScylla.DataLayer do
   def can?(_resource_or_dsl, :keyset), do: true
 
   @impl Ash.DataLayer
-  def can?(_resource_or_dsl, {:combine, :union}), do: false
-
-  @impl Ash.DataLayer
   def can?(_resource_or_dsl, :boolean_filter), do: true
 
   @impl Ash.DataLayer
@@ -179,16 +215,10 @@ defmodule AshScylla.DataLayer do
   def can?(_resource_or_dsl, :lock), do: false
 
   @impl Ash.DataLayer
-  def can?(_resource_or_dsl, :nested_expressions), do: true
-
-  @impl Ash.DataLayer
   def can?(_resource_or_dsl, {:filter_expr, _}), do: true
 
   @impl Ash.DataLayer
   def can?(_resource_or_dsl, {:sort, _}), do: true
-
-  @impl Ash.DataLayer
-  def can?(_resource_or_dsl, :async_engine), do: true
 
   @impl Ash.DataLayer
   def can?(_resource_or_dsl, :bulk_create), do: true
@@ -209,11 +239,60 @@ defmodule AshScylla.DataLayer do
   def can?(_resource_or_dsl, :action_select), do: true
 
   @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :nested_expressions), do: true
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :async_engine), do: true
+
+  # ── Unsupported features ──────────────────────────────────────────────
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :offset), do: false
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :expr_error), do: false
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :expression_calculation_sort), do: false
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :aggregate_filter), do: false
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :aggregate_sort), do: false
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :bulk_create_with_partial_success), do: false
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :update_many), do: false
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :composite_type), do: false
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :through_relationship), do: false
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :bulk_upsert_return_skipped), do: false
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, :distinct_sort), do: false
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, {:combine, :union}), do: false
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, {:combine, :union_all}), do: false
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, {:combine, :intersection}), do: false
+
+  @impl Ash.DataLayer
   def can?(_resource_or_dsl, {:lock, :for_update}), do: false
 
   @impl Ash.DataLayer
   def can?(_resource_or_dsl, {:join, _other_resource}) do
-    # ScyllaDB doesn't support JOINs natively
     false
   end
 
@@ -221,6 +300,22 @@ defmodule AshScylla.DataLayer do
   def can?(_resource_or_dsl, {:lateral_join, _resources}) do
     false
   end
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, {:filter_relationship, _relationship}) do
+    false
+  end
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, {:exists, :unrelated}), do: false
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, {:aggregate_relationship, _relationship}) do
+    false
+  end
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, {:query_aggregate, _kind}), do: false
 
   @impl Ash.DataLayer
   def can?(_resource_or_dsl, feature) when is_atom(feature) do
@@ -1767,7 +1862,7 @@ defmodule AshScylla.DataLayer do
     resource
     |> Info.attributes()
     |> Enum.reduce(%{}, fn attr, acc ->
-      cql = resolve_cql_type_for_attr(attr)
+      cql = resolve_attr_cql_type(attr)
 
       acc
       |> Map.put(attr.name, cql)
@@ -1775,104 +1870,208 @@ defmodule AshScylla.DataLayer do
     end)
   end
 
-  @spec resolve_cql_type_for_attr(map()) :: String.t()
-  defp resolve_cql_type_for_attr(attr) do
-    # Try storage_type/1 for Ash type modules (most reliable source of truth)
+  # Resolves the CQL type for an Ash attribute, trying storage_type/1 first
+  # for Ash type modules, then falling back to the raw attr.type.
+  defp resolve_attr_cql_type(attr) do
     if is_atom(attr.type) and function_exported?(attr.type, :storage_type, 1) do
-      case attr.type.storage_type([]) do
-        :uuid -> "uuid"
-        :integer -> "bigint"
-        :float -> "double"
-        :double -> "double"
-        :boolean -> "boolean"
-        :string -> "text"
-        :text -> "text"
-        :utc_datetime -> "timestamp"
-        :utc_datetime_usec -> "timestamp"
-        :naive_datetime -> "timestamp"
-        :naive_datetime_usec -> "timestamp"
-        :timestamp -> "timestamp"
-        :date -> "date"
-        :time -> "time"
-        :time_usec -> "time"
-        :decimal -> "decimal"
-        :binary -> "blob"
-        :duration -> "duration"
-        :ci_string -> "text"
-        :map -> "map"
-        _ -> fallback_cql_type_for_attr(attr)
-      end
+      ash_type_to_cql(attr.type.storage_type([]))
     else
-      fallback_cql_type_for_attr(attr)
+      ash_type_to_cql(attr.type)
     end
   end
 
-  # Fallback: match on the raw attr.type value (atom or module).
-  @spec fallback_cql_type_for_attr(map()) :: String.t()
-  defp fallback_cql_type_for_attr(attr) do
-    case attr.type do
-      UUID -> "uuid"
-      :uuid -> "uuid"
-      Ash.Type.Integer -> "bigint"
-      Ash.Type.Float -> "double"
-      :float -> "double"
-      :double -> "double"
-      Ash.Type.Boolean -> "boolean"
-      :boolean -> "boolean"
-      Ash.Type.String -> "text"
-      :string -> "text"
-      :text -> "text"
-      Ash.Type.DateTime -> "timestamp"
-      :utc_datetime -> "timestamp"
-      :utc_datetime_usec -> "timestamp"
-      :timestamp -> "timestamp"
-      Ash.Type.Date -> "date"
-      :date -> "date"
-      Ash.Type.Time -> "time"
-      :time -> "time"
-      Ash.Type.Decimal -> "decimal"
-      :decimal -> "decimal"
-      :binary -> "blob"
-      :duration -> "duration"
-      :map -> "map"
-      :list -> "list"
-      _ -> "text"
-    end
+  # ---------------------------------------------------------------------------
+  # Ash → CQL Type Mapping
+  # ---------------------------------------------------------------------------
+
+  # Maps an Ash attribute type to a Xandra-compatible CQL type string.
+  # Xandra's TypeParser.parse/1 parses these strings into the internal
+  # representation used by encode_value/2 (e.g., "list<text>" → {:list, [:text]}).
+  #
+  # Simple types:
+  #   :uuid → "uuid"
+  #   :string → "text"
+  #   :integer → "bigint"
+  #   :float → "double"
+  #   :boolean → "boolean"
+  #   :utc_datetime → "timestamp"
+  #   :date → "date"
+  #   :time → "time"
+  #   :decimal → "decimal"
+  #   :binary → "blob"
+  #
+  # Collection types:
+  #   {:array, :string} → "list<text>"
+  #   {:array, :uuid} → "list<uuid>"
+  #   {:set, :string} → "set<text>"
+  #   {:map, :string, :string} → "map<text, text>"
+  #   :list → "list<text>"
+  #   :map → "map<text, text>"
+  #
+  # Module types (Ash.Type.*):
+  #   Ash.Type.UUID → "uuid"
+  #   Ash.Type.String → "text"
+  #   etc.
+  @spec ash_type_to_cql(atom() | tuple()) :: String.t()
+  def ash_type_to_cql(type)
+
+  # Module-based Ash types
+  def ash_type_to_cql(Ash.Type.UUID), do: "uuid"
+  def ash_type_to_cql(Ash.Type.Integer), do: "bigint"
+  def ash_type_to_cql(Ash.Type.Float), do: "double"
+  def ash_type_to_cql(Ash.Type.Boolean), do: "boolean"
+  def ash_type_to_cql(Ash.Type.String), do: "text"
+  def ash_type_to_cql(Ash.Type.DateTime), do: "timestamp"
+  def ash_type_to_cql(Ash.Type.Date), do: "date"
+  def ash_type_to_cql(Ash.Type.Time), do: "time"
+  def ash_type_to_cql(Ash.Type.Decimal), do: "decimal"
+  def ash_type_to_cql(Ash.Type.Atom), do: "text"
+  def ash_type_to_cql(Ash.Type.CiString), do: "text"
+  def ash_type_to_cql(Ash.Type.Binary), do: "blob"
+  def ash_type_to_cql(Ash.Type.Duration), do: "duration"
+
+  # Atom-based types
+  def ash_type_to_cql(:uuid), do: "uuid"
+  def ash_type_to_cql(:integer), do: "bigint"
+  def ash_type_to_cql(:float), do: "double"
+  def ash_type_to_cql(:double), do: "double"
+  def ash_type_to_cql(:boolean), do: "boolean"
+  def ash_type_to_cql(:string), do: "text"
+  def ash_type_to_cql(:text), do: "text"
+  def ash_type_to_cql(:utc_datetime), do: "timestamp"
+  def ash_type_to_cql(:utc_datetime_usec), do: "timestamp"
+  def ash_type_to_cql(:naive_datetime), do: "timestamp"
+  def ash_type_to_cql(:naive_datetime_usec), do: "timestamp"
+  def ash_type_to_cql(:timestamp), do: "timestamp"
+  def ash_type_to_cql(:date), do: "date"
+  def ash_type_to_cql(:time), do: "time"
+  def ash_type_to_cql(:time_usec), do: "time"
+  def ash_type_to_cql(:decimal), do: "decimal"
+  def ash_type_to_cql(:binary), do: "blob"
+  def ash_type_to_cql(:duration), do: "duration"
+  def ash_type_to_cql(:ci_string), do: "text"
+  def ash_type_to_cql(:atom), do: "text"
+
+  # Collection types — default element types to "text"
+  def ash_type_to_cql(:list), do: "list<text>"
+  def ash_type_to_cql(:map), do: "map<text, text>"
+  def ash_type_to_cql(:set), do: "set<text>"
+
+  # Parameterized collection types
+  def ash_type_to_cql({:array, element_type}) do
+    "list<#{ash_type_to_cql(element_type)}>"
   end
 
-  # Wraps a float value with the correct CQL type tag (float vs double) based on
-  # the resource's attribute type info. This is necessary because Elixir floats are
-  # always 8 bytes (double), but ScyllaDB FLOAT columns expect 4 bytes.
-  # For all other types, the value is returned unchanged — connection.ex typed_params
-  # handles the mapping.
-  @spec wrap_typed(term(), atom() | String.t(), %{(atom() | String.t()) => String.t()}) :: term()
+  def ash_type_to_cql({:set, element_type}) do
+    "set<#{ash_type_to_cql(element_type)}>"
+  end
+
+  def ash_type_to_cql({:map, key_type, value_type}) do
+    "map<#{ash_type_to_cql(key_type)}, #{ash_type_to_cql(value_type)}>"
+  end
+
+  def ash_type_to_cql({:tuple, element_types}) when is_list(element_types) do
+    inner = element_types |> Enum.map(&ash_type_to_cql/1) |> Enum.join(", ")
+    "tuple<#{inner}>"
+  end
+
+  # Fallback for unknown types — default to "text"
+  def ash_type_to_cql(_), do: "text"
+
+  # ---------------------------------------------------------------------------
+  # Value Type Wrapping
+  # ---------------------------------------------------------------------------
+
+  # Wraps values into {cql_type_string, value} tuples for Xandra 0.19.x.
+  # Xandra requires typed parameters for simple queries — raw Elixir values
+  # are not accepted. This function produces the correct type tag for every
+  # Elixir value type, falling back to runtime type inference when the
+  # attribute's declared CQL type is unavailable or incompatible.
+  #
+  # The cql_types map (from attr_cql_type_map/1) provides the declared CQL
+  # type for each attribute. When the runtime value type conflicts with the
+  # declared type (e.g., a list value for a :string attribute), runtime
+  # inference takes precedence to avoid Xandra encoding errors.
+
+  @spec wrap_typed(term(), atom() | String.t(), %{(atom() | String.t()) => String.t()}) ::
+          {String.t(), term()} | nil
+
+  # Already-wrapped values pass through unchanged
   defp wrap_typed({type_str, _value} = typed, _key, _cql_types) when is_binary(type_str),
     do: typed
 
-  defp wrap_typed(nil, key, cql_types) do
-    cql_type = Map.get(cql_types, key) || Map.get(cql_types, to_string(key), "text")
-    {cql_type, nil}
-  end
+  # nil — wrapped as typed nil so Xandra's encode_query_value/1 handles it.
+  # Raw nil would hit encode_query_value(nil) which has no matching clause.
+  defp wrap_typed(nil, _key, _cql_types), do: {"text", nil}
 
+  # Boolean — always "boolean"
+  defp wrap_typed(value, _key, _cql_types) when is_boolean(value),
+    do: {"boolean", value}
+
+  # Float — use declared type (float vs double matters for ScyllaDB)
   defp wrap_typed(value, key, cql_types) when is_float(value) do
-    cql_type = Map.get(cql_types, key) || Map.get(cql_types, to_string(key), "double")
+    declared = Map.get(cql_types, key) || Map.get(cql_types, to_string(key))
+    cql_type = if declared in ["float", "double"], do: declared, else: "double"
     {cql_type, value}
   end
 
+  # Integer — use declared type or default to "bigint"
   defp wrap_typed(value, key, cql_types) when is_integer(value) do
-    cql_type = Map.get(cql_types, key) || Map.get(cql_types, to_string(key), "bigint")
+    declared = Map.get(cql_types, key) || Map.get(cql_types, to_string(key))
+    cql_type = if declared in ["bigint", "int", "smallint", "tinyint", "counter", "varint"], do: declared, else: "bigint"
     {cql_type, value}
   end
 
-  defp wrap_typed(value, _key, _cql_types) when is_boolean(value) do
-    {"boolean", value}
-  end
-
+  # Atom — convert to string, use declared type or default to "text"
   defp wrap_typed(value, key, cql_types) when is_atom(value) do
     cql_type = Map.get(cql_types, key) || Map.get(cql_types, to_string(key), "text")
     {cql_type, Atom.to_string(value)}
   end
 
+  # Binary — use declared type or default to "text"
+  defp wrap_typed(value, key, cql_types) when is_binary(value) do
+    cql_type = Map.get(cql_types, key) || Map.get(cql_types, to_string(key), "text")
+    {cql_type, value}
+  end
+
+  # List — must be wrapped as a list-compatible type for Xandra
+  defp wrap_typed(value, key, cql_types) when is_list(value) do
+    declared = Map.get(cql_types, key) || Map.get(cql_types, to_string(key))
+
+    cql_type =
+      if declared && String.starts_with?(declared, "list") do
+        declared
+      else
+        "list<text>"
+      end
+
+    {cql_type, value}
+  end
+
+  # Structs — must come before is_map since structs are maps.
+  # These pass through unchanged; connection.ex typed_params handles wrapping.
+  defp wrap_typed(%DateTime{} = value, _key, _cql_types), do: value
+  defp wrap_typed(%Date{} = value, _key, _cql_types), do: value
+  defp wrap_typed(%Time{} = value, _key, _cql_types), do: value
+  defp wrap_typed(%Decimal{} = value, _key, _cql_types), do: value
+  defp wrap_typed(%MapSet{} = value, _key, _cql_types), do: value
+
+  # Map — must be wrapped as a map-compatible type for Xandra
+  defp wrap_typed(value, key, cql_types) when is_map(value) do
+    declared = Map.get(cql_types, key) || Map.get(cql_types, to_string(key))
+
+    cql_type =
+      if declared && String.starts_with?(declared, "map") do
+        declared
+      else
+        "map<text, text>"
+      end
+
+    {cql_type, value}
+  end
+
+  # Catch-all: structs and unknown types pass through unchanged.
+  # connection.ex typed_params handles struct wrapping (DateTime, Date, etc.).
   defp wrap_typed(value, _key, _cql_types), do: value
 
   # Converts UUID string params to 16-byte binaries for Xandra.

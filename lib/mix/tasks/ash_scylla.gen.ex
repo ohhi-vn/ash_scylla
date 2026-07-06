@@ -305,24 +305,24 @@ defmodule Mix.Tasks.AshScylla.Gen do
       pk_attrs
       |> Enum.map(fn attr ->
         type_str = AshScylla.Migration.ash_type_to_cql_type(attr.type, attr.constraints)
-        "#{attr.name} #{type_str}"
+        "#{AshScylla.Identifier.quote_name(attr.name)} #{type_str}"
       end)
 
     regular_columns =
       regular_attrs
       |> Enum.map(fn attr ->
         type_str = AshScylla.Migration.ash_type_to_cql_type(attr.type, attr.constraints)
-        "#{attr.name} #{type_str}"
+        "#{AshScylla.Identifier.quote_name(attr.name)} #{type_str}"
       end)
 
     pk_clause =
       case pk_attrs do
         [single_pk] ->
-          "PRIMARY KEY (#{single_pk.name})"
+          "PRIMARY KEY (#{AshScylla.Identifier.quote_name(single_pk.name)})"
 
         [partition_key | clustering_keys] ->
           pk_cols = [partition_key.name | Enum.map(clustering_keys, & &1.name)]
-          "PRIMARY KEY (#{Enum.join(pk_cols, ", ")})"
+          "PRIMARY KEY (#{Enum.map_join(pk_cols, ", ", &AshScylla.Identifier.quote_name/1)})"
 
         [] ->
           ""
@@ -353,7 +353,7 @@ defmodule Mix.Tasks.AshScylla.Gen do
             "idx_#{String.replace(table_name, ".", "_")}_#{col}"
           end
 
-        "CREATE INDEX IF NOT EXISTS #{index_name} ON #{quote_ident(table_name)} (#{col})"
+        "CREATE INDEX IF NOT EXISTS #{index_name} ON #{quote_ident(table_name)} (#{AshScylla.Identifier.quote_name(col)})"
       end)
     end)
   end
