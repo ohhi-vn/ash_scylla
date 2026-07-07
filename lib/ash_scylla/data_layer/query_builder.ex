@@ -581,7 +581,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
                   :error ->
                     # Different-field OR: wrap each side in parens so that
                     # nested AND groups are properly scoped.
-                    {["((", left_cql, ") OR (", right_cql, "))"], left_params ++ right_params}
+                    {["(", left_cql, " OR ", right_cql, ")"], left_params ++ right_params}
                 end
 
               _ ->

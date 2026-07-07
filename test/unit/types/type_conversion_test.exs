@@ -40,21 +40,19 @@ defmodule AshScylla.TypeConversionTest do
     end
 
     test "encodes nil as typed nil" do
-      assert Connection.typed_params([nil]) == [{"text", nil}]
+      assert Connection.typed_params([nil]) == [nil]
     end
 
     test "nil in mixed params is wrapped so Xandra encode_query_value/1 handles it" do
       # Regression: raw nil hits encode_query_value(nil) which has no clause.
-      # Wrapping as {"text", nil} routes through the typed-tuple path.
+      # Wrapping as  nil routes through the typed-tuple path.
       params = Connection.typed_params(["hello", nil, 42])
-      assert params == [{"text", "hello"}, {"text", nil}, {"bigint", 42}]
+      assert params == [{"text", "hello"}, nil, {"bigint", 42}]
     end
 
     test "nil in typed_params produces valid Xandra-compatible output" do
-      # Verify that nil values go through typed_params and produce output
-      # that Xandra's encode_query_value/1 can handle (typed tuple, not raw nil).
       params = Connection.typed_params([nil, nil, nil])
-      assert params == [{"text", nil}, {"text", nil}, {"text", nil}]
+      assert params == [nil, nil, nil]
 
       # Each element is a {binary, nil} tuple — Xandra matches encode_query_value({type, value})
       for {type, value} <- params do

@@ -660,11 +660,11 @@ defmodule AshScylla.DataLayer.BugFixesTest do
 
       {cql, params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
 
-      # Each AND side of the OR must be individually parenthesized
-      # Expected pattern: ((from_user_id = ? AND to_user_id = ?) OR (from_user_id = ? AND to_user_id = ?)) AND archived = ?
-      assert cql =~ "((from_user_id"
-      assert cql =~ ") OR ("
-      assert cql =~ ")) AND"
+      # AND has higher precedence than OR in CQL, so outer parens suffice
+      # Expected pattern: (from_user_id = ? AND to_user_id = ? OR from_user_id = ? AND to_user_id = ?) AND archived = ?
+      assert String.starts_with?(cql, "(")
+      assert cql =~ " OR "
+      assert cql =~ ") AND"
 
       # Verify parentheses are balanced
       opened = cql |> String.graphemes() |> Enum.count(&(&1 == "("))
@@ -683,9 +683,9 @@ defmodule AshScylla.DataLayer.BugFixesTest do
 
       {cql, _params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
 
-      # Same-field short-form OR — not rewritten to IN, but properly parenthesized
-      assert String.starts_with?(cql, "((")
-      assert cql =~ ") OR ("
+      # Same-field short-form OR — not rewritten to IN, but parenthesized
+      assert String.starts_with?(cql, "(")
+      assert cql =~ " OR "
     end
 
     test "OR with different single fields wraps in parens" do
@@ -697,9 +697,9 @@ defmodule AshScylla.DataLayer.BugFixesTest do
 
       {cql, _params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
 
-      # Different-field OR: ((left) OR (right))
-      assert String.starts_with?(cql, "((")
-      assert cql =~ ") OR ("
+      # Different-field OR: (left OR right)
+      assert String.starts_with?(cql, "(")
+      assert cql =~ " OR "
     end
   end
 

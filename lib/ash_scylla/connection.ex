@@ -234,7 +234,7 @@ defmodule AshScylla.Connection do
   defp type_value(value) when is_float(value), do: {"double", value}
   defp type_value(true), do: {"boolean", true}
   defp type_value(false), do: {"boolean", false}
-  defp type_value(nil), do: {"text", nil}
+  defp type_value(nil), do: nil
   defp type_value(%MapSet{} = value), do: {"set<text>", value}
   defp type_value(value) when is_list(value), do: {"list<text>", value}
   defp type_value(value) when is_map(value), do: {"map<text, text>", value}

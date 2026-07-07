@@ -619,6 +619,226 @@ defmodule AshScylla.DataLayer.IntegrationTest do
 
       assert result.num_rows >= 1
     end
+
+    test "IN operator via QueryBuilder against real data", %{conn: conn} do
+      if is_nil(conn), do: :ok
+      id1 = uid()
+      id2 = uid()
+      id3 = uid()
+
+      xq(conn, "INSERT INTO ash_scylla_dl_test.items (id, name, status) VALUES (?, ?, ?)", [
+        id1,
+        "IN-Complex A",
+        "active"
+      ])
+
+      xq(conn, "INSERT INTO ash_scylla_dl_test.items (id, name, status) VALUES (?, ?, ?)", [
+        id2,
+        "IN-Complex B",
+        "pending"
+      ])
+
+      xq(conn, "INSERT INTO ash_scylla_dl_test.items (id, name, status) VALUES (?, ?, ?)", [
+        id3,
+        "IN-Complex C",
+        "archived"
+      ])
+
+      # Build IN filter via QueryBuilder and execute the generated CQL
+      {cql, _params} =
+        QueryBuilder.filter_to_cql(%{
+          operator: :in,
+          left: %{name: :status},
+          right: %{value: ["active", "pending"]}
+        })
+
+      full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
+      result = xq(conn, full_cql, ["active", "pending"])
+      rows = rows_to_maps(result)
+      names = Enum.map(rows, fn row -> row["name"] end)
+      assert "IN-Complex A" in names
+      assert "IN-Complex B" in names
+      refute "IN-Complex C" in names
+    end
+
+    test "OR operator (different columns) via QueryBuilder generates valid CQL", %{conn: conn} do
+      if is_nil(conn), do: :ok
+
+      # OR across different columns: status = active OR value = 10
+      {cql, _params} =
+        QueryBuilder.filter_to_cql(%{
+          op: :or,
+          left: %{operator: :eq, left: %{name: :status}, right: %{value: "active"}},
+          right: %{operator: :eq, left: %{name: :value}, right: %{value: 10}}
+        })
+
+      # Different-column OR wraps in parens as expected
+      assert String.starts_with?(cql, "(")
+      assert cql =~ "status = ?"
+      assert cql =~ "value = ?"
+      assert cql =~ " OR "
+    end
+
+    test "AND operator (different columns) via QueryBuilder", %{conn: conn} do
+      if is_nil(conn), do: :ok
+      id1 = uid()
+      id2 = uid()
+
+      xq(
+        conn,
+        "INSERT INTO ash_scylla_dl_test.items (id, name, status, value, score) VALUES (?, ?, ?, ?, ?)",
+        [
+          id1,
+          "AND-Complex 1",
+          "active",
+          42,
+          3.5
+        ]
+      )
+
+      xq(
+        conn,
+        "INSERT INTO ash_scylla_dl_test.items (id, name, status, value, score) VALUES (?, ?, ?, ?, ?)",
+        [
+          id2,
+          "AND-Complex 2",
+          "active",
+          99,
+          3.5
+        ]
+      )
+
+      # AND across three columns: status = active AND value = 42 AND score = 3.5
+      filter = %{
+        op: :and,
+        left: %{
+          op: :and,
+          left: %{operator: :eq, left: %{name: :status}, right: %{value: "active"}},
+          right: %{operator: :eq, left: %{name: :value}, right: %{value: 42}}
+        },
+        right: %{operator: :eq, left: %{name: :score}, right: %{value: 3.5}}
+      }
+
+      {cql, _params} = QueryBuilder.filter_to_cql(filter)
+      encoded = Enum.map(["active", 42, 3.5], &encode_param/1)
+
+      full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
+      result = xq(conn, full_cql, ["active", 42, 3.5])
+      rows = rows_to_maps(result)
+      assert length(rows) == 1
+      [row] = rows
+      assert row["name"] == "AND-Complex 1"
+    end
+
+    test "IN + AND composite query via QueryBuilder", %{conn: conn} do
+      if is_nil(conn), do: :ok
+      id1 = uid()
+      id2 = uid()
+      id3 = uid()
+
+      xq(
+        conn,
+        "INSERT INTO ash_scylla_dl_test.items (id, name, status, value) VALUES (?, ?, ?, ?)",
+        [
+          id1,
+          "IN-AND 1",
+          "active",
+          10
+        ]
+      )
+
+      xq(
+        conn,
+        "INSERT INTO ash_scylla_dl_test.items (id, name, status, value) VALUES (?, ?, ?, ?)",
+        [
+          id2,
+          "IN-AND 2",
+          "pending",
+          20
+        ]
+      )
+
+      xq(
+        conn,
+        "INSERT INTO ash_scylla_dl_test.items (id, name, status, value) VALUES (?, ?, ?, ?)",
+        [
+          id3,
+          "IN-AND 3",
+          "active",
+          20
+        ]
+      )
+
+      # IN (status) AND value = 20
+      filter = %{
+        op: :and,
+        left: %{
+          operator: :in,
+          left: %{name: :status},
+          right: %{value: ["active", "pending"]}
+        },
+        right: %{operator: :eq, left: %{name: :value}, right: %{value: 20}}
+      }
+
+      {cql, _params} = QueryBuilder.filter_to_cql(filter)
+
+      # Params order: from IN clause (active, pending), then value (20)
+      encoded = Enum.map(["active", "pending", 20], &encode_param/1)
+
+      full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
+      result = xq(conn, full_cql, ["active", "pending", 20])
+      rows = rows_to_maps(result)
+      names = Enum.map(rows, fn row -> row["name"] end)
+      assert "IN-AND 2" in names
+      assert "IN-AND 3" in names
+      refute "IN-AND 1" in names
+    end
+
+    test "OR (same column) rewritten to IN via QueryBuilder", %{conn: conn} do
+      if is_nil(conn), do: :ok
+      id1 = uid()
+      id2 = uid()
+      id3 = uid()
+
+      xq(conn, "INSERT INTO ash_scylla_dl_test.items (id, name, status) VALUES (?, ?, ?)", [
+        id1,
+        "OR-IN 1",
+        "active"
+      ])
+
+      xq(conn, "INSERT INTO ash_scylla_dl_test.items (id, name, status) VALUES (?, ?, ?)", [
+        id2,
+        "OR-IN 2",
+        "pending"
+      ])
+
+      xq(conn, "INSERT INTO ash_scylla_dl_test.items (id, name, status) VALUES (?, ?, ?)", [
+        id3,
+        "OR-IN 3",
+        "archived"
+      ])
+
+      # OR on same column gets rewritten to IN by QueryBuilder
+      filter = %{
+        op: :or,
+        left: %{operator: :eq, left: %{name: :status}, right: %{value: "active"}},
+        right: %{operator: :eq, left: %{name: :status}, right: %{value: "pending"}}
+      }
+
+      {cql, _params} = QueryBuilder.filter_to_cql(filter)
+      # Must be rewritten to IN clause, not OR
+      assert cql =~ "IN ("
+
+      encoded = Enum.map(["active", "pending"], &encode_param/1)
+
+      full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
+      result = xq(conn, full_cql, ["active", "pending"])
+      rows = rows_to_maps(result)
+      names = Enum.map(rows, fn row -> row["name"] end)
+      assert "OR-IN 1" in names
+      assert "OR-IN 2" in names
+      refute "OR-IN 3" in names
+    end
   end
 
   # ══════════════════════════════════════════════════════════════════════════

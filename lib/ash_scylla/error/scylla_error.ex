@@ -90,6 +90,7 @@ defmodule AshScylla.Error.ScyllaError do
     {:syntax_error, :syntax_error, %{}},
     {:unauthorized, :unauthorized, %{}},
     {:is_bootstrapping, :consistency_error, %{}},
+    {:invalid_syntax, :syntax_error, %{}},
     {:truncate_error, :query_error, %{}},
     {:function_failure, :query_error, %{}},
     {:invalid, :schema_error, %{}}
