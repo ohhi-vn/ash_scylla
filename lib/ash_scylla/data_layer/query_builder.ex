@@ -579,8 +579,9 @@ defmodule AshScylla.DataLayer.QueryBuilder do
                      Enum.map(values, &maybe_atom_to_string/1)}
 
                   :error ->
-                    # Different-field OR: wrap in parens as best-effort CQL.
-                    {["(", left_cql, " OR ", right_cql, ")"], left_params ++ right_params}
+                    # Different-field OR: wrap each side in parens so that
+                    # nested AND groups are properly scoped.
+                    {["((", left_cql, ") OR (", right_cql, "))"], left_params ++ right_params}
                 end
 
               _ ->

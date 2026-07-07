@@ -157,8 +157,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(FakeRepo)
@@ -187,8 +186,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(FakeRepo)
@@ -218,8 +216,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(FakeRepo)
@@ -624,6 +621,87 @@ defmodule AshScylla.DataLayer.BugFixesTest do
   # ===========================================================================
   # Bug 8: bulk_create/3 returns [] when return_records? is false
   # ===========================================================================
+
+  describe "Bug 9: OR with nested AND groups (missing parenthesis bug)" do
+    test "produces properly parenthesized CQL for (A AND B) OR (C AND D)" do
+      filter = %{
+        op: :and,
+        left: %{
+          op: :or,
+          left: %{
+            op: :and,
+            left: %{
+              name: :from_user_id,
+              op: :eq,
+              right: %{value: "019f2660-4930-7ac3-bb36-3f094e43443f"}
+            },
+            right: %{
+              name: :to_user_id,
+              op: :eq,
+              right: %{value: "019f2660-492b-72f1-9e16-66573f1e263e"}
+            }
+          },
+          right: %{
+            op: :and,
+            left: %{
+              name: :from_user_id,
+              op: :eq,
+              right: %{value: "019f2660-492b-72f1-9e16-66573f1e263e"}
+            },
+            right: %{
+              name: :to_user_id,
+              op: :eq,
+              right: %{value: "019f2660-4930-7ac3-bb36-3f094e43443f"}
+            }
+          }
+        },
+        right: %{name: :archived, op: :eq, right: %{value: false}}
+      }
+
+      {cql, params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
+
+      # Each AND side of the OR must be individually parenthesized
+      # Expected pattern: ((from_user_id = ? AND to_user_id = ?) OR (from_user_id = ? AND to_user_id = ?)) AND archived = ?
+      assert cql =~ "((from_user_id"
+      assert cql =~ ") OR ("
+      assert cql =~ ")) AND"
+
+      # Verify parentheses are balanced
+      opened = cql |> String.graphemes() |> Enum.count(&(&1 == "("))
+      closed = cql |> String.graphemes() |> Enum.count(&(&1 == ")"))
+      assert opened == closed, "Unbalanced parentheses in CQL: #{cql}"
+
+      assert length(params) == 5
+    end
+
+    test "OR with simple single-field expressions still works" do
+      filter = %{
+        op: :or,
+        left: %{name: :status, op: :eq, right: %{value: "active"}},
+        right: %{name: :status, op: :eq, right: %{value: "inactive"}}
+      }
+
+      {cql, _params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
+
+      # Same-field short-form OR — not rewritten to IN, but properly parenthesized
+      assert String.starts_with?(cql, "((")
+      assert cql =~ ") OR ("
+    end
+
+    test "OR with different single fields wraps in parens" do
+      filter = %{
+        op: :or,
+        left: %{name: :status, op: :eq, right: %{value: "active"}},
+        right: %{name: :age, op: :eq, right: %{value: 25}}
+      }
+
+      {cql, _params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
+
+      # Different-field OR: ((left) OR (right))
+      assert String.starts_with?(cql, "((")
+      assert cql =~ ") OR ("
+    end
+  end
 
   describe "Bug 8: bulk_create with return_records? false" do
     test "returns {:ok, []} when return_records? is false" do
