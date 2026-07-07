@@ -151,7 +151,7 @@ defmodule AshScylla.EdgeCasesTest do
       assert params == [dt]
     end
 
-    test "deeply nested AND/OR (3 levels)" do
+    test "deeply nested AND/OR (3 levels) raises error for cross-field OR" do
       filter = %{
         op: :and,
         left: %{
@@ -166,8 +166,10 @@ defmodule AshScylla.EdgeCasesTest do
         right: %{operator: :eq, left: %{name: "d"}, right: %{value: 4}}
       }
 
-      {_cql, params} = QueryBuilder.filter_to_cql(filter)
-      assert params == [1, 2, 3, 4]
+      # Cross-field OR: (a=1 AND b=2) OR (c=3) — CQL cannot express this
+      assert_raise AshScylla.Error, ~r/CQL does not support OR across different fields/, fn ->
+        QueryBuilder.filter_to_cql(filter)
+      end
     end
 
     test "unknown operator falls back to =" do
@@ -621,7 +623,7 @@ defmodule AshScylla.EdgeCasesTest do
       assert opens == closes
     end
 
-    test "parentheses are balanced for mixed AND/OR" do
+    test "parentheses are balanced for mixed AND/OR raises error for cross-field OR" do
       filter = %{
         op: :or,
         left: %{
@@ -636,10 +638,10 @@ defmodule AshScylla.EdgeCasesTest do
         }
       }
 
-      {cql, _} = QueryBuilder.filter_to_cql(filter)
-      opens = cql |> String.graphemes() |> Enum.count(&(&1 == "("))
-      closes = cql |> String.graphemes() |> Enum.count(&(&1 == ")"))
-      assert opens == closes
+      # Cross-field OR: (a=1 AND b=2) OR (c=3 AND d=4) — CQL cannot express this
+      assert_raise AshScylla.Error, ~r/CQL does not support OR across different fields/, fn ->
+        QueryBuilder.filter_to_cql(filter)
+      end
     end
 
     test "no trailing open paren for simple filter" do

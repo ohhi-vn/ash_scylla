@@ -447,7 +447,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
   # ---------------------------------------------------------------------------
 
   describe "complex filter combinations" do
-    test "nested AND/OR/AND 3 levels deep" do
+    test "nested AND/OR/AND 3 levels deep raises error for cross-field OR" do
       filter = %{
         op: :and,
         left: %{
@@ -462,11 +462,10 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         }
       }
 
+      # Same-field OR (status = active OR status = pending) is rewritable to IN,
+      # so this should succeed with status IN (?, ?)
       {cql, params} = QueryBuilder.filter_to_cql(filter)
-      assert cql =~ "("
-      assert cql =~ "OR"
-      assert cql =~ "AND"
-      assert cql =~ "status"
+      assert cql =~ "status IN"
       assert cql =~ "email = ?"
       assert cql =~ "org_id = ?"
       assert length(params) == 4

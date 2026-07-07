@@ -566,7 +566,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
                 {[left_cql, " AND ", right_cql], left_params ++ right_params}
 
               :or ->
-                # Try to rewrite same-field OR as IN (more efficient for CQL).
+                # Try to rewrite same-field OR as IN (CQL supports IN on partition/clustering keys).
                 case rewrite_or_to_in(left, right) do
                   {:ok, {field_name, values}} ->
                     placeholders =
@@ -579,9 +579,23 @@ defmodule AshScylla.DataLayer.QueryBuilder do
                      Enum.map(values, &maybe_atom_to_string/1)}
 
                   :error ->
-                    # Different-field OR: wrap each side in parens so that
-                    # nested AND groups are properly scoped.
-                    {["(", left_cql, " OR ", right_cql, ")"], left_params ++ right_params}
+                    # CQL does not support OR across different fields or with
+                    # operators other than eq/==.  This is a fundamental CQL
+                    # limitation — the WHERE clause only allows a flat list of
+                    # AND-ed predicates (plus IN on partition/clustering keys).
+                    #
+                    # Workarounds:
+                    # 1. Redesign the table with a canonical partition key
+                    #    (e.g. conversation_id = hash(sorted(user_a, user_b)))
+                    # 2. Split into two queries and merge in application code
+                    # 3. Rewrite same-field OR as IN (handled above)
+                    raise AshScylla.Error,
+                      message:
+                        "CQL does not support OR across different fields or with non-equality operators. " <>
+                          "Found: or(#{inspect(deeply_unwrap_expr(left))}, #{inspect(deeply_unwrap_expr(right))}). " <>
+                          "Workarounds: (1) redesign the table with a canonical partition key, " <>
+                          "(2) split into two queries and merge in application code, " <>
+                          "or (3) rewrite same-field OR as IN."
                 end
 
               _ ->
@@ -1001,12 +1015,19 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     )
 
     case {left, right} do
+      # Standard form: %{left: %{name: name}, operator: op, right: %{value: v}}
       {%{left: %{name: name1}, operator: op1, right: v1},
        %{left: %{name: name2}, operator: op2, right: v2}}
       when name1 == name2 and name1 != nil and op1 in [:eq, :==] and op2 in [:eq, :==] ->
         {:ok, {name1, [extract_value(v1), extract_value(v2)]}}
 
+      # Short form with op key: %{left: %{name: name}, op: op, right: %{value: v}}
       {%{left: %{name: name1}, op: op1, right: v1}, %{left: %{name: name2}, op: op2, right: v2}}
+      when name1 == name2 and name1 != nil and op1 in [:eq, :==] and op2 in [:eq, :==] ->
+        {:ok, {name1, [extract_value(v1), extract_value(v2)]}}
+
+      # Flat short form: %{name: name, op: op, right: %{value: v}}
+      {%{name: name1, op: op1, right: v1}, %{name: name2, op: op2, right: v2}}
       when name1 == name2 and name1 != nil and op1 in [:eq, :==] and op2 in [:eq, :==] ->
         {:ok, {name1, [extract_value(v1), extract_value(v2)]}}
 

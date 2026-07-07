@@ -622,8 +622,8 @@ defmodule AshScylla.DataLayer.BugFixesTest do
   # Bug 8: bulk_create/3 returns [] when return_records? is false
   # ===========================================================================
 
-  describe "Bug 9: OR with nested AND groups (missing parenthesis bug)" do
-    test "produces properly parenthesized CQL for (A AND B) OR (C AND D)" do
+  describe "Bug 9: OR with nested AND groups (CQL limitation)" do
+    test "cross-field OR raises a clear error explaining the CQL limitation" do
       filter = %{
         op: :and,
         left: %{
@@ -658,48 +658,35 @@ defmodule AshScylla.DataLayer.BugFixesTest do
         right: %{name: :archived, op: :eq, right: %{value: false}}
       }
 
-      {cql, params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
-
-      # AND has higher precedence than OR in CQL, so outer parens suffice
-      # Expected pattern: (from_user_id = ? AND to_user_id = ? OR from_user_id = ? AND to_user_id = ?) AND archived = ?
-      assert String.starts_with?(cql, "(")
-      assert cql =~ " OR "
-      assert cql =~ ") AND"
-
-      # Verify parentheses are balanced
-      opened = cql |> String.graphemes() |> Enum.count(&(&1 == "("))
-      closed = cql |> String.graphemes() |> Enum.count(&(&1 == ")"))
-      assert opened == closed, "Unbalanced parentheses in CQL: #{cql}"
-
-      assert length(params) == 5
+      assert_raise AshScylla.Error, ~r/CQL does not support OR across different fields/, fn ->
+        AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
+      end
     end
 
-    test "OR with simple single-field expressions still works" do
+    test "same-field OR with eq is rewritten to IN" do
       filter = %{
         op: :or,
         left: %{name: :status, op: :eq, right: %{value: "active"}},
         right: %{name: :status, op: :eq, right: %{value: "inactive"}}
       }
 
-      {cql, _params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
+      {cql, params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
 
-      # Same-field short-form OR — not rewritten to IN, but parenthesized
-      assert String.starts_with?(cql, "(")
-      assert cql =~ " OR "
+      # Same-field OR with eq should be rewritten to IN
+      assert cql =~ "status IN"
+      assert params == ["active", "inactive"]
     end
 
-    test "OR with different single fields wraps in parens" do
+    test "OR with different single fields raises error" do
       filter = %{
         op: :or,
         left: %{name: :status, op: :eq, right: %{value: "active"}},
         right: %{name: :age, op: :eq, right: %{value: 25}}
       }
 
-      {cql, _params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
-
-      # Different-field OR: (left OR right)
-      assert String.starts_with?(cql, "(")
-      assert cql =~ " OR "
+      assert_raise AshScylla.Error, ~r/CQL does not support OR across different fields/, fn ->
+        AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
+      end
     end
   end
 

@@ -408,6 +408,57 @@ defmodule AshScylla.DataLayer.FilterValidator do
   end
 
   @doc """
+  Validates that filters do not contain cross-field OR expressions.
+
+  CQL does not support OR across different fields — the WHERE clause only
+  allows a flat list of AND-ed predicates.  This validator catches OR
+  expressions that cannot be rewritten to IN (i.e. OR on different columns
+  or with non-equality operators) and raises a clear error with workarounds.
+  """
+  @spec validate_or_filters(list()) :: :ok | no_return()
+  def validate_or_filters(filters) do
+    Enum.each(filters, &check_or_filter/1)
+    :ok
+  end
+
+  defp check_or_filter(%{op: :or, left: left, right: right}) do
+    # Check if this is a same-field OR with eq/== (rewritable to IN)
+    left_unwrapped = unwrap_expr(left)
+    right_unwrapped = unwrap_expr(right)
+
+    case {left_unwrapped, right_unwrapped} do
+      {%{left: %{name: name1}, operator: op1}, %{left: %{name: name2}, operator: op2}}
+      when name1 == name2 and name1 != nil and op1 in [:eq, :==] and op2 in [:eq, :==] ->
+        :ok
+
+      {%{left: %{name: name1}, op: op1}, %{left: %{name: name2}, op: op2}}
+      when name1 == name2 and name1 != nil and op1 in [:eq, :==] and op2 in [:eq, :==] ->
+        :ok
+
+      _ ->
+        raise AshScylla.Error,
+          message:
+            "CQL does not support OR across different fields or with non-equality operators. " <>
+              "Found: or(#{inspect(left_unwrapped)}, #{inspect(right_unwrapped)}). " <>
+              "Workarounds: (1) redesign the table with a canonical partition key, " <>
+              "(2) split into two queries and merge in application code, " <>
+              "or (3) rewrite same-field OR as IN."
+    end
+  end
+
+  defp check_or_filter(%{expression: expr}), do: check_or_filter(expr)
+
+  defp check_or_filter(%{left: left, right: right}) do
+    check_or_filter(left)
+    check_or_filter(right)
+  end
+
+  defp check_or_filter(_), do: :ok
+
+  defp unwrap_expr(%{expression: expr}), do: unwrap_expr(expr)
+  defp unwrap_expr(other), do: other
+
+  @doc """
   Comprehensive validation that runs all filter validators.
 
   This is the recommended entry point for validating all aspects
@@ -424,6 +475,7 @@ defmodule AshScylla.DataLayer.FilterValidator do
     - `:validate_relationships` - Whether to validate relationship filters (default: true)
     - `:validate_exists` - Whether to validate EXISTS filters (default: true)
     - `:validate_in` - Whether to validate IN filters (default: true)
+    - `:validate_or` - Whether to validate OR filters (default: true)
   """
   @spec validate_all(module(), list(), keyword()) :: :ok | no_return()
   def validate_all(resource, filters, opts \\ []) do
@@ -434,6 +486,11 @@ defmodule AshScylla.DataLayer.FilterValidator do
 
     # Validate standard filters
     validate_filters(resource, filters)
+
+    # Validate OR expressions (CQL limitation)
+    if Keyword.get(opts, :validate_or, true) do
+      validate_or_filters(filters)
+    end
 
     # Validate aggregate filters
     aggregates = Keyword.get(opts, :aggregates, [])
