@@ -58,7 +58,6 @@ defmodule AshScylla.Test do
 
     test "returns false for expression/calculation features" do
       assert AshScylla.DataLayer.can?(nil, :expr_error) == false
-      assert AshScylla.DataLayer.can?(nil, :expression_calculation) == false
       assert AshScylla.DataLayer.can?(nil, :expression_calculation_sort) == false
     end
 

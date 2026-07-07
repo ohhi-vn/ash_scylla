@@ -825,8 +825,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -939,6 +938,216 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     test "empty filters returns no_filters error" do
       result = QueryBuilder.can_use_secondary_index?(IndexedResource, [])
       assert result == {:error, :no_filters}
+    end
+  end
+
+  # ============================================================================
+  # has operator → CQL CONTAINS
+  # ============================================================================
+
+  describe "has operator (Ash.Query.Operator.Has)" do
+    test "has with single value → CONTAINS" do
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%{
+          operator: :has,
+          left: %{name: :tags},
+          right: %{value: "elixir"}
+        })
+
+      assert cql == "tags CONTAINS ?"
+      assert params == ["elixir"]
+    end
+
+    test "has via Ash.Query.Operator.Has struct" do
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%Ash.Query.Operator.Has{
+          left: %{name: :tags},
+          right: "elixir"
+        })
+
+      assert cql == "tags CONTAINS ?"
+      assert params == ["elixir"]
+    end
+
+    test "has with integer value" do
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%{
+          operator: :has,
+          left: %{name: :scores},
+          right: %{value: 42}
+        })
+
+      assert cql == "scores CONTAINS ?"
+      assert params == [42]
+    end
+
+    test "has with nil value" do
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%{
+          operator: :has,
+          left: %{name: :tags},
+          right: %{value: nil}
+        })
+
+      assert cql == "tags CONTAINS ?"
+      assert params == [nil]
+    end
+  end
+
+  # ============================================================================
+  # overlaps operator → CQL CONTAINS OR-chain
+  # ============================================================================
+
+  describe "overlaps operator (Ash.Query.Operator.Overlaps)" do
+    test "overlaps with empty list → FALSE" do
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%Ash.Query.Operator.Overlaps{
+          left: %{name: :tags},
+          right: []
+        })
+
+      assert cql == "FALSE"
+      assert params == []
+    end
+
+    test "overlaps with single value → CONTAINS" do
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%Ash.Query.Operator.Overlaps{
+          left: %{name: :tags},
+          right: ["elixir"]
+        })
+
+      assert cql == "tags CONTAINS ?"
+      assert params == ["elixir"]
+    end
+
+    test "overlaps with multiple values → raises error (CQL has no OR)" do
+      assert_raise AshScylla.Error, ~r/CQL does not support OR/, fn ->
+        QueryBuilder.filter_to_cql(%Ash.Query.Operator.Overlaps{
+          left: %{name: :tags},
+          right: ["elixir", "scylla"]
+        })
+      end
+    end
+
+    test "overlaps with MapSet of multiple values → raises error" do
+      assert_raise AshScylla.Error, ~r/CQL does not support OR/, fn ->
+        QueryBuilder.filter_to_cql(%Ash.Query.Operator.Overlaps{
+          left: %{name: :tags},
+          right: MapSet.new(["a", "b", "c"])
+        })
+      end
+    end
+
+    test "overlaps via operator dispatch with multi-value list → raises error" do
+      assert_raise AshScylla.Error, ~r/CQL does not support OR/, fn ->
+        QueryBuilder.filter_to_cql(%{
+          operator: :overlaps,
+          left: %{name: :tags},
+          right: %{value: ["x", "y"]}
+        })
+      end
+    end
+
+    test "overlaps via operator dispatch with single-element list" do
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%{
+          operator: :overlaps,
+          left: %{name: :tags},
+          right: %{value: ["x"]}
+        })
+
+      assert cql == "tags CONTAINS ?"
+      assert params == ["x"]
+    end
+
+    test "overlaps via operator dispatch with single-element MapSet" do
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%{
+          operator: :overlaps,
+          left: %{name: :tags},
+          right: %{value: MapSet.new(["z"])}
+        })
+
+      assert cql == "tags CONTAINS ?"
+      assert params == ["z"]
+    end
+
+    test "overlaps via operator dispatch with single raw value" do
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%{
+          operator: :overlaps,
+          left: %{name: :tags},
+          right: "single"
+        })
+
+      assert cql == "tags CONTAINS ?"
+      assert params == ["single"]
+    end
+  end
+
+  # ============================================================================
+  # fragment support
+  # ============================================================================
+
+  describe "fragment support" do
+    test "fragment with raw CQL and placeholders" do
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%{
+          __function__?: true,
+          name: :fragment,
+          arguments: [
+            {:raw, "col = "},
+            {:expr, "value1"},
+            {:raw, " AND other = "},
+            {:expr, 42}
+          ]
+        })
+
+      assert cql == "col = ? AND other = ?"
+      assert params == ["value1", 42]
+    end
+
+    test "fragment with casted_expr arguments" do
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%{
+          __function__?: true,
+          name: :fragment,
+          arguments: [
+            {:raw, "token(col) = token("},
+            {:casted_expr, "my_value"},
+            {:raw, ")"}
+          ]
+        })
+
+      assert cql == "token(col) = token(?)"
+      assert params == ["my_value"]
+    end
+
+    test "fragment with only raw CQL (no placeholders)" do
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%{
+          __function__?: true,
+          name: :fragment,
+          arguments: [{:raw, "1 = 1"}]
+        })
+
+      assert cql == "1 = 1"
+      assert params == []
+    end
+  end
+
+  # ============================================================================
+  # expression_calculation feature flag
+  # ============================================================================
+
+  describe "expression_calculation support" do
+    test "DataLayer.can? returns true for :expression_calculation" do
+      assert DataLayer.can?(nil, :expression_calculation) == true
+    end
+
+    test "DataLayer.can? returns true for :expression_calculation with resource" do
+      assert DataLayer.can?(AshScylla.TestResource, :expression_calculation) == true
     end
   end
 end

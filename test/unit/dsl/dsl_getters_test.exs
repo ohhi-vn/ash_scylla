@@ -21,8 +21,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -47,8 +46,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -73,8 +71,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -99,8 +96,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -126,8 +122,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -151,8 +146,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -176,8 +170,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -204,8 +197,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -229,8 +221,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -258,8 +249,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -285,8 +275,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -313,8 +302,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -338,8 +326,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -364,8 +351,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -389,8 +375,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -415,8 +400,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -440,8 +424,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -466,8 +449,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -491,8 +473,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -517,8 +498,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -543,8 +523,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -569,8 +548,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -594,8 +572,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -620,8 +597,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -645,8 +621,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -670,8 +645,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -695,8 +669,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -720,8 +693,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -746,8 +718,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -776,8 +747,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -805,8 +775,7 @@ defmodule AshScylla.DslGettersTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -1714,7 +1683,6 @@ defmodule AshScylla.DslGettersTest do
 
     test "can? returns false for unsupported features" do
       assert DataLayer.can?(FullFeatureResource, :offset) == false
-      assert DataLayer.can?(FullFeatureResource, :expression_calculation) == false
       assert DataLayer.can?(FullFeatureResource, :lateral_join) == false
       assert DataLayer.can?(FullFeatureResource, :lock) == false
     end

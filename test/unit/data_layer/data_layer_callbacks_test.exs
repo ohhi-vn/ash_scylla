@@ -571,8 +571,8 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
       assert DataLayer.can?(nil, :destroy_query) == true
     end
 
-    test "returns false for :expression_calculation" do
-      assert DataLayer.can?(nil, :expression_calculation) == false
+    test "returns true for :expression_calculation" do
+      assert DataLayer.can?(nil, :expression_calculation) == true
     end
 
     test "returns false for :lateral_join" do

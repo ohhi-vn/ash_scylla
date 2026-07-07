@@ -1251,8 +1251,7 @@ defmodule AshScylla.EdgeCasesTest do
         :lateral_join,
         :lock,
         :combine,
-        :offset,
-        :expression_calculation
+        :offset
       ]
 
       for f <- unsupported, do: assert(DataLayer.can?(nil, f) == false)

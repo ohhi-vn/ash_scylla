@@ -113,8 +113,8 @@ defmodule AshScylla.DataLayerSecurityTest do
       refute DataLayer.can?(AshScylla.TestResource, {:lock, :for_update})
     end
 
-    test "expression calculations are not done in-database" do
-      refute DataLayer.can?(AshScylla.TestResource, :expression_calculation)
+    test "expression calculations are done in Elixir post-processing" do
+      assert DataLayer.can?(AshScylla.TestResource, :expression_calculation)
     end
 
     test "UNION/INTERSECT combinations are not supported" do
@@ -147,9 +147,18 @@ defmodule AshScylla.DataLayerSecurityTest do
     end
 
     test "invalid consistency levels are rejected" do
-      valid_set = MapSet.new([
-        :any, :one, :two, :three, :quorum, :all, :local_quorum, :each_quorum, :local_one
-      ])
+      valid_set =
+        MapSet.new([
+          :any,
+          :one,
+          :two,
+          :three,
+          :quorum,
+          :all,
+          :local_quorum,
+          :each_quorum,
+          :local_one
+        ])
 
       refute MapSet.member?(valid_set, :invalid_level)
       refute MapSet.member?(valid_set, :strong)

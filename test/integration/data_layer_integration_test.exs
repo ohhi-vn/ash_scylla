@@ -661,22 +661,18 @@ defmodule AshScylla.DataLayer.IntegrationTest do
       refute "IN-Complex C" in names
     end
 
-    test "OR operator (different columns) via QueryBuilder generates valid CQL", %{conn: conn} do
+    test "OR operator (different columns) raises error (CQL has no OR)", %{conn: conn} do
       if is_nil(conn), do: :ok
 
       # OR across different columns: status = active OR value = 10
-      {cql, _params} =
+      # CQL does not support OR — this must raise
+      assert_raise AshScylla.Error, ~r/CQL does not support OR/, fn ->
         QueryBuilder.filter_to_cql(%{
           op: :or,
           left: %{operator: :eq, left: %{name: :status}, right: %{value: "active"}},
           right: %{operator: :eq, left: %{name: :value}, right: %{value: 10}}
         })
-
-      # Different-column OR wraps in parens as expected
-      assert String.starts_with?(cql, "(")
-      assert cql =~ "status = ?"
-      assert cql =~ "value = ?"
-      assert cql =~ " OR "
+      end
     end
 
     test "AND operator (different columns) via QueryBuilder", %{conn: conn} do
@@ -937,6 +933,206 @@ defmodule AshScylla.DataLayer.IntegrationTest do
 
       result = xq(conn, "SELECT * FROM ash_scylla_dl_test.items WHERE id = ?", [id])
       assert result.num_rows == 1
+    end
+  end
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # 7. has / overlaps / fragment integration tests
+  # ══════════════════════════════════════════════════════════════════════════
+
+  describe "has operator (CONTAINS) against real DB" do
+    test "has on LIST column via QueryBuilder", %{conn: conn} do
+      if is_nil(conn), do: :ok
+      id = uid()
+
+      xq(conn, "INSERT INTO ash_scylla_dl_test.items (id, name, tags) VALUES (?, ?, ?)", [
+        id,
+        "Has Test",
+        {:list, ["elixir", "scylla", "ash"]}
+      ])
+
+      # Build CONTAINS filter via QueryBuilder
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%{
+          operator: :has,
+          left: %{name: :tags},
+          right: %{value: "elixir"}
+        })
+
+      assert cql == "tags CONTAINS ?"
+      assert params == ["elixir"]
+
+      full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
+      result = xq(conn, full_cql, ["elixir"])
+      assert result.num_rows >= 1
+      [row] = rows_to_maps(result)
+      assert row["name"] == "Has Test"
+    end
+
+    test "has on LIST column — no match returns empty", %{conn: conn} do
+      if is_nil(conn), do: :ok
+      id = uid()
+
+      xq(conn, "INSERT INTO ash_scylla_dl_test.items (id, name, tags) VALUES (?, ?, ?)", [
+        id,
+        "No Match",
+        {:list, ["elixir", "scylla"]}
+      ])
+
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%{
+          operator: :has,
+          left: %{name: :tags},
+          right: %{value: "ruby"}
+        })
+
+      full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
+      result = xq(conn, full_cql, ["ruby"])
+      assert result.num_rows == 0
+    end
+
+    test "has via Ash.Query.Operator.Has struct", %{conn: conn} do
+      if is_nil(conn), do: :ok
+      id = uid()
+
+      xq(conn, "INSERT INTO ash_scylla_dl_test.items (id, name, tags) VALUES (?, ?, ?)", [
+        id,
+        "Has Struct",
+        {:list, ["rust", "go"]}
+      ])
+
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%Ash.Query.Operator.Has{
+          left: %{name: :tags},
+          right: "rust"
+        })
+
+      assert cql == "tags CONTAINS ?"
+      full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
+      result = xq(conn, full_cql, ["rust"])
+      assert result.num_rows >= 1
+    end
+  end
+
+  describe "overlaps operator against real DB" do
+    test "overlaps with single value → CONTAINS", %{conn: conn} do
+      if is_nil(conn), do: :ok
+      id = uid()
+
+      xq(conn, "INSERT INTO ash_scylla_dl_test.items (id, name, tags) VALUES (?, ?, ?)", [
+        id,
+        "Overlap Single",
+        {:list, ["elixir", "scylla"]}
+      ])
+
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%Ash.Query.Operator.Overlaps{
+          left: %{name: :tags},
+          right: ["elixir"]
+        })
+
+      assert cql == "tags CONTAINS ?"
+      full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
+      result = xq(conn, full_cql, ["elixir"])
+      assert result.num_rows >= 1
+    end
+
+    test "overlaps with multiple values raises error (CQL has no OR)", %{conn: conn} do
+      if is_nil(conn), do: :ok
+
+      assert_raise AshScylla.Error, ~r/CQL does not support OR/, fn ->
+        QueryBuilder.filter_to_cql(%Ash.Query.Operator.Overlaps{
+          left: %{name: :tags},
+          right: ["elixir", "rust"]
+        })
+      end
+    end
+
+    test "overlaps with no match returns empty", %{conn: conn} do
+      if is_nil(conn), do: :ok
+      id = uid()
+
+      xq(conn, "INSERT INTO ash_scylla_dl_test.items (id, name, tags) VALUES (?, ?, ?)", [
+        id,
+        "No Overlap",
+        {:list, ["elixir", "scylla"]}
+      ])
+
+      # Single-value overlaps → CONTAINS
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%Ash.Query.Operator.Overlaps{
+          left: %{name: :tags},
+          right: ["ruby"]
+        })
+
+      assert cql == "tags CONTAINS ?"
+      full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
+      result = xq(conn, full_cql, ["ruby"])
+      assert result.num_rows == 0
+    end
+  end
+
+  describe "fragment integration against real DB" do
+    test "fragment with raw CQL executes successfully", %{conn: conn} do
+      if is_nil(conn), do: :ok
+      id = uid()
+
+      xq(conn, "INSERT INTO ash_scylla_dl_test.items (id, name, status) VALUES (?, ?, ?)", [
+        id,
+        "Fragment Test",
+        "active"
+      ])
+
+      # Simulate fragment("status = ?", "active") from Ash
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%{
+          __function__?: true,
+          name: :fragment,
+          arguments: [
+            {:raw, "status = "},
+            {:expr, "active"}
+          ]
+        })
+
+      assert cql == "status = ?"
+      assert params == ["active"]
+
+      full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
+      result = xq(conn, full_cql, ["active"])
+      assert result.num_rows >= 1
+      [row] = rows_to_maps(result)
+      assert row["name"] == "Fragment Test"
+    end
+
+    test "fragment with multiple placeholders", %{conn: conn} do
+      if is_nil(conn), do: :ok
+      id = uid()
+
+      xq(conn, "INSERT INTO ash_scylla_dl_test.items (id, name, status, value) VALUES (?, ?, ?, ?)", [
+        id,
+        "Multi Fragment",
+        "active",
+        42
+      ])
+
+      {cql, params} =
+        QueryBuilder.filter_to_cql(%{
+          __function__?: true,
+          name: :fragment,
+          arguments: [
+            {:raw, "status = "},
+            {:expr, "active"},
+            {:raw, " AND value = "},
+            {:expr, 42}
+          ]
+        })
+
+      assert cql == "status = ? AND value = ?"
+      assert params == ["active", 42]
+
+      full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
+      result = xq(conn, full_cql, ["active", 42])
+      assert result.num_rows >= 1
     end
   end
 end

@@ -475,7 +475,9 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     :contains => "LIKE",
     :contains_key => "CONTAINS KEY",
     :starts_with => "LIKE",
-    :ends_with => "LIKE"
+    :ends_with => "LIKE",
+    :has => "CONTAINS",
+    :overlaps => "CONTAINS"
   }
 
   @operator_values %{
@@ -494,7 +496,9 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     :contains => "?",
     :contains_key => "?",
     :starts_with => "?",
-    :ends_with => "?"
+    :ends_with => "?",
+    :has => "?",
+    :overlaps => "?"
   }
 
   # Helper to resolve operator CQL syntax for raw values (not %{value: ...} maps).
@@ -542,8 +546,71 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   - EXISTS for existence checks
   - AND/OR boolean combinations
   - Nested expressions
+  - Ash Query functions: now(), today(), ago(), from_now() (evaluated client-side)
+  - Ash Query fragment(...) for raw CQL injection
+  - has operator → maps to CQL CONTAINS on collection columns
+  - overlaps operator → CONTAINS checks (single-value) or in-memory
   """
   @spec filter_to_cql(term()) :: {String.t(), list()} | {:error, {:unknown_filter, term()}}
+  def filter_to_cql(%Ash.Query.Operator.In{left: left, right: right}) do
+    filter_to_cql(%{operator: :in, left: left, right: right})
+  end
+
+  # ── Ash Query Function: fragment ────────────────────────────────────────
+  # fragment("col = ?", value) → raw CQL injection via Xandra
+  def filter_to_cql(%{__function__?: true, name: :fragment} = func) do
+    # Ash.Query.Function.Fragment stores args as [{:raw, str}, {:expr, arg}, ...]
+    # We need to convert this into a CQL string with ? placeholders + params
+    {cql_parts, params} =
+      func.arguments
+      |> Enum.reduce({[], []}, fn
+        {:raw, str}, {acc_c, acc_p} -> {[acc_c, str], acc_p}
+        {:expr, expr}, {acc_c, acc_p} -> {[acc_c, "?"], acc_p ++ [expr]}
+        {:casted_expr, expr}, {acc_c, acc_p} -> {[acc_c, "?"], acc_p ++ [expr]}
+        arg, {acc_c, acc_p} -> {[acc_c, inspect(arg)], acc_p}
+      end)
+
+    {IO.iodata_to_binary(cql_parts), params}
+  end
+
+  # ── Ash Query Functions (eager_evaluate? = false) ────────────────────────
+  # now(), today(), ago(), from_now() are evaluated client-side by Ash before
+  # reaching the data layer. They arrive as raw DateTime/Date values.
+  # The catch-all filter_to_cql already handles these as parameterized values.
+
+  # ── Ash.Query.Operator.Has → CQL CONTAINS ───────────────────────────────
+  # has(collection_column, value) → collection_column CONTAINS value
+  def filter_to_cql(%Ash.Query.Operator.Has{left: left, right: right}) do
+    filter_to_cql(%{operator: :has, left: left, right: right})
+  end
+
+  # ── Ash.Query.Operator.Overlaps → CQL CONTAINS (single-value only) ──────
+  # overlaps(collection_column, [a, b]) → only single-value supported in CQL.
+  # CQL has no OR operator, so multi-value overlaps requires multiple queries.
+  def filter_to_cql(%Ash.Query.Operator.Overlaps{left: left, right: right}) do
+    values =
+      case right do
+        %MapSet{} = ms -> MapSet.to_list(ms)
+        list when is_list(list) -> list
+        _ -> []
+      end
+
+    cond do
+      values == [] ->
+        {"FALSE", []}
+
+      length(values) == 1 ->
+        filter_to_cql(%{operator: :has, left: left, right: %{value: hd(values)}})
+
+      true ->
+        raise AshScylla.Error,
+          message:
+            "CQL does not support OR, so overlaps/2 with multiple values cannot be expressed in a single query. " <>
+              "Found: overlaps(#{inspect(attribute_name(left))}, #{inspect(values)}). " <>
+              "Workaround: split into multiple queries (one per value) and merge in application code."
+    end
+  end
+
   def filter_to_cql(%{expression: expression}) do
     expression
     |> filter_to_cql()
@@ -645,6 +712,13 @@ defmodule AshScylla.DataLayer.QueryBuilder do
               :exists ->
                 {"#{left_cql} IS NOT NULL", left_params}
 
+              :has ->
+                {"#{left_cql} CONTAINS ?", left_params ++ [raw_value]}
+
+              :overlaps ->
+                # overlaps with a single raw value → CONTAINS
+                {"#{left_cql} CONTAINS ?", left_params ++ [raw_value]}
+
               _ ->
                 cql_op = Map.get(@operator_mapping, op, "=")
                 cql_val = Map.get(@operator_values, op, "?")
@@ -684,6 +758,51 @@ defmodule AshScylla.DataLayer.QueryBuilder do
 
               {:exists, _} ->
                 {"#{left_cql} IS NOT NULL", left_params}
+
+              {:has, %{value: value}} ->
+                {"#{left_cql} CONTAINS ?", left_params ++ [value]}
+
+              {:has, value} ->
+                {"#{left_cql} CONTAINS ?", left_params ++ [value]}
+
+              {:overlaps, %{value: values}} when is_list(values) and length(values) == 1 ->
+                {"#{left_cql} CONTAINS ?", left_params ++ values}
+
+              {:overlaps, %{value: values}} when is_list(values) ->
+                raise AshScylla.Error,
+                  message:
+                    "CQL does not support OR, so overlaps/2 with multiple values cannot be expressed in a single query. " <>
+                      "Found: overlaps(#{left_cql}, #{inspect(values)}). " <>
+                      "Workaround: split into multiple queries and merge in application code."
+
+              {:overlaps, %{value: %MapSet{} = ms}} ->
+                vals = MapSet.to_list(ms)
+
+                if length(vals) == 1 do
+                  {"#{left_cql} CONTAINS ?", left_params ++ vals}
+                else
+                  raise AshScylla.Error,
+                    message:
+                      "CQL does not support OR, so overlaps/2 with multiple values cannot be expressed in a single query. " <>
+                        "Found: overlaps(#{left_cql}, #{inspect(vals)}). " <>
+                        "Workaround: split into multiple queries and merge in application code."
+                end
+
+              {:overlaps, %MapSet{} = values} ->
+                vals = MapSet.to_list(values)
+
+                if length(vals) == 1 do
+                  {"#{left_cql} CONTAINS ?", left_params ++ vals}
+                else
+                  raise AshScylla.Error,
+                    message:
+                      "CQL does not support OR, so overlaps/2 with multiple values cannot be expressed in a single query. " <>
+                        "Found: overlaps(#{left_cql}, #{inspect(vals)}). " <>
+                        "Workaround: split into multiple queries and merge in application code."
+                end
+
+              {:overlaps, value} ->
+                {"#{left_cql} CONTAINS ?", left_params ++ [value]}
 
               {:starts_with, %{value: value}} ->
                 {"#{left_cql} LIKE ?", left_params ++ ["%" <> value]}

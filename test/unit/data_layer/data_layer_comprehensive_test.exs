@@ -61,8 +61,7 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(FakeRepo)
@@ -92,8 +91,7 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(FakeRepo)
@@ -118,7 +116,7 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
+    import AshScylla.DataLayer.Dsl
 
     attributes do
       attribute(:id, :string, primary_key?: true, allow_nil?: false)
@@ -138,7 +136,7 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
+    import AshScylla.DataLayer.Dsl
 
     attributes do
       attribute(:id, :string, primary_key?: true, allow_nil?: false)
@@ -754,8 +752,7 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
         :lateral_join,
         :lock,
         :combine,
-        :offset,
-        :expression_calculation
+        :offset
       ]
 
       for f <- unsupported, do: assert(DataLayer.can?(nil, f) == false)
@@ -840,8 +837,7 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(ColumnTupleRepo)

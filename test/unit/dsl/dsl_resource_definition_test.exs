@@ -39,8 +39,7 @@ defmodule AshScylla.DslResourceTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -69,8 +68,7 @@ defmodule AshScylla.DslResourceTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -111,8 +109,7 @@ defmodule AshScylla.DslResourceTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -147,7 +144,7 @@ defmodule AshScylla.DslResourceTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
+    import AshScylla.DataLayer.Dsl
 
     attributes do
       uuid_primary_key(:id)
@@ -170,8 +167,7 @@ defmodule AshScylla.DslResourceTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(AshScylla.TestRepo)
@@ -468,7 +464,6 @@ defmodule AshScylla.DslResourceTest do
       assert DataLayer.can?(SimpleResource, :transact) == true
       assert DataLayer.can?(SimpleResource, :sort) == true
       assert DataLayer.can?(SimpleResource, :offset) == false
-      assert DataLayer.can?(SimpleResource, :expression_calculation) == false
       assert DataLayer.can?(SimpleResource, :lateral_join) == false
       assert DataLayer.can?(SimpleResource, :lock) == false
       assert DataLayer.can?(SimpleResource, {:aggregate, :sum}) == false
@@ -574,8 +569,7 @@ defmodule AshScylla.DslResourceTest do
         domain: nil,
         data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+      import AshScylla.DataLayer.Dsl
 
       scylla do
         table("indexed_items")
@@ -599,8 +593,7 @@ defmodule AshScylla.DslResourceTest do
         domain: nil,
         data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+      import AshScylla.DataLayer.Dsl
 
       scylla do
         table("named_index_items")
@@ -624,8 +617,7 @@ defmodule AshScylla.DslResourceTest do
         domain: nil,
         data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+      import AshScylla.DataLayer.Dsl
 
       scylla do
         table("multi_col_items")
@@ -676,8 +668,7 @@ defmodule AshScylla.DslResourceTest do
         domain: nil,
         data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+      import AshScylla.DataLayer.Dsl
 
       scylla do
         repo(AshScylla.TestRepo)
@@ -762,8 +753,7 @@ defmodule AshScylla.DslResourceTest do
         domain: nil,
         data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+      import AshScylla.DataLayer.Dsl
 
       scylla do
         table("no_repo_table")

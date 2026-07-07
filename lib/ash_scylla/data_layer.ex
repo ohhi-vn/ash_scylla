@@ -72,7 +72,6 @@ defmodule AshScylla.DataLayer do
 
   - `:offset` - ScyllaDB has no OFFSET; use keyset pagination
   - `:expr_error` - Expression error handling not implemented
-  - `:expression_calculation` - Expression calculations done in Elixir
   - `:expression_calculation_sort` - Not supported
   - `:aggregate_filter` - Aggregate filtering not supported
   - `:aggregate_sort` - Aggregate sorting not supported
@@ -92,6 +91,17 @@ defmodule AshScylla.DataLayer do
   - `{:aggregate_relationship, _}` - Aggregate relationships not supported
   - `{:query_aggregate, _}` - Query aggregates not supported
   - `{:aggregate, :sum}` / `{:aggregate, :avg}` / etc. - Only COUNT is supported
+
+  ## Ash Query Extensions
+
+  The following Ash 3.0+ query features are supported via Xandra:
+  - `fragment/1+` — raw CQL injection: `fragment("col = ?", value)` passes through to Xandra directly
+  - `now()`, `today()`, `ago(...)`, `from_now(...)` — evaluated client-side by Ash before reaching the data layer
+  - `has(collection_col, value)` — maps to CQL `CONTAINS` on collection/set/list columns
+  - `overlaps(collection_col, [a, b])` — maps to `col CONTAINS a OR col CONTAINS b` with ALLOW FILTERING
+  - Arithmetic operators (`+`, `-`, `*`, `/`) — evaluated client-side by Ash
+  - String functions (`concat`, `contains`, `starts_with`, `ends_with`, `string_length`, etc.) — maps to CQL `LIKE` where applicable
+  - `if/3`, `is_nil/1`, `length/1`, `round/1`, `string_downcase/1`, `string_trim/1` — evaluated client-side by Ash
 
   ## Limitations
 
@@ -194,7 +204,7 @@ defmodule AshScylla.DataLayer do
   def can?(_resource_or_dsl, :distinct), do: true
 
   @impl Ash.DataLayer
-  def can?(_resource_or_dsl, :expression_calculation), do: false
+  def can?(_resource_or_dsl, :expression_calculation), do: true
 
   @impl Ash.DataLayer
   def can?(_resource_or_dsl, :lateral_join), do: false
@@ -2018,7 +2028,12 @@ defmodule AshScylla.DataLayer do
   # Integer — use declared type or default to "bigint"
   defp wrap_typed(value, key, cql_types) when is_integer(value) do
     declared = Map.get(cql_types, key) || Map.get(cql_types, to_string(key))
-    cql_type = if declared in ["bigint", "int", "smallint", "tinyint", "counter", "varint"], do: declared, else: "bigint"
+
+    cql_type =
+      if declared in ["bigint", "int", "smallint", "tinyint", "counter", "varint"],
+        do: declared,
+        else: "bigint"
+
     {cql_type, value}
   end
 
