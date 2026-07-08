@@ -63,7 +63,7 @@ defmodule AshScylla.DataLayer do
   - `:bulk_create` - Batch INSERT operations
   - `:transact` - Transaction wrapper
   - `:composite_primary_key` - Composite primary key support
-  - `{:aggregate, :count}` - Per-partition COUNT aggregates
+  - `{:aggregate, :count}` / `{:aggregate, :sum}` / `{:aggregate, :avg}` / `{:aggregate, :min}` / `{:aggregate, :max}` - Per-partition aggregate functions
   - `{:atomic, :update}` - Atomic updates via LWT (IF clauses)
   - `{:atomic, :upsert}` - Atomic upserts via LWT
   - `{:atomic, :create}` - Atomic creates
@@ -75,6 +75,7 @@ defmodule AshScylla.DataLayer do
   - `:expression_calculation_sort` - Not supported
   - `:aggregate_filter` - Aggregate filtering not supported
   - `:aggregate_sort` - Aggregate sorting not supported
+  - `{:query_aggregate, :count}` / `{:query_aggregate, :sum}` / `{:query_aggregate, :avg}` / `{:query_aggregate, :min}` / `{:query_aggregate, :max}` - Query-level aggregate functions (Ash.count!/2, Ash.sum!/2, etc.)
   - `:bulk_create_with_partial_success` - Bulk create is all-or-nothing
   - `:update_many` - Update-many not implemented
   - `:composite_type` - Composite types not supported
@@ -88,9 +89,9 @@ defmodule AshScylla.DataLayer do
   - `{:filter_relationship, _}` - Relationship filtering not supported
   - `{:exists, :unrelated}` - Exists queries not supported
   - `{:aggregate, :unrelated}` - Unrelated aggregates not supported
-  - `{:aggregate_relationship, _}` - Aggregate relationships not supported
-  - `{:query_aggregate, _}` - Query aggregates not supported
-  - `{:aggregate, :sum}` / `{:aggregate, :avg}` / etc. - Only COUNT is supported
+  - `{:aggregate_relationship, _}` - Relationship aggregates (belongs_to via per-record subqueries)
+  - `{:query_aggregate, :list}` / `{:query_aggregate, :first}` / `{:query_aggregate, :exists}` / `{:query_aggregate, :custom}` - Only COUNT, SUM, AVG, MIN, MAX are supported
+  - `{:aggregate, :list}` / `{:aggregate, :first}` / `{:aggregate, :exists}` / `{:aggregate, :custom}` - Only COUNT, SUM, AVG, MIN, MAX are supported
 
   ## Ash Query Extensions
 
@@ -210,7 +211,8 @@ defmodule AshScylla.DataLayer do
   def can?(_resource_or_dsl, :lateral_join), do: false
 
   @impl Ash.DataLayer
-  def can?(_resource_or_dsl, {:aggregate, :count}), do: true
+  def can?(_resource_or_dsl, {:aggregate, kind}) when kind in [:count, :sum, :avg, :min, :max],
+    do: true
 
   @impl Ash.DataLayer
   def can?(_resource_or_dsl, {:aggregate, _}), do: false
@@ -321,8 +323,13 @@ defmodule AshScylla.DataLayer do
 
   @impl Ash.DataLayer
   def can?(_resource_or_dsl, {:aggregate_relationship, _relationship}) do
-    false
+    true
   end
+
+  @impl Ash.DataLayer
+  def can?(_resource_or_dsl, {:query_aggregate, kind})
+      when kind in [:count, :sum, :avg, :min, :max],
+      do: true
 
   @impl Ash.DataLayer
   def can?(_resource_or_dsl, {:query_aggregate, _kind}), do: false
@@ -464,26 +471,33 @@ defmodule AshScylla.DataLayer do
     Logger.debug("AshScylla: Final query: #{inspect(query)}")
     Logger.debug("AshScylla: Final params: #{inspect(params)}")
 
-    Telemetry.span(resource, :read, query, fn ->
-      case repo.query(query, params, opts) do
-        {:ok, %Xandra.Page{content: content, columns: columns}} when columns != nil ->
-          rows = content || []
-          records = Enum.map(rows, &to_ash_record(&1, resource, columns))
-          records = maybe_apply_in_memory_sort(records, sorts, order_dropped?)
-          %Query{context: context} = data_layer_query
-          {:ok, apply_calculations(records, context)}
+    result =
+      Telemetry.span(resource, :read, query, fn ->
+        case repo.query(query, params, opts) do
+          {:ok, %Xandra.Page{content: content, columns: columns}} when columns != nil ->
+            rows = content || []
+            records = Enum.map(rows, &to_ash_record(&1, resource, columns))
+            records = maybe_apply_in_memory_sort(records, sorts, order_dropped?)
+            {:ok, records}
 
-        {:ok, %Xandra.Page{content: content}} ->
-          rows = content || []
-          records = Enum.map(rows, &to_ash_record(&1, resource))
-          records = maybe_apply_in_memory_sort(records, sorts, order_dropped?)
-          %Query{context: context} = data_layer_query
-          {:ok, apply_calculations(records, context)}
+          {:ok, %Xandra.Page{content: content}} ->
+            rows = content || []
+            records = Enum.map(rows, &to_ash_record(&1, resource))
+            records = maybe_apply_in_memory_sort(records, sorts, order_dropped?)
+            {:ok, records}
 
-        error ->
-          handle_result(error)
-      end
-    end)
+          error ->
+            handle_result(error)
+        end
+      end)
+
+    with {:ok, records} <- result do
+      %Query{context: context} = data_layer_query
+      aggregates = Map.get(context, :aggregates, [])
+      records = apply_calculations(records, context)
+      records = attach_aggregates(records, aggregates, resource, repo, opts)
+      {:ok, records}
+    end
   rescue
     e in [AshScylla.Error] -> reraise(e, __STACKTRACE__)
     e -> handle_result({:error, e})
@@ -929,13 +943,19 @@ defmodule AshScylla.DataLayer do
 
     {where_clause, where_params} =
       case filters do
-        [] -> {"", []}
-        _ -> QueryBuilder.build_where_clause(filters)
+        nil ->
+          {"", []}
+
+        [] ->
+          {"", []}
+
+        _ ->
+          QueryBuilder.build_where_clause(filters)
       end
 
     where_params = convert_uuid_params(where_params, resource)
 
-    # Build COUNT queries for each aggregate
+    # Build aggregate queries for each aggregate
     results =
       Enum.reduce_while(aggregates, %{}, fn aggregate, acc ->
         case build_aggregate_query(aggregate, sanitized_table, where_clause, resource, filters) do
@@ -944,18 +964,17 @@ defmodule AshScylla.DataLayer do
 
           {query, params} ->
             case repo.query(query, where_params ++ params, opts) do
-              {:ok, %Xandra.Page{content: [[count]]}} when is_integer(count) ->
-                {:cont, Map.put(acc, aggregate.name, count)}
+              {:ok, %Xandra.Page{content: [[value]]}} when not is_nil(value) ->
+                {:cont, Map.put(acc, aggregate.name, value)}
 
-              {:ok, %Xandra.Page{content: [[count]]}} ->
-                count = String.to_integer(to_string(count))
-                {:cont, Map.put(acc, aggregate.name, count)}
+              {:ok, %Xandra.Page{content: [[value]]}} when is_nil(value) ->
+                {:cont, Map.put(acc, aggregate.name, nil)}
 
               {:ok, %Xandra.Page{content: []}} ->
-                {:cont, Map.put(acc, aggregate.name, 0)}
+                {:cont, Map.put(acc, aggregate.name, Map.get(aggregate, :default_value))}
 
               {:ok, %Xandra.Page{content: nil}} ->
-                {:cont, Map.put(acc, aggregate.name, 0)}
+                {:cont, Map.put(acc, aggregate.name, Map.get(aggregate, :default_value))}
 
               {:error, reason} ->
                 {:halt, {:error, reason}}
@@ -987,7 +1006,13 @@ defmodule AshScylla.DataLayer do
 
   @spec build_aggregate_query(Ash.Query.Aggregate.t(), String.t(), String.t(), module(), list()) ::
           {String.t(), list()} | {:error, term()}
-  defp build_aggregate_query(%{kind: :count}, table, where_clause, _resource, _filters) do
+  defp build_aggregate_query(
+         %{kind: :count, field: nil},
+         table,
+         where_clause,
+         _resource,
+         _filters
+       ) do
     query =
       IO.iodata_to_binary([
         "SELECT COUNT(*) FROM ",
@@ -998,9 +1023,288 @@ defmodule AshScylla.DataLayer do
     {query, []}
   end
 
+  defp build_aggregate_query(%{kind: :count} = aggregate, table, where_clause, resource, _filters) do
+    field = Map.get(aggregate, :field)
+    cql_field = resolve_aggregate_field(field, resource)
+
+    query =
+      IO.iodata_to_binary([
+        "SELECT COUNT(",
+        cql_field,
+        ") FROM ",
+        table,
+        if(where_clause != "", do: [" WHERE ", where_clause], else: [])
+      ])
+
+    {query, []}
+  end
+
+  defp build_aggregate_query(%{kind: :sum, field: field}, table, where_clause, resource, _filters) do
+    cql_field = resolve_aggregate_field(field, resource)
+
+    query =
+      IO.iodata_to_binary([
+        "SELECT SUM(",
+        cql_field,
+        ") FROM ",
+        table,
+        if(where_clause != "", do: [" WHERE ", where_clause], else: [])
+      ])
+
+    {query, []}
+  end
+
+  defp build_aggregate_query(%{kind: :avg, field: field}, table, where_clause, resource, _filters) do
+    cql_field = resolve_aggregate_field(field, resource)
+
+    query =
+      IO.iodata_to_binary([
+        "SELECT AVG(",
+        cql_field,
+        ") FROM ",
+        table,
+        if(where_clause != "", do: [" WHERE ", where_clause], else: [])
+      ])
+
+    {query, []}
+  end
+
+  defp build_aggregate_query(%{kind: :min, field: field}, table, where_clause, resource, _filters) do
+    cql_field = resolve_aggregate_field(field, resource)
+
+    query =
+      IO.iodata_to_binary([
+        "SELECT MIN(",
+        cql_field,
+        ") FROM ",
+        table,
+        if(where_clause != "", do: [" WHERE ", where_clause], else: [])
+      ])
+
+    {query, []}
+  end
+
+  defp build_aggregate_query(%{kind: :max, field: field}, table, where_clause, resource, _filters) do
+    cql_field = resolve_aggregate_field(field, resource)
+
+    query =
+      IO.iodata_to_binary([
+        "SELECT MAX(",
+        cql_field,
+        ") FROM ",
+        table,
+        if(where_clause != "", do: [" WHERE ", where_clause], else: [])
+      ])
+
+    {query, []}
+  end
+
   defp build_aggregate_query(%{kind: kind}, _table, _where_clause, _resource, _filters) do
     {:error,
-     "Aggregate kind #{kind} is not supported in ScyllaDB/Cassandra. Use :count or materialized views."}
+     "Aggregate kind #{kind} is not supported in ScyllaDB/Cassandra. Supported kinds: :count, :sum, :avg, :min, :max"}
+  end
+
+  defp resolve_aggregate_field(nil, _resource), do: "*"
+
+  defp resolve_aggregate_field(field, resource) when is_atom(field) do
+    case Ash.Resource.Info.field(resource, field) do
+      %{name: name} -> QueryBuilder.cql_identifier(name)
+      nil -> QueryBuilder.cql_identifier(field)
+    end
+  end
+
+  defp resolve_aggregate_field(%{name: name}, _resource) do
+    QueryBuilder.cql_identifier(name)
+  end
+
+  defp resolve_aggregate_field(field, _resource) do
+    QueryBuilder.cql_identifier(field)
+  end
+
+  # ============================================================================
+  # Relationship Aggregate Support (aggregates do ... end)
+  # ============================================================================
+
+  @doc false
+  def attach_aggregates(records, [], _resource, _repo, _opts), do: records
+
+  def attach_aggregates(records, _aggregates, _resource, repo, _opts) when is_nil(repo),
+    do: records
+
+  def attach_aggregates(records, aggregates, resource, repo, opts) do
+    pkey = Ash.Resource.Info.primary_key(resource)
+
+    Enum.map(records, fn record ->
+      pk_values = Map.take(record, pkey)
+
+      agg_values =
+        Enum.reduce(aggregates, %{}, fn aggregate, acc ->
+          case compute_record_aggregate(aggregate, pk_values, resource, repo, opts) do
+            {:ok, value} ->
+              Map.put(acc, aggregate.name, value)
+
+            :error ->
+              Map.put(acc, aggregate.name, aggregate.default_value)
+          end
+        end)
+
+      Map.update!(record, :aggregates, &Map.merge(&1, agg_values))
+    end)
+  end
+
+  defp compute_record_aggregate(aggregate, pk_values, resource, repo, opts) do
+    %{kind: kind, field: field, relationship_path: path, query: agg_query} = aggregate
+
+    if path == [] do
+      # Same-table aggregate: SELECT COUNT(*) FROM table WHERE pk = ?
+      compute_same_table_aggregate(kind, field, resource, repo, opts, pk_values)
+    else
+      # Relationship aggregate: traverse to related table
+      compute_related_table_aggregate(
+        kind,
+        field,
+        path,
+        resource,
+        repo,
+        opts,
+        pk_values,
+        agg_query
+      )
+    end
+  end
+
+  defp compute_same_table_aggregate(kind, field, resource, repo, opts, pk_values) do
+    table = qualified_table(resource)
+    {pk_where, pk_params} = build_pk_where_clause_from_map(pk_values, resource)
+    cql_field = aggregate_field_to_cql(kind, field, resource)
+
+    query =
+      IO.iodata_to_binary([
+        "SELECT ",
+        cql_field,
+        " FROM ",
+        table,
+        " WHERE ",
+        pk_where
+      ])
+
+    case repo.query(query, pk_params, opts) do
+      {:ok, %Xandra.Page{content: [[value]]}} when not is_nil(value) ->
+        {:ok, value}
+
+      _ ->
+        :error
+    end
+  end
+
+  defp compute_related_table_aggregate(
+         kind,
+         field,
+         path,
+         resource,
+         repo,
+         opts,
+         pk_values,
+         _agg_query
+       ) do
+    # Resolve the relationship chain to find the destination resource
+    related = Ash.Resource.Info.related(resource, path)
+    relationship = Ash.Resource.Info.relationship(resource, List.first(path))
+
+    related_table = qualified_table(related)
+
+    # Build the WHERE clause for the relationship link
+    # This connects the source record's PK to the related table
+    case relationship.type do
+      :belongs_to ->
+        # Source has the foreign key that references the destination
+        fk_value = Map.get(pk_values, relationship.source_attribute)
+        dest_pkey = Ash.Resource.Info.primary_key(related)
+
+        if length(dest_pkey) == 1 do
+          [pk_col] = dest_pkey
+          cql_field = aggregate_field_to_cql(kind, field, related)
+
+          query =
+            IO.iodata_to_binary([
+              "SELECT ",
+              cql_field,
+              " FROM ",
+              related_table,
+              " WHERE ",
+              QueryBuilder.cql_identifier(pk_col),
+              " = ?"
+            ])
+
+          case repo.query(query, [fk_value], opts) do
+            {:ok, %Xandra.Page{content: [[value]]}} when not is_nil(value) ->
+              {:ok, value}
+
+            {:ok, %Xandra.Page{content: [[_]]}} ->
+              :error
+
+            _ ->
+              :error
+          end
+        else
+          :error
+        end
+
+      _ ->
+        # Other relationship types (has_many, many_to_many, etc.)
+        # Not yet implemented for per-record aggregation in ScyllaDB
+        :error
+    end
+  end
+
+  defp aggregate_field_to_cql(:count, nil, _resource), do: "COUNT(*)"
+
+  defp aggregate_field_to_cql(kind, field, resource) do
+    cql_field = resolve_aggregate_field(field, resource)
+    kind_str = String.upcase(to_string(kind))
+    "#{kind_str}(#{cql_field})"
+  end
+
+  defp build_pk_where_clause_from_map(pk_values, resource) do
+    pkey = Ash.Resource.Info.primary_key(resource)
+    attrs = Ash.Resource.Info.attributes(resource)
+    uuid_fields = uuid_attribute_names(resource)
+    atom_fields = atom_attribute_names(resource)
+
+    clauses =
+      Enum.map(pkey, fn field_name ->
+        value = Map.get(pk_values, field_name)
+        attr = Enum.find(attrs, &(&1.name == field_name))
+        cql_type = attr && resolve_attr_cql_type(attr)
+
+        typed_value =
+          cond do
+            (field_name in uuid_fields && is_binary(value)) and uuid_like_string?(value) ->
+              value
+
+            field_name in atom_fields and is_atom(value) ->
+              Atom.to_string(value)
+
+            cql_type && cql_type != "text" && is_binary(value) ->
+              value
+
+            true ->
+              wrap_typed(value, field_name, %{field_name => cql_type})
+          end
+
+        {QueryBuilder.cql_identifier(field_name), typed_value}
+      end)
+
+    where =
+      clauses
+      |> Enum.map(fn {col, _} -> "#{col} = ?" end)
+      |> Enum.join(" AND ")
+
+    params =
+      clauses
+      |> Enum.map(fn {_, val} -> val end)
+
+    {where, params}
   end
 
   @spec build_insert_statement(String.t(), map(), pos_integer() | nil, module()) ::

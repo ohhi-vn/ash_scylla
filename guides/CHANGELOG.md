@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AshScylla.DataLayer.Pagination.page_opts/2` — build query options from paging_state
 - `AshScylla.DataLayer.Pagination.extract_paging_state/1` — extract paging_state from result
 - Security test suite (130 tests): filter validation, query builder injection prevention, pagination safety, error handling safety, DataLayer security, DSL security, migration security
+- **Aggregate support**: `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` aggregates
+  - Query-level aggregates via `Ash.count/2`, `Ash.sum/2`, `Ash.avg/2`, `Ash.min/2`, `Ash.max/2`
+  - Resource-level `aggregates do` blocks with `belongs_to` relationship traversal
+  - Unrelated aggregates via `Ash.Query.aggregate/4`
+  - `run_aggregate_query/3` handles all five kinds with field support and `default_value` fallback
+  - `attach_aggregates/5` attaches per-record aggregate values during `run_query/2`
+- Unit tests for aggregate support (48 tests in `test/unit/data_layer/data_layer_aggregate_test.exs`)
 
 ## [0.13.1]
 

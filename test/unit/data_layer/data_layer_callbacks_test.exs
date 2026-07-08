@@ -579,12 +579,12 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
       assert DataLayer.can?(nil, :lateral_join) == false
     end
 
-    test "returns false for {:aggregate, :sum}" do
-      assert DataLayer.can?(nil, {:aggregate, :sum}) == false
+    test "returns true for {:aggregate, :sum}" do
+      assert DataLayer.can?(nil, {:aggregate, :sum}) == true
     end
 
-    test "returns false for {:aggregate, :avg}" do
-      assert DataLayer.can?(nil, {:aggregate, :avg}) == false
+    test "returns true for {:aggregate, :avg}" do
+      assert DataLayer.can?(nil, {:aggregate, :avg}) == true
     end
 
     test "returns true for {:aggregate, :count}" do

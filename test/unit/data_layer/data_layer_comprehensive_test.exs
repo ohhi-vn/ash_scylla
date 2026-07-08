@@ -762,10 +762,10 @@ defmodule AshScylla.DataLayer.ComprehensiveTest do
   describe "can?/2 - unsupported tuple features" do
     test "returns false for unsupported tuple features" do
       assert DataLayer.can?(nil, {:combine, :union}) == false
-      assert DataLayer.can?(nil, {:aggregate, :sum}) == false
-      assert DataLayer.can?(nil, {:aggregate, :avg}) == false
-      assert DataLayer.can?(nil, {:aggregate, :min}) == false
-      assert DataLayer.can?(nil, {:aggregate, :max}) == false
+      assert DataLayer.can?(nil, {:aggregate, :first}) == false
+      assert DataLayer.can?(nil, {:aggregate, :list}) == false
+      assert DataLayer.can?(nil, {:aggregate, :exists}) == false
+      assert DataLayer.can?(nil, {:aggregate, :custom}) == false
     end
   end
 

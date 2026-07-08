@@ -276,12 +276,17 @@ This prevents `MatchError` crashes when a record is deleted between operations.
 
 ### 7. Aggregate Query Empty Results
 
-When `run_aggregate_query` returns an empty result set from ScyllaDB, it gracefully returns `0` for the count instead of crashing:
+When `run_aggregate_query` returns an empty result set from ScyllaDB, it gracefully returns the aggregate's `default_value` instead of crashing:
 
 ```elixir
-# Empty result from COUNT query returns 0
+# Empty result from COUNT query returns 0 (the default_value)
 {:ok, %{total: 0}} = DataLayer.run_aggregate_query(query, [%{kind: :count, name: :total}], resource)
+
+# Empty result from SUM query returns nil (the default_value)
+{:ok, %{total: nil}} = DataLayer.run_aggregate_query(query, [%{kind: :sum, name: :total, field: :amount}], resource)
 ```
+
+> **Note:** Supported aggregate kinds are `:count`, `:sum`, `:avg`, `:min`, `:max`. Unsupported kinds (`:first`, `:list`, `:exists`, `:custom`) return an error.
 
 ### 8. Non-Indexed Column Filter
 

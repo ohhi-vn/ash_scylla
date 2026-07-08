@@ -718,7 +718,7 @@ query = %AshScylla.Query{
   filters: [%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}],
   aggregates: [%{kind: :count, name: :total}]
 }
-# → SELECT count(*) FROM users WHERE status = ?
+# → SELECT COUNT(*) FROM users WHERE status = ?
 
 # ── DISTINCT on partition key ───────────────────────────────────────────────
 query = %AshScylla.Query{

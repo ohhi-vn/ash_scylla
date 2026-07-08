@@ -399,6 +399,97 @@ MyApp.User
 
 ---
 
+## Aggregates
+
+AshScylla supports `COUNT`, `SUM`, `AVG`, `MIN`, and `MAX` aggregates at the query level and via relationship `aggregates do` blocks.
+
+### Query-Level Aggregates
+
+Use `Ash.count/2`, `Ash.sum/2`, `Ash.avg/2`, `Ash.min/2`, `Ash.max/2` on a query:
+
+```elixir
+# COUNT
+count =
+  MyApp.User
+  |> Ash.Query.filter(status == "active")
+  |> Ash.count!()
+
+# SUM
+total =
+  MyApp.Order
+  |> Ash.Query.filter(user_id == user_id)
+  |> Ash.sum!(:amount)
+
+# AVG / MIN / MAX
+avg = MyApp.Order |> Ash.avg!(:amount)
+min = MyApp.Order |> Ash.min!(:amount)
+max = MyApp.Order |> Ash.max!(:amount)
+```
+
+### Resource-Level Aggregates (`aggregates do`)
+
+Define aggregates on a resource that traverse `belongs_to` relationships:
+
+```elixir
+defmodule MyApp.Redeem do
+  use Ash.Resource,
+    domain: MyApp.Domain,
+    data_layer: AshScylla.DataLayer
+
+  attributes do
+    uuid_primary_key(:id)
+    attribute(:redeemed, :boolean)
+    attribute(:amount, :integer)
+    attribute(:deal_id, :uuid)
+  end
+
+  relationships do
+    belongs_to(:deal, MyApp.Deal,
+      source_attribute: :deal_id,
+      primary_key?: true
+    )
+  end
+
+  aggregates do
+    sum :saved_money, [:deal], :amount do
+      # where the redeem is redeemed
+      filter expr(redeemed == true)
+
+      # where the `deal` is active
+      join_filter :deal, expr(active == true)
+    end
+  end
+end
+```
+
+Then load them on read:
+
+```elixir
+MyApp.Deal
+|> Ash.read!(load: [:saved_money])
+```
+
+### Unrelated Aggregates
+
+Aggregate over a different resource using `Ash.Query.aggregate/4`:
+
+```elixir
+User
+|> Ash.Query.aggregate(
+  :matching_profiles,
+  :count,
+  Profile,
+  query: [
+    filter: expr(name == parent(name))
+  ]
+)
+|> Ash.read!()
+```
+
+> **Note:** `has_many` and `many_to_many` relationship aggregates are not yet implemented. Use denormalization or materialized views for those patterns. `:first`, `:list`, `:exists`, and `:custom` aggregate kinds are also not supported.
+
+---
+
 ## Data Modeling Best Practices
 
 ### 1. Query-First Design

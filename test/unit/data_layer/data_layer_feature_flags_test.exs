@@ -61,15 +61,15 @@ defmodule AshScylla.Test do
       assert AshScylla.DataLayer.can?(nil, :expression_calculation_sort) == false
     end
 
-    test "returns false for aggregate features beyond count" do
-      assert AshScylla.DataLayer.can?(nil, {:aggregate, :sum}) == false
-      assert AshScylla.DataLayer.can?(nil, {:aggregate, :avg}) == false
-      assert AshScylla.DataLayer.can?(nil, {:aggregate, :min}) == false
-      assert AshScylla.DataLayer.can?(nil, {:aggregate, :max}) == false
+    test "returns true for aggregate features beyond count" do
+      assert AshScylla.DataLayer.can?(nil, {:aggregate, :sum}) == true
+      assert AshScylla.DataLayer.can?(nil, {:aggregate, :avg}) == true
+      assert AshScylla.DataLayer.can?(nil, {:aggregate, :min}) == true
+      assert AshScylla.DataLayer.can?(nil, {:aggregate, :max}) == true
       assert AshScylla.DataLayer.can?(nil, {:aggregate, :exists}) == false
       assert AshScylla.DataLayer.can?(nil, {:aggregate, :unrelated}) == false
-      assert AshScylla.DataLayer.can?(nil, {:aggregate_relationship, nil}) == false
-      assert AshScylla.DataLayer.can?(nil, {:query_aggregate, :count}) == false
+      assert AshScylla.DataLayer.can?(nil, {:aggregate_relationship, nil}) == true
+      assert AshScylla.DataLayer.can?(nil, {:query_aggregate, :count}) == true
       assert AshScylla.DataLayer.can?(nil, :aggregate_filter) == false
       assert AshScylla.DataLayer.can?(nil, :aggregate_sort) == false
     end

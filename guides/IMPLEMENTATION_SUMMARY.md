@@ -154,6 +154,9 @@ Current version: **0.13.1**
 | `:action_select` | ✅ | Action-specific select |
 | `:async_engine` | ✅ | Async engine support |
 | `{:aggregate, :count}` | ✅ | Per-partition COUNT |
+| `{:aggregate, :sum}` / `:avg` / `:min` / `:max` | ✅ | SUM, AVG, MIN, MAX aggregates |
+| `{:query_aggregate, :count}` / `:sum` / `:avg` / `:min` / `:max` | ✅ | Query-level aggregates (`Ash.count/2`, etc.) |
+| `{:aggregate_relationship, _}` | ✅ | Relationship aggregates via `belongs_to` (per-record subqueries) |
 | `{:atomic, :update}` | ✅ | Atomic updates via LWT (IF clauses) |
 | `{:atomic, :upsert}` | ✅ | Atomic upserts via LWT |
 | `{:atomic, :create}` | ✅ | Atomic creates |
@@ -184,9 +187,8 @@ Current version: **0.13.1**
 | `{:filter_relationship, _}` | Relationship filtering not supported |
 | `{:exists, :unrelated}` | Exists queries not supported |
 | `{:aggregate, :unrelated}` | Unrelated aggregates not supported |
-| `{:aggregate_relationship, _}` | Aggregate relationships not supported |
-| `{:query_aggregate, _}` | Query aggregates not supported |
-| `{:aggregate, :sum}` / `:avg` / `:min` / `:max` / `:exists` | Only COUNT is supported |
+| `{:aggregate, :first}` / `:list` / `:exists` / `:custom` | Only COUNT, SUM, AVG, MIN, MAX are supported |
+| `:has_many` / `:many_to_many` relationship aggregates | Not yet implemented (use denormalization) |
 
 ### ScyllaDB-Specific Features
 
@@ -403,6 +405,7 @@ Dev/test dependencies:
 - Schema migration system (AshScylla.Schema)
 - Resource template generation
 - Compression and collection type support
+- Aggregate support: COUNT, SUM, AVG, MIN, MAX (query + relationship aggregates)
 
 ### Not Supported (ScyllaDB Limitations)
 
@@ -412,6 +415,8 @@ Dev/test dependencies:
 - ALLOW FILTERING (rejected at query-plan time — add secondary indexes instead)
 - OR conditions in WHERE clause (rewritten to IN where possible)
 - Foreign keys
+- `has_many` / `many_to_many` relationship aggregates (use denormalization or materialized views)
+- `:first`, `:list`, `:exists`, `:custom` aggregate kinds
 
 ---
 

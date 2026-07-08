@@ -466,7 +466,7 @@ defmodule AshScylla.DslResourceTest do
       assert DataLayer.can?(SimpleResource, :offset) == false
       assert DataLayer.can?(SimpleResource, :lateral_join) == false
       assert DataLayer.can?(SimpleResource, :lock) == false
-      assert DataLayer.can?(SimpleResource, {:aggregate, :sum}) == false
+      assert DataLayer.can?(SimpleResource, {:aggregate, :sum}) == true
       assert DataLayer.can?(SimpleResource, {:combine, :union}) == false
     end
 

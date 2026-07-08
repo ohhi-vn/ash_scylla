@@ -141,6 +141,9 @@ For a complete step-by-step guide, see the **[Usage Guide](guides/USAGE_GUIDE.md
 | Distinct | ✅ | DISTINCT on partition key columns |
 | Calculate | ✅ | In-memory calculations |
 | Aggregate (count) | ✅ | Per-partition COUNT |
+| Aggregate (sum/avg/min/max) | ✅ | SUM, AVG, MIN, MAX aggregates |
+| Query aggregates | ✅ | `Ash.count/2`, `Ash.sum/2`, etc. on queries |
+| Relationship aggregates | ✅ | `aggregates do` blocks with `belongs_to` relationships |
 
 ### ScyllaDB-Specific Features
 
@@ -218,6 +221,7 @@ config :my_app, MyApp.Repo,
 | **Limited WHERE without indexes** | Create secondary indexes or materialized views |
 | **No OFFSET** | Use keyset pagination via `paging_state` (default mode) |
 | **Cluster requires same port** | Configure all nodes on the same port, or use single-node connection |
+| **Relationship aggregates (has_many/many_to_many)** | Not yet implemented; use denormalization or materialized views |
 
 ---
 
