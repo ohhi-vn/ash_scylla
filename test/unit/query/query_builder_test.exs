@@ -8,6 +8,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
   alias AshScylla.DataLayer
   alias AshScylla.DataLayer.QueryBuilder
+  alias AshScylla.DataLayer.Pagination
 
   # ============================================================================
   # build_optimized_query/1
@@ -26,7 +27,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       assert cql == "SELECT * FROM users"
       assert params == []
     end
@@ -43,7 +44,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
       assert cql == "SELECT name, email FROM users"
     end
 
@@ -61,7 +62,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       assert cql == "SELECT * FROM users WHERE status = ?"
       assert params == ["active"]
     end
@@ -81,7 +82,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
       assert String.contains?(cql, "WHERE")
       assert String.contains?(cql, "AND")
     end
@@ -98,7 +99,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
       assert String.contains?(cql, "ORDER BY name asc")
     end
 
@@ -114,7 +115,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       assert String.contains?(cql, "LIMIT ?")
       assert {"int", 10} in params
     end
@@ -133,7 +134,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       assert String.contains?(cql, "WHERE")
       assert String.contains?(cql, "ORDER BY created_at desc")
       assert String.contains?(cql, "LIMIT ?")
@@ -155,7 +156,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       assert String.contains?(cql, "IN")
       assert params == ["active", "pending"]
     end
@@ -178,7 +179,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       assert cql == "SELECT * FROM users WHERE status = ? AND age > ?"
       assert params == ["active", 18]
     end
@@ -210,7 +211,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
 
       # Must not contain double-parens — CQL rejects ((...))
       refute String.contains?(cql, "(("), "CQL must not contain double opening parens"
@@ -249,7 +250,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
 
       refute String.contains?(cql, "ORDER BY"),
              "ORDER BY must be dropped for secondary index scans"
@@ -277,7 +278,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
       assert String.contains?(cql, "ORDER BY"), "ORDER BY must be preserved for PK queries"
     end
 
@@ -295,7 +296,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
 
       refute String.contains?(cql, "ORDER BY"),
              "ORDER BY must be dropped when filter uses Ash.Query.Ref on secondary index column"
@@ -315,7 +316,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
 
       refute String.contains?(cql, "ORDER BY"),
              "ORDER BY must be dropped when filter uses Ash.Query.Ref with atom attribute"
@@ -335,7 +336,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
 
       assert String.contains?(cql, "ORDER BY"),
              "ORDER BY must be preserved when Ash.Query.Ref points to non-indexed column"
@@ -355,7 +356,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
 
       assert String.contains?(cql, "ORDER BY"),
              "ORDER BY must be preserved when no secondary index is involved"
@@ -383,7 +384,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
 
       assert String.contains?(cql, "LIMIT ?")
       assert String.contains?(cql, "ALLOW FILTERING")
@@ -422,7 +423,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
 
       assert String.contains?(cql, "ALLOW FILTERING"),
              "ALLOW FILTERING must be present for secondary index scan"
@@ -443,7 +444,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
 
       assert String.contains?(cql, "ALLOW FILTERING"),
              "ALLOW FILTERING must be present when filtering on multiple secondary index columns"
@@ -464,7 +465,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
 
       refute String.contains?(cql, "ALLOW FILTERING"),
              "ALLOW FILTERING must NOT be present for pure PK queries"
@@ -482,7 +483,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
 
       refute String.contains?(cql, "ALLOW FILTERING"),
              "ALLOW FILTERING must NOT be present when there are no filters"
@@ -502,7 +503,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
 
       refute String.contains?(cql, "ALLOW FILTERING"),
              "ALLOW FILTERING must NOT be present when resource is nil"
@@ -522,7 +523,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
 
       assert String.contains?(cql, "ALLOW FILTERING")
       assert String.contains?(cql, "LIMIT ?")
@@ -544,7 +545,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
 
       assert String.contains?(cql, "ALLOW FILTERING")
       refute String.contains?(cql, "ORDER BY")
@@ -564,7 +565,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
 
       assert String.contains?(cql, "ALLOW FILTERING"),
              "ALLOW FILTERING must be present when using Ash.Query.Ref on secondary index column"
@@ -584,7 +585,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
 
       refute String.contains?(cql, "ALLOW FILTERING"),
              "ALLOW FILTERING must NOT be present when Ash.Query.Ref points to non-indexed column"
@@ -606,7 +607,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
 
       assert String.contains?(cql, "ALLOW FILTERING")
       assert String.contains?(cql, "LIMIT ?")
@@ -701,42 +702,42 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
   describe "filter_to_cql/1" do
     test "simple equality" do
       filter = %{operator: :eq, left: %{name: "name"}, right: %{value: "John"}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "name = ?"
       assert params == ["John"]
     end
 
     test "greater than" do
       filter = %{operator: :gt, left: %{name: "age"}, right: %{value: 21}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "age > ?"
       assert params == [21]
     end
 
     test "less than or equal" do
       filter = %{operator: :lte, left: %{name: "price"}, right: %{value: 100}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "price <= ?"
       assert params == [100]
     end
 
     test "not equal" do
       filter = %{operator: :not_eq, left: %{name: "status"}, right: %{value: "deleted"}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "status != ?"
       assert params == ["deleted"]
     end
 
     test "contains uses LIKE" do
       filter = %{operator: :contains, left: %{name: "bio"}, right: %{value: "elixir"}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert String.contains?(cql, "LIKE")
       assert params == ["%elixir%"]
     end
 
     test "starts_with uses LIKE with wildcard suffix" do
       filter = %{operator: :starts_with, left: %{name: "name"}, right: %{value: "Jo"}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert String.contains?(cql, "LIKE")
       refute String.contains?(cql, "%?")
       assert params == ["%Jo"]
@@ -744,7 +745,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
     test "ends_with uses LIKE with wildcard prefix" do
       filter = %{operator: :ends_with, left: %{name: "email"}, right: %{value: ".com"}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert String.contains?(cql, "LIKE")
       refute String.contains?(cql, "?%")
       assert params == [".com%"]
@@ -752,7 +753,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
     test "expression wrapper unwraps and converts" do
       filter = %{expression: %{operator: :eq, left: %{name: "id"}, right: %{value: 1}}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "id = ?"
       assert params == [1]
     end
@@ -764,14 +765,14 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
   describe "build_where_clause/1" do
     test "empty list returns empty clause" do
-      {cql, params} = QueryBuilder.build_where_clause([])
+      {:ok, {cql, params}} = QueryBuilder.build_where_clause([], %MapSet{}, %{})
       assert cql == ""
       assert params == []
     end
 
     test "single filter produces correct WHERE clause" do
       filter = %{operator: :eq, left: %{name: "status"}, right: %{value: "active"}}
-      {cql, params} = QueryBuilder.build_where_clause([filter])
+      {:ok, {cql, params}} = QueryBuilder.build_where_clause([filter], %MapSet{}, %{})
       assert cql == "status = ?"
       assert params == ["active"]
     end
@@ -779,7 +780,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     test "multiple filters are joined with AND" do
       f1 = %{operator: :eq, left: %{name: "status"}, right: %{value: "active"}}
       f2 = %{operator: :gt, left: %{name: "age"}, right: %{value: 18}}
-      {cql, params} = QueryBuilder.build_where_clause([f1, f2])
+      {:ok, {cql, params}} = QueryBuilder.build_where_clause([f1, f2], %MapSet{}, %{})
       assert cql == "status = ? AND age > ?"
       assert params == ["active", 18]
     end
@@ -859,7 +860,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
 
       # The 'order' column must be quoted to avoid ScyllaDB error
       assert String.contains?(cql, "\"order\""),
@@ -880,7 +881,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
 
       assert String.contains?(cql, "\"select\"")
       assert String.contains?(cql, "\"from\"")
@@ -948,11 +949,15 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
   describe "has operator (Ash.Query.Operator.Has)" do
     test "has with single value → CONTAINS" do
       {cql, params} =
-        QueryBuilder.filter_to_cql(%{
-          operator: :has,
-          left: %{name: :tags},
-          right: %{value: "elixir"}
-        })
+        QueryBuilder.filter_to_cql(
+          %{
+            operator: :has,
+            left: %{name: :tags},
+            right: %{value: "elixir"}
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql == "tags CONTAINS ?"
       assert params == ["elixir"]
@@ -960,10 +965,14 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
     test "has via Ash.Query.Operator.Has struct" do
       {cql, params} =
-        QueryBuilder.filter_to_cql(%Ash.Query.Operator.Has{
-          left: %{name: :tags},
-          right: "elixir"
-        })
+        QueryBuilder.filter_to_cql(
+          %Ash.Query.Operator.Has{
+            left: %{name: :tags},
+            right: "elixir"
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql == "tags CONTAINS ?"
       assert params == ["elixir"]
@@ -971,11 +980,15 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
     test "has with integer value" do
       {cql, params} =
-        QueryBuilder.filter_to_cql(%{
-          operator: :has,
-          left: %{name: :scores},
-          right: %{value: 42}
-        })
+        QueryBuilder.filter_to_cql(
+          %{
+            operator: :has,
+            left: %{name: :scores},
+            right: %{value: 42}
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql == "scores CONTAINS ?"
       assert params == [42]
@@ -983,11 +996,15 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
     test "has with nil value" do
       {cql, params} =
-        QueryBuilder.filter_to_cql(%{
-          operator: :has,
-          left: %{name: :tags},
-          right: %{value: nil}
-        })
+        QueryBuilder.filter_to_cql(
+          %{
+            operator: :has,
+            left: %{name: :tags},
+            right: %{value: nil}
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql == "tags CONTAINS ?"
       assert params == [nil]
@@ -1001,10 +1018,14 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
   describe "overlaps operator (Ash.Query.Operator.Overlaps)" do
     test "overlaps with empty list → FALSE" do
       {cql, params} =
-        QueryBuilder.filter_to_cql(%Ash.Query.Operator.Overlaps{
-          left: %{name: :tags},
-          right: []
-        })
+        QueryBuilder.filter_to_cql(
+          %Ash.Query.Operator.Overlaps{
+            left: %{name: :tags},
+            right: []
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql == "FALSE"
       assert params == []
@@ -1012,10 +1033,14 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
     test "overlaps with single value → CONTAINS" do
       {cql, params} =
-        QueryBuilder.filter_to_cql(%Ash.Query.Operator.Overlaps{
-          left: %{name: :tags},
-          right: ["elixir"]
-        })
+        QueryBuilder.filter_to_cql(
+          %Ash.Query.Operator.Overlaps{
+            left: %{name: :tags},
+            right: ["elixir"]
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql == "tags CONTAINS ?"
       assert params == ["elixir"]
@@ -1023,10 +1048,14 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
     test "overlaps with multiple values → raises error (CQL has no OR)" do
       assert_raise AshScylla.Error, ~r/CQL does not support OR/, fn ->
-        QueryBuilder.filter_to_cql(%Ash.Query.Operator.Overlaps{
-          left: %{name: :tags},
-          right: ["elixir", "scylla"]
-        })
+        QueryBuilder.filter_to_cql(
+          %Ash.Query.Operator.Overlaps{
+            left: %{name: :tags},
+            right: ["elixir", "scylla"]
+          },
+          %MapSet{},
+          %{}
+        )
       end
     end
 
@@ -1041,21 +1070,29 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
     test "overlaps via operator dispatch with multi-value list → raises error" do
       assert_raise AshScylla.Error, ~r/CQL does not support OR/, fn ->
-        QueryBuilder.filter_to_cql(%{
-          operator: :overlaps,
-          left: %{name: :tags},
-          right: %{value: ["x", "y"]}
-        })
+        QueryBuilder.filter_to_cql(
+          %{
+            operator: :overlaps,
+            left: %{name: :tags},
+            right: %{value: ["x", "y"]}
+          },
+          %MapSet{},
+          %{}
+        )
       end
     end
 
     test "overlaps via operator dispatch with single-element list" do
       {cql, params} =
-        QueryBuilder.filter_to_cql(%{
-          operator: :overlaps,
-          left: %{name: :tags},
-          right: %{value: ["x"]}
-        })
+        QueryBuilder.filter_to_cql(
+          %{
+            operator: :overlaps,
+            left: %{name: :tags},
+            right: %{value: ["x"]}
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql == "tags CONTAINS ?"
       assert params == ["x"]
@@ -1075,11 +1112,15 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
     test "overlaps via operator dispatch with single raw value" do
       {cql, params} =
-        QueryBuilder.filter_to_cql(%{
-          operator: :overlaps,
-          left: %{name: :tags},
-          right: "single"
-        })
+        QueryBuilder.filter_to_cql(
+          %{
+            operator: :overlaps,
+            left: %{name: :tags},
+            right: "single"
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql == "tags CONTAINS ?"
       assert params == ["single"]
@@ -1093,16 +1134,20 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
   describe "fragment support" do
     test "fragment with raw CQL and placeholders" do
       {cql, params} =
-        QueryBuilder.filter_to_cql(%{
-          __function__?: true,
-          name: :fragment,
-          arguments: [
-            {:raw, "col = "},
-            {:expr, "value1"},
-            {:raw, " AND other = "},
-            {:expr, 42}
-          ]
-        })
+        QueryBuilder.filter_to_cql(
+          %{
+            __function__?: true,
+            name: :fragment,
+            arguments: [
+              {:raw, "col = "},
+              {:expr, "value1"},
+              {:raw, " AND other = "},
+              {:expr, 42}
+            ]
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql == "col = ? AND other = ?"
       assert params == ["value1", 42]
@@ -1126,11 +1171,15 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
     test "fragment with only raw CQL (no placeholders)" do
       {cql, params} =
-        QueryBuilder.filter_to_cql(%{
-          __function__?: true,
-          name: :fragment,
-          arguments: [{:raw, "1 = 1"}]
-        })
+        QueryBuilder.filter_to_cql(
+          %{
+            __function__?: true,
+            name: :fragment,
+            arguments: [{:raw, "1 = 1"}]
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql == "1 = 1"
       assert params == []
@@ -1150,30 +1199,24 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
       assert DataLayer.can?(AshScylla.TestResource, :expression_calculation) == true
     end
   end
-end
 
-# ============================================================================
-# Pagination Tests
-# ============================================================================
-
-defmodule AshScylla.DataLayer.PaginationTest do
-  @moduledoc """
-  Comprehensive tests for AshScylla.DataLayer.Pagination module.
-  """
-
-  use ExUnit.Case, async: true
-
-  alias AshScylla.DataLayer.Pagination
 
   describe "build_paginated_query/4" do
     test "no filters, no token produces simple LIMIT query" do
-      {cql, params} = Pagination.build_paginated_query("users", %{}, nil, 10)
+      {:ok, {cql, params}} = Pagination.build_paginated_query("users", [], nil, 10)
       assert cql == "SELECT * FROM users LIMIT ?"
       assert params == [10]
     end
 
     test "with filters includes WHERE clause" do
-      {cql, params} = Pagination.build_paginated_query("users", %{status: "active"}, nil, 20)
+      {:ok, {cql, params}} =
+        Pagination.build_paginated_query(
+          "users",
+          [%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}],
+          nil,
+          20
+        )
+
       assert String.contains?(cql, "WHERE")
       assert String.contains?(cql, "LIMIT ?")
       assert "active" in params
@@ -1181,15 +1224,20 @@ defmodule AshScylla.DataLayer.PaginationTest do
     end
 
     test "with token includes token() condition" do
-      {cql, params} = Pagination.build_paginated_query("users", %{}, "some_token", 10)
+      {:ok, {cql, params}} = Pagination.build_paginated_query("users", [], "some_token", 10)
       assert String.contains?(cql, "token() > ?")
       assert "some_token" in params
       assert 10 in params
     end
 
     test "with both filters and token" do
-      {cql, params} =
-        Pagination.build_paginated_query("users", %{status: "active"}, "page_token", 15)
+      {:ok, {cql, params}} =
+        Pagination.build_paginated_query(
+          "users",
+          [%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}],
+          "page_token",
+          15
+        )
 
       assert String.contains?(cql, "WHERE")
       assert String.contains?(cql, "token() > ?")

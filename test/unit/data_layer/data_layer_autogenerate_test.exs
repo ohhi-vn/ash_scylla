@@ -81,8 +81,7 @@ defmodule AshScylla.DataLayer.AutogenerateTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(FakeRepo)
@@ -109,8 +108,7 @@ defmodule AshScylla.DataLayer.AutogenerateTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(FakeRepo)
@@ -137,8 +135,7 @@ defmodule AshScylla.DataLayer.AutogenerateTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       repo(FakeRepo)
@@ -341,7 +338,7 @@ defmodule AshScylla.DataLayer.AutogenerateTest do
         default: &Ash.UUIDv7.generate/0
       }
 
-      assert Map.get(attr, :autogenerate?) != true
+      refute Map.get(attr, :autogenerate?)
       assert is_function(Map.get(attr, :default))
     end
 
@@ -354,7 +351,7 @@ defmodule AshScylla.DataLayer.AutogenerateTest do
         default: nil
       }
 
-      assert Map.get(attr, :autogenerate?) != true
+      refute Map.get(attr, :autogenerate?)
       refute is_function(Map.get(attr, :default))
     end
   end

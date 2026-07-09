@@ -12,85 +12,86 @@ defmodule AshScylla.EdgeCasesTest do
   describe "filter_to_cql/1 edge cases" do
     test "unknown map filter returns placeholder" do
       # Raw maps are now treated as parameter values
-      assert {"?", [%{foo: :bar}]} = QueryBuilder.filter_to_cql(%{foo: :bar})
+      assert {"?", [%{foo: :bar}]} = QueryBuilder.filter_to_cql(%{foo: :bar}, %MapSet{}, %{})
     end
 
     test "nil filter returns placeholder with nil param" do
       # Raw nil is treated as a parameter value with placeholder
-      assert {"?", [nil]} = QueryBuilder.filter_to_cql(nil)
+      assert {"?", [nil]} = QueryBuilder.filter_to_cql(nil, %MapSet{}, %{})
     end
 
     test "atom filter returns placeholder" do
       # Raw atoms are now treated as parameter values
-      assert {"?", [:x]} = QueryBuilder.filter_to_cql(:x)
+      assert {"?", [:x]} = QueryBuilder.filter_to_cql(:x, %MapSet{}, %{})
     end
 
     test "string filter returns placeholder" do
       # Raw strings are now treated as parameter values
-      assert {"?", ["s"]} = QueryBuilder.filter_to_cql("s")
+      assert {"?", ["s"]} = QueryBuilder.filter_to_cql("s", %MapSet{}, %{})
     end
 
     test "boolean filter returns placeholder" do
-      assert {"?", [true]} = QueryBuilder.filter_to_cql(true)
-      assert {"?", [false]} = QueryBuilder.filter_to_cql(false)
+      assert {"?", [true]} = QueryBuilder.filter_to_cql(true, %MapSet{}, %{})
+      assert {"?", [false]} = QueryBuilder.filter_to_cql(false, %MapSet{}, %{})
     end
 
     test "integer filter returns placeholder" do
-      assert {"?", [42]} = QueryBuilder.filter_to_cql(42)
+      assert {"?", [42]} = QueryBuilder.filter_to_cql(42, %MapSet{}, %{})
     end
 
     test "float filter returns placeholder" do
-      assert {"?", [3.14]} = QueryBuilder.filter_to_cql(3.14)
+      assert {"?", [3.14]} = QueryBuilder.filter_to_cql(3.14, %MapSet{}, %{})
     end
 
     test "DateTime filter returns placeholder" do
       dt = ~U[2024-06-15 12:30:00Z]
-      assert {"?", [^dt]} = QueryBuilder.filter_to_cql(dt)
+      assert {"?", [^dt]} = QueryBuilder.filter_to_cql(dt, %MapSet{}, %{})
     end
 
     test "Date filter returns placeholder" do
       d = ~D[2024-06-15]
-      assert {"?", [^d]} = QueryBuilder.filter_to_cql(d)
+      assert {"?", [^d]} = QueryBuilder.filter_to_cql(d, %MapSet{}, %{})
     end
 
     test "Time filter returns placeholder" do
       t = ~T[12:30:00]
-      assert {"?", [^t]} = QueryBuilder.filter_to_cql(t)
+      assert {"?", [^t]} = QueryBuilder.filter_to_cql(t, %MapSet{}, %{})
     end
 
     test "list filter returns placeholder" do
-      assert {"?", [["a", "b"]]} = QueryBuilder.filter_to_cql(["a", "b"])
+      assert {"?", [["a", "b"]]} = QueryBuilder.filter_to_cql(["a", "b"], %MapSet{}, %{})
     end
 
     test "tuple filter returns placeholder" do
-      assert {"?", [{192, 168, 1, 1}]} = QueryBuilder.filter_to_cql({192, 168, 1, 1})
+      assert {"?", [{192, 168, 1, 1}]} =
+               QueryBuilder.filter_to_cql({192, 168, 1, 1}, %MapSet{}, %{})
     end
 
     test "Decimal filter returns placeholder" do
       d = Decimal.new("3.14")
-      assert {"?", [^d]} = QueryBuilder.filter_to_cql(d)
+      assert {"?", [^d]} = QueryBuilder.filter_to_cql(d, %MapSet{}, %{})
     end
 
     test "serialized binary term returns placeholder" do
       serialized = :erlang.term_to_binary(<<1, 2, 3>>)
-      assert {"?", [^serialized]} = QueryBuilder.filter_to_cql(serialized)
+      assert {"?", [^serialized]} = QueryBuilder.filter_to_cql(serialized, %MapSet{}, %{})
     end
 
     test "truly unknown term returns error" do
       assert {:error, {:unknown_filter, _}} =
-               QueryBuilder.filter_to_cql(self())
+               QueryBuilder.filter_to_cql(self(), %MapSet{}, %{})
     end
 
     test "empty IN list" do
       filter = %{operator: :in, left: %{name: "s"}, right: %{value: []}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "s IN ()"
       assert params == []
     end
 
     test "single-value IN" do
       filter = %{operator: :in, left: %{name: "s"}, right: %{value: ["a"]}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "s IN (?)"
       assert params == ["a"]
     end
@@ -98,56 +99,56 @@ defmodule AshScylla.EdgeCasesTest do
     test "large IN list (500 values)" do
       values = Enum.map(1..500, &"v#{&1}")
       filter = %{operator: :in, left: %{name: "id"}, right: %{value: values}}
-      {_cql, params} = QueryBuilder.filter_to_cql(filter)
+      {_cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert length(params) == 500
     end
 
     test "unicode values" do
       filter = %{operator: :eq, left: %{name: "n"}, right: %{value: "日本語"}}
-      {_cql, params} = QueryBuilder.filter_to_cql(filter)
+      {_cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert params == ["日本語"]
     end
 
     test "empty string value" do
       filter = %{operator: :eq, left: %{name: "n"}, right: %{value: ""}}
-      {_cql, params} = QueryBuilder.filter_to_cql(filter)
+      {_cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert params == [""]
     end
 
     test "nil value" do
       filter = %{operator: :eq, left: %{name: "n"}, right: %{value: nil}}
-      {_cql, params} = QueryBuilder.filter_to_cql(filter)
+      {_cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert params == [nil]
     end
 
     test "numeric zero" do
       filter = %{operator: :eq, left: %{name: "c"}, right: %{value: 0}}
-      {_cql, params} = QueryBuilder.filter_to_cql(filter)
+      {_cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert params == [0]
     end
 
     test "boolean false" do
       filter = %{operator: :eq, left: %{name: "a"}, right: %{value: false}}
-      {_cql, params} = QueryBuilder.filter_to_cql(filter)
+      {_cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert params == [false]
     end
 
     test "float values" do
       filter = %{operator: :gt, left: %{name: "s"}, right: %{value: 3.14}}
-      {_cql, params} = QueryBuilder.filter_to_cql(filter)
+      {_cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert params == [3.14]
     end
 
     test "negative numbers" do
       filter = %{operator: :lt, left: %{name: "t"}, right: %{value: -273}}
-      {_cql, params} = QueryBuilder.filter_to_cql(filter)
+      {_cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert params == [-273]
     end
 
     test "DateTime values" do
       dt = ~U[2024-06-15 12:30:00Z]
       filter = %{operator: :gte, left: %{name: "c"}, right: %{value: dt}}
-      {_cql, params} = QueryBuilder.filter_to_cql(filter)
+      {_cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert params == [dt]
     end
 
@@ -168,52 +169,52 @@ defmodule AshScylla.EdgeCasesTest do
 
       # Cross-field OR: (a=1 AND b=2) OR (c=3) — CQL cannot express this
       assert_raise AshScylla.Error, ~r/CQL does not support OR across different fields/, fn ->
-        QueryBuilder.filter_to_cql(filter)
+        QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       end
     end
 
     test "unknown operator falls back to =" do
       filter = %{operator: :xyz, left: %{name: "f"}, right: %{value: "v"}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "f = ?"
       assert params == ["v"]
     end
 
     test ":not_eq" do
       filter = %{operator: :not_eq, left: %{name: "s"}, right: %{value: "d"}}
-      {cql, _params} = QueryBuilder.filter_to_cql(filter)
+      {cql, _params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "s != ?"
     end
 
     test ":lte" do
       filter = %{operator: :lte, left: %{name: "a"}, right: %{value: 65}}
-      {cql, _params} = QueryBuilder.filter_to_cql(filter)
+      {cql, _params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "a <= ?"
     end
 
     test ":contains" do
       filter = %{operator: :contains, left: %{name: "d"}, right: %{value: "k"}}
-      {cql, _params} = QueryBuilder.filter_to_cql(filter)
+      {cql, _params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "d LIKE ?"
     end
 
     test "bang version raises on unknown" do
       assert_raise ArgumentError, fn ->
         self()
-        |> then(&QueryBuilder.filter_to_cql!/1)
+        |> then(&QueryBuilder.filter_to_cql!(&1, %MapSet{}, %{}))
       end
     end
 
     test "bang version raises on reference" do
       assert_raise ArgumentError, fn ->
         make_ref()
-        |> then(&QueryBuilder.filter_to_cql!/1)
+        |> then(&QueryBuilder.filter_to_cql!(&1, %MapSet{}, %{}))
       end
     end
 
     test "bang version works on valid" do
       filter = %{operator: :eq, left: %{name: "id"}, right: %{value: "a"}}
-      {cql, params} = QueryBuilder.filter_to_cql!(filter)
+      {cql, params} = QueryBuilder.filter_to_cql!(filter, %MapSet{}, %{})
       assert cql == "id = ?"
       assert params == ["a"]
     end
@@ -222,14 +223,14 @@ defmodule AshScylla.EdgeCasesTest do
   describe "filter_to_cql/1 with raw values (Ash operator format)" do
     test "equality with raw string value" do
       filter = %{operator: :==, left: %{name: "id"}, right: "abc-123"}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "id = ?"
       assert params == ["abc-123"]
     end
 
     test "equality with raw integer value" do
       filter = %{operator: :==, left: %{name: "count"}, right: 42}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "count = ?"
       assert params == [42]
     end
@@ -237,7 +238,7 @@ defmodule AshScylla.EdgeCasesTest do
     test "greater than or equal with raw DateTime" do
       dt = ~U[2025-06-17 00:00:00Z]
       filter = %{operator: :>=, left: %{name: "started_at"}, right: dt}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "started_at >= ?"
       assert params == [dt]
     end
@@ -245,7 +246,7 @@ defmodule AshScylla.EdgeCasesTest do
     test "less than or equal with raw DateTime" do
       dt = ~U[2026-06-18 00:00:00Z]
       filter = %{operator: :<=, left: %{name: "started_at"}, right: dt}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "started_at <= ?"
       assert params == [dt]
     end
@@ -253,49 +254,49 @@ defmodule AshScylla.EdgeCasesTest do
     test "greater than with raw Date" do
       d = ~D[2025-06-17]
       filter = %{operator: :>, left: %{name: "created_date"}, right: d}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "created_date > ?"
       assert params == [d]
     end
 
     test "equality with raw float value" do
       filter = %{operator: :==, left: %{name: "score"}, right: 3.14}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "score = ?"
       assert params == [3.14]
     end
 
     test "equality with raw boolean value" do
       filter = %{operator: :==, left: %{name: "active"}, right: true}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "active = ?"
       assert params == [true]
     end
 
     test "equality with raw nil value" do
       filter = %{operator: :==, left: %{name: "deleted_at"}, right: nil}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "deleted_at = ?"
       assert params == [nil]
     end
 
     test "not equal with raw string value" do
       filter = %{operator: :!=, left: %{name: "status"}, right: "deleted"}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "status != ?"
       assert params == ["deleted"]
     end
 
     test "IN with raw list value" do
       filter = %{operator: :in, left: %{name: "status"}, right: ["active", "pending"]}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "status IN (?, ?)"
       assert params == ["active", "pending"]
     end
 
     test "IN with MapSet value" do
       filter = %{operator: :in, left: %{name: "status"}, right: MapSet.new(["active", "pending"])}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "status IN (?, ?)"
       assert "active" in params
       assert "pending" in params
@@ -303,42 +304,42 @@ defmodule AshScylla.EdgeCasesTest do
 
     test "is_nil with raw true" do
       filter = %{operator: :is_nil, left: %{name: "deleted_at"}, right: true}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "deleted_at IS NULL"
       assert params == []
     end
 
     test "is_nil with raw false" do
       filter = %{operator: :is_nil, left: %{name: "deleted_at"}, right: false}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "deleted_at IS NOT NULL"
       assert params == []
     end
 
     test "starts_with with raw string value" do
       filter = %{operator: :starts_with, left: %{name: "name"}, right: "Jo"}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "name LIKE ?"
       assert params == ["%Jo"]
     end
 
     test "ends_with with raw string value" do
       filter = %{operator: :ends_with, left: %{name: "email"}, right: ".com"}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "email LIKE ?"
       assert params == [".com%"]
     end
 
     test "contains with raw string value" do
       filter = %{operator: :contains, left: %{name: "bio"}, right: "elixir"}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "bio LIKE ?"
       assert params == ["%elixir%"]
     end
 
     test "raw value with unknown operator falls back to =" do
       filter = %{operator: :custom_op, left: %{name: "field"}, right: "val"}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "field = ?"
       assert params == ["val"]
     end
@@ -360,7 +361,7 @@ defmodule AshScylla.EdgeCasesTest do
         right: %{operator: :<=, left: %{name: "started_at"}, right: end_dt}
       }
 
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
 
       assert cql == "user_id = ? AND started_at >= ? AND started_at <= ?"
       assert params == [user_id, start_dt, end_dt]
@@ -369,7 +370,7 @@ defmodule AshScylla.EdgeCasesTest do
     test "single datetime equality filter" do
       dt = ~U[2025-06-17 00:00:00Z]
       filter = %{operator: :==, left: %{name: "created_at"}, right: dt}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "created_at = ?"
       assert params == [dt]
     end
@@ -377,7 +378,7 @@ defmodule AshScylla.EdgeCasesTest do
     test "datetime range with only gte" do
       dt = ~U[2025-06-17 00:00:00Z]
       filter = %{operator: :>=, left: %{name: "started_at"}, right: dt}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "started_at >= ?"
       assert params == [dt]
     end
@@ -392,7 +393,7 @@ defmodule AshScylla.EdgeCasesTest do
         right: %{operator: :<=, left: %{name: "ended_at"}, right: end_dt}
       }
 
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql == "started_at >= ? AND ended_at <= ?"
       assert params == [start_dt, end_dt]
     end
@@ -428,7 +429,7 @@ defmodule AshScylla.EdgeCasesTest do
         tenant: nil
       }
 
-      {q, params} = QueryBuilder.build_optimized_query(dlq)
+      {:ok, {q, params}} = QueryBuilder.build_optimized_query(dlq)
 
       assert q ==
                "SELECT * FROM members WHERE user_id = ? AND started_at >= ? AND started_at <= ? ORDER BY started_at desc"
@@ -461,7 +462,7 @@ defmodule AshScylla.EdgeCasesTest do
         tenant: nil
       }
 
-      {q, params} = QueryBuilder.build_optimized_query(dlq)
+      {:ok, {q, params}} = QueryBuilder.build_optimized_query(dlq)
 
       assert q == "SELECT * FROM events WHERE status = ? AND created_at >= ? LIMIT ?"
       assert params == ["active", dt, {"int", 50}]
@@ -483,7 +484,7 @@ defmodule AshScylla.EdgeCasesTest do
         tenant: nil
       }
 
-      {q, params} = QueryBuilder.build_optimized_query(dlq)
+      {:ok, {q, params}} = QueryBuilder.build_optimized_query(dlq)
 
       assert q ==
                "SELECT id, name, started_at FROM games WHERE started_at >= ? ORDER BY started_at desc LIMIT ?"
@@ -509,7 +510,7 @@ defmodule AshScylla.EdgeCasesTest do
         tenant: nil
       }
 
-      {q, params} = QueryBuilder.build_optimized_query(dlq)
+      {:ok, {q, params}} = QueryBuilder.build_optimized_query(dlq)
 
       assert q == "SELECT * FROM tasks WHERE status IN (?, ?)"
       assert params == ["active", "pending"]
@@ -539,7 +540,7 @@ defmodule AshScylla.EdgeCasesTest do
         tenant: nil
       }
 
-      {q, params} = QueryBuilder.build_optimized_query(dlq)
+      {:ok, {q, params}} = QueryBuilder.build_optimized_query(dlq)
 
       assert q ==
                "SELECT * FROM items WHERE status IN (?, ?) AND created_at >= ? ORDER BY created_at asc LIMIT ?"
@@ -570,7 +571,7 @@ defmodule AshScylla.EdgeCasesTest do
         tenant: nil
       }
 
-      {q, params} = QueryBuilder.build_optimized_query(dlq)
+      {:ok, {q, params}} = QueryBuilder.build_optimized_query(dlq)
 
       assert q == "SELECT * FROM records WHERE status = ? AND deleted_at IS NULL"
       assert params == ["active"]
@@ -594,7 +595,7 @@ defmodule AshScylla.EdgeCasesTest do
         tenant: nil
       }
 
-      {q, params} = QueryBuilder.build_optimized_query(dlq)
+      {:ok, {q, params}} = QueryBuilder.build_optimized_query(dlq)
 
       assert q == "SELECT * FROM posts WHERE status IN (?, ?, ?) AND created_at >= ?"
       assert params == ["active", "pending", "archived", ~U[2025-01-01 00:00:00Z]]
@@ -617,7 +618,7 @@ defmodule AshScylla.EdgeCasesTest do
         right: %{operator: :==, left: %{name: "d"}, right: 4}
       }
 
-      {cql, _} = QueryBuilder.filter_to_cql(filter)
+      {cql, _} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       opens = cql |> String.graphemes() |> Enum.count(&(&1 == "("))
       closes = cql |> String.graphemes() |> Enum.count(&(&1 == ")"))
       assert opens == closes
@@ -640,13 +641,13 @@ defmodule AshScylla.EdgeCasesTest do
 
       # Cross-field OR: (a=1 AND b=2) OR (c=3 AND d=4) — CQL cannot express this
       assert_raise AshScylla.Error, ~r/CQL does not support OR across different fields/, fn ->
-        QueryBuilder.filter_to_cql(filter)
+        QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       end
     end
 
     test "no trailing open paren for simple filter" do
       filter = %{operator: :==, left: %{name: "id"}, right: "abc"}
-      {cql, _} = QueryBuilder.filter_to_cql(filter)
+      {cql, _} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       refute String.starts_with?(cql, "(")
       assert cql == "id = ?"
     end
@@ -669,7 +670,7 @@ defmodule AshScylla.EdgeCasesTest do
         tenant: nil
       }
 
-      {q, _} = QueryBuilder.build_optimized_query(dlq)
+      {:ok, {q, _}} = QueryBuilder.build_optimized_query(dlq)
 
       opens = q |> String.graphemes() |> Enum.count(&(&1 == "("))
       closes = q |> String.graphemes() |> Enum.count(&(&1 == ")"))
@@ -690,7 +691,7 @@ defmodule AshScylla.EdgeCasesTest do
         tenant: nil
       }
 
-      {cql, _} = QueryBuilder.build_optimized_query(qs)
+      {:ok, {cql, _}} = QueryBuilder.build_optimized_query(qs)
       assert cql == "SELECT * FROM t"
     end
 
@@ -706,7 +707,7 @@ defmodule AshScylla.EdgeCasesTest do
         tenant: nil
       }
 
-      {cql, _} = QueryBuilder.build_optimized_query(qs)
+      {:ok, {cql, _}} = QueryBuilder.build_optimized_query(qs)
       assert cql == "SELECT id FROM t"
     end
 
@@ -722,7 +723,7 @@ defmodule AshScylla.EdgeCasesTest do
         tenant: nil
       }
 
-      {cql, _} = QueryBuilder.build_optimized_query(qs)
+      {:ok, {cql, _}} = QueryBuilder.build_optimized_query(qs)
       assert String.contains?(cql, "ORDER BY a asc, b desc")
     end
 
@@ -738,7 +739,7 @@ defmodule AshScylla.EdgeCasesTest do
         tenant: nil
       }
 
-      {cql, _} = QueryBuilder.build_optimized_query(qs)
+      {:ok, {cql, _}} = QueryBuilder.build_optimized_query(qs)
       refute String.contains?(cql, "WHERE")
     end
 
@@ -756,7 +757,7 @@ defmodule AshScylla.EdgeCasesTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(qs)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(qs)
       assert String.contains?(cql, "WHERE")
       assert params == ["a"]
     end
@@ -775,7 +776,7 @@ defmodule AshScylla.EdgeCasesTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(qs)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(qs)
       assert cql == "SELECT * FROM t WHERE s = ? LIMIT ?"
       assert params == ["a", {"int", 25}]
     end
@@ -875,14 +876,14 @@ defmodule AshScylla.EdgeCasesTest do
 
   describe "build_where_clause/1 edge cases" do
     test "empty list" do
-      {c, p} = QueryBuilder.build_where_clause([])
+      {:ok, {c, p}} = QueryBuilder.build_where_clause([], %MapSet{}, %{})
       assert c == ""
       assert p == []
     end
 
     test "single filter" do
       f = %{operator: :eq, left: %{name: "id"}, right: %{value: "a"}}
-      {c, p} = QueryBuilder.build_where_clause([f])
+      {:ok, {c, p}} = QueryBuilder.build_where_clause([f], %MapSet{}, %{})
       assert c == "id = ?"
       assert p == ["a"]
     end
@@ -894,36 +895,38 @@ defmodule AshScylla.EdgeCasesTest do
         %{operator: :lt, left: %{name: "age"}, right: %{value: 65}}
       ]
 
-      {c, p} = QueryBuilder.build_where_clause(fs)
+      {:ok, {c, p}} = QueryBuilder.build_where_clause(fs, %MapSet{}, %{})
       assert c == "s = ? AND age > ? AND age < ?"
       assert p == ["a", 18, 65]
     end
 
     test "skips truly invalid filter" do
-      result = QueryBuilder.build_where_clause([:bad])
+      result = QueryBuilder.build_where_clause([:bad], %MapSet{}, %{})
       assert is_tuple(result)
     end
 
     test "raw string filter produces placeholder clause" do
-      {clause, params} = QueryBuilder.build_where_clause(["5f76eab7-be8b-4a47-9d97-c36f6e42db0f"])
+      {:ok, {clause, params}} =
+        QueryBuilder.build_where_clause(["5f76eab7-be8b-4a47-9d97-c36f6e42db0f"], %MapSet{}, %{})
+
       assert clause == "?"
       assert params == ["5f76eab7-be8b-4a47-9d97-c36f6e42db0f"]
     end
 
     test "raw atom filter produces placeholder clause" do
-      {clause, params} = QueryBuilder.build_where_clause([:invalid_atom])
+      {:ok, {clause, params}} = QueryBuilder.build_where_clause([:invalid_atom], %MapSet{}, %{})
       assert clause == "?"
       assert params == [:invalid_atom]
     end
 
     test "raw nil filter produces placeholder clause" do
-      {clause, params} = QueryBuilder.build_where_clause([nil])
+      {:ok, {clause, params}} = QueryBuilder.build_where_clause([nil], %MapSet{}, %{})
       assert clause == "?"
       assert params == [nil]
     end
 
     test "raw integer filter produces placeholder clause" do
-      {clause, params} = QueryBuilder.build_where_clause([42])
+      {:ok, {clause, params}} = QueryBuilder.build_where_clause([42], %MapSet{}, %{})
       assert clause == "?"
       assert params == [42]
     end
@@ -936,7 +939,7 @@ defmodule AshScylla.EdgeCasesTest do
         %{operator: :gt, left: %{name: :age}, right: %{value: 18}}
       ]
 
-      {clause, params} = QueryBuilder.build_where_clause(filters)
+      {:ok, {clause, params}} = QueryBuilder.build_where_clause(filters, %MapSet{}, %{})
       assert clause =~ "status"
       assert clause =~ "age"
       assert "active" in params
@@ -944,7 +947,9 @@ defmodule AshScylla.EdgeCasesTest do
     end
 
     test "all raw value filters produce placeholder clauses" do
-      {clause, params} = QueryBuilder.build_where_clause([:a, :b, "c", nil, 42])
+      {:ok, {clause, params}} =
+        QueryBuilder.build_where_clause([:a, :b, "c", nil, 42], %MapSet{}, %{})
+
       assert clause != ""
       assert is_list(params)
     end
@@ -996,29 +1001,29 @@ defmodule AshScylla.EdgeCasesTest do
 
   describe "Pagination edge cases" do
     test "empty filters no token" do
-      {c, p} = Pagination.build_paginated_query("t", %{}, nil, 10)
+      {:ok, {c, p}} = Pagination.build_paginated_query("t", %{}, nil, 10)
       assert c == "SELECT * FROM t LIMIT ?"
       assert p == [10]
     end
 
     test "with token" do
-      {c, p} = Pagination.build_paginated_query("t", %{}, "tok", 25)
+      {:ok, {c, p}} = Pagination.build_paginated_query("t", %{}, "tok", 25)
       assert c == "SELECT * FROM t WHERE token() > ? LIMIT ?"
       assert p == ["tok", 25]
     end
 
     test "page_size 1" do
-      {_, p} = Pagination.build_paginated_query("t", %{}, nil, 1)
+      {:ok, {_, p}} = Pagination.build_paginated_query("t", %{}, nil, 1)
       assert p == [1]
     end
 
     test "large page_size" do
-      {_, p} = Pagination.build_paginated_query("t", %{}, nil, 10_000)
+      {:ok, {_, p}} = Pagination.build_paginated_query("t", %{}, nil, 10_000)
       assert p == [1000]
     end
 
     test "non-empty filter is converted to CQL" do
-      {q, p} = Pagination.build_paginated_query("t", %{s: "a"}, nil, 10)
+      {:ok, {q, p}} = Pagination.build_paginated_query("t", %{s: "a"}, nil, 10)
       assert String.contains?(q, "s = ?")
       assert p == ["a", 10]
     end

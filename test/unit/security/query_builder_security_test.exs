@@ -45,7 +45,7 @@ defmodule AshScylla.QueryBuilderSecurityTest do
         %{left: %{name: :id}, operator: :eq, right: %{value: "malicious'; DROP TABLE users; --"}}
       ]
 
-      {cql, params} = QueryBuilder.build_where_clause(filters)
+      {:ok, {cql, params}} = QueryBuilder.build_where_clause(filters, %MapSet{}, %{})
 
       # The CQL should use ? placeholder, not the literal value
       assert cql =~ "?"
@@ -60,7 +60,7 @@ defmodule AshScylla.QueryBuilderSecurityTest do
         %{left: %{name: :id}, operator: :eq, right: %{value: 42}}
       ]
 
-      {cql, params} = QueryBuilder.build_where_clause(filters)
+      {:ok, {cql, params}} = QueryBuilder.build_where_clause(filters, %MapSet{}, %{})
       assert cql =~ "?"
       assert 42 in params
     end
@@ -72,7 +72,7 @@ defmodule AshScylla.QueryBuilderSecurityTest do
         %{left: %{name: :id}, operator: :eq, right: %{value: uuid}}
       ]
 
-      {cql, _params} = QueryBuilder.build_where_clause(filters)
+      {:ok, {cql, _params}} = QueryBuilder.build_where_clause(filters, %MapSet{}, %{})
       assert cql =~ "?"
       refute cql =~ uuid
     end
@@ -89,7 +89,7 @@ defmodule AshScylla.QueryBuilderSecurityTest do
         %{left: %{name: :email}, operator: :eq, right: %{value: "test@test.com"}}
       ]
 
-      {cql, _params} = QueryBuilder.build_where_clause(filters)
+      {:ok, {cql, _params}} = QueryBuilder.build_where_clause(filters, %MapSet{}, %{})
       assert cql =~ "email"
     end
 
@@ -103,7 +103,7 @@ defmodule AshScylla.QueryBuilderSecurityTest do
         }
       ]
 
-      {cql, _params} = QueryBuilder.build_where_clause(filters)
+      {:ok, {cql, _params}} = QueryBuilder.build_where_clause(filters, %MapSet{}, %{})
       # IN clause should use ? placeholders
       refute cql =~ "uuid1"
       refute cql =~ "uuid2"

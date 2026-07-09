@@ -43,7 +43,7 @@ defmodule AshScylla.PaginationTest do
 
   describe "build_paginated_query/3" do
     test "builds query with LIMIT" do
-      {query, params} = Pagination.build_paginated_query("users", [], 10)
+      {:ok, {query, params}} = Pagination.build_paginated_query("users", [], 10)
 
       assert query =~ "SELECT * FROM users"
       assert query =~ "LIMIT ?"
@@ -51,7 +51,7 @@ defmodule AshScylla.PaginationTest do
     end
 
     test "builds query with WHERE clause and LIMIT" do
-      {query, params} =
+      {:ok, {query, params}} =
         Pagination.build_paginated_query(
           "users",
           [%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}],
@@ -59,27 +59,28 @@ defmodule AshScylla.PaginationTest do
         )
 
       assert query =~ "SELECT * FROM users"
+
       assert query =~ "WHERE"
       assert query =~ "LIMIT ?"
       assert length(params) == 2
     end
 
     test "enforces max page size" do
-      {_query, params} = Pagination.build_paginated_query("users", [], 5000)
+      {:ok, {_query, params}} = Pagination.build_paginated_query("users", [], 5000)
       assert params == [1000]
     end
   end
 
   describe "build_paginated_query/4 with page token" do
     test "adds token clause when page_token is provided" do
-      {query, params} = Pagination.build_paginated_query("users", [], "my_token", 10)
+      {:ok, {query, params}} = Pagination.build_paginated_query("users", [], "my_token", 10)
 
       assert query =~ "token() > ?"
       assert params == ["my_token", 10]
     end
 
     test "adds token clause with existing WHERE clause" do
-      {query, params} =
+      {:ok, {query, params}} =
         Pagination.build_paginated_query(
           "users",
           [%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}],
@@ -88,6 +89,7 @@ defmodule AshScylla.PaginationTest do
         )
 
       assert query =~ "WHERE"
+
       assert query =~ "AND token() > ?"
       assert "my_token" in params
       assert 10 in params

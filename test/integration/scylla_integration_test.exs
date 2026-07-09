@@ -1213,7 +1213,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "SELECT id, name, email FROM ash_scylla_test.users"
       assert cql =~ "WHERE"
       assert cql =~ "LIMIT ?"
@@ -1247,7 +1247,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "IN"
       assert length(params) == 3
       assert xq(conn, cql, params).num_rows == 3
@@ -1307,7 +1307,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
         tenant: nil
       }
 
-      {_cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {_cql, _params}} = QueryBuilder.build_optimized_query(query)
 
       # Use simpler flat filters that work with ALLOW FILTERING
       email_filter = %{operator: :eq, left: %{name: :email}, right: %{value: "range@test.com"}}
@@ -1324,7 +1324,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
         tenant: nil
       }
 
-      {cql2, params2} = QueryBuilder.build_optimized_query(query2)
+      {:ok, {cql2, params2}} = QueryBuilder.build_optimized_query(query2)
 
       encoded = Enum.map(params2, &encode_param/1)
       {:ok, result} = Xandra.execute(conn, cql2 <> " ALLOW FILTERING", encoded)
@@ -1349,7 +1349,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       encoded = Enum.map(params, &encode_param/1)
       {:ok, result} = Xandra.execute(conn, cql <> " ALLOW FILTERING", encoded)
       assert length(result.content) >= 1
@@ -1372,7 +1372,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "IN"
       encoded = Enum.map(params, &encode_param/1)
       {:ok, result} = Xandra.execute(conn, cql <> " ALLOW FILTERING", encoded)
@@ -1405,7 +1405,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "IS NULL"
 
       # Some ScyllaDB versions reject IS NULL on non-primary-key columns.
@@ -1455,7 +1455,7 @@ defmodule AshScylla.ScyllaIntegrationTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       encoded = Enum.map(params, &encode_param/1)
       {:ok, result} = Xandra.execute(conn, cql <> " ALLOW FILTERING", encoded)
 

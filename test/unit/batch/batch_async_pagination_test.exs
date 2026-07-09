@@ -291,34 +291,34 @@ defmodule AshScylla.DataLayer.PaginationUpdatedTest do
 
   describe "build_paginated_query/3" do
     test "returns {query, params} tuple" do
-      {query, params} = Pagination.build_paginated_query("users", [], 10)
+      {:ok, {query, params}} = Pagination.build_paginated_query("users", [], 10)
       assert is_binary(query)
       assert is_list(params)
     end
 
     test "includes LIMIT in query" do
-      {query, _params} = Pagination.build_paginated_query("users", [], 25)
+      {:ok, {query, _params}} = Pagination.build_paginated_query("users", [], 25)
       assert String.contains?(query, "LIMIT ?")
     end
 
     test "includes page_size in params" do
-      {_query, params} = Pagination.build_paginated_query("users", [], 25)
+      {:ok, {_query, params}} = Pagination.build_paginated_query("users", [], 25)
       assert 25 in params
     end
 
     test "includes filter values in params" do
-      {_query, params} = Pagination.build_paginated_query("users", [status: "active"], 10)
+      {:ok, {_query, params}} = Pagination.build_paginated_query("users", [status: "active"], 10)
       assert "active" in params
       assert 10 in params
     end
 
     test "uses default page_size" do
-      {_query, _params} = Pagination.build_paginated_query("users", [], nil)
+      {:ok, {_query, _params}} = Pagination.build_paginated_query("users", [], nil)
       # nil page_size gets min(nil, 1000) which is nil, but the function handles it
     end
 
     test "caps page_size at max" do
-      {_query, params} = Pagination.build_paginated_query("users", [], 9999)
+      {:ok, {_query, params}} = Pagination.build_paginated_query("users", [], 9999)
       assert 1000 in params
     end
   end

@@ -89,7 +89,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         group_by: [:status]
       }
 
-      {query, params} = QueryBuilder.build_optimized_query(data_layer)
+      {:ok, {query, params}} = QueryBuilder.build_optimized_query(data_layer)
       assert query =~ "SELECT COUNT(id) AS total FROM tenant_resource"
       assert query =~ "GROUP BY status"
       assert params == []
@@ -109,7 +109,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         group_by: [:status]
       }
 
-      {query, _params} = QueryBuilder.build_optimized_query(data_layer)
+      {:ok, {query, _params}} = QueryBuilder.build_optimized_query(data_layer)
       assert query =~ "COUNT(*) AS total"
     end
 
@@ -130,7 +130,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         group_by: [:status, :org_id]
       }
 
-      {query, params} = QueryBuilder.build_optimized_query(data_layer)
+      {:ok, {query, params}} = QueryBuilder.build_optimized_query(data_layer)
       assert query =~ "COUNT(id) AS total"
       assert query =~ "SUM(age) AS total_age"
       assert query =~ "GROUP BY status, org_id"
@@ -151,7 +151,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         group_by: [:status]
       }
 
-      {query, _params} = QueryBuilder.build_optimized_query(data_layer)
+      {:ok, {query, _params}} = QueryBuilder.build_optimized_query(data_layer)
       assert query =~ "SELECT status, COUNT(*) AS total FROM tenant_resource"
       assert query =~ "GROUP BY status"
     end
@@ -172,7 +172,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         group_by: [:org_id]
       }
 
-      {query, params} = QueryBuilder.build_optimized_query(data_layer)
+      {:ok, {query, params}} = QueryBuilder.build_optimized_query(data_layer)
       assert query =~ "SELECT COUNT(*) AS total FROM tenant_resource"
       assert query =~ "WHERE status = ?"
       assert query =~ "GROUP BY org_id"
@@ -194,7 +194,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         group_by: []
       }
 
-      {query, _params} = QueryBuilder.build_optimized_query(data_layer)
+      {:ok, {query, _params}} = QueryBuilder.build_optimized_query(data_layer)
       assert query =~ "COUNT(*) AS median_val"
     end
   end
@@ -222,7 +222,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         group_by: nil
       }
 
-      {query, params} = QueryBuilder.build_optimized_query(data_layer)
+      {:ok, {query, params}} = QueryBuilder.build_optimized_query(data_layer)
       assert query =~ "TOKEN(id) > TOKEN(?)"
       assert query =~ "LIMIT ?"
       assert length(params) == 2
@@ -246,7 +246,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         group_by: nil
       }
 
-      {query, params} = QueryBuilder.build_optimized_query(data_layer)
+      {:ok, {query, params}} = QueryBuilder.build_optimized_query(data_layer)
       assert query =~ "TOKEN(org_id, user_id) > TOKEN(?, ?)"
       assert length(params) == 3
     end
@@ -269,7 +269,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         group_by: nil
       }
 
-      {query, _params} = QueryBuilder.build_optimized_query(data_layer)
+      {:ok, {query, _params}} = QueryBuilder.build_optimized_query(data_layer)
       assert query =~ "TOKEN(id) < TOKEN(?)"
     end
 
@@ -290,7 +290,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         group_by: nil
       }
 
-      {query, _params} = QueryBuilder.build_optimized_query(data_layer)
+      {:ok, {query, _params}} = QueryBuilder.build_optimized_query(data_layer)
       assert query =~ "TOKEN(id) > TOKEN(?)"
     end
   end
@@ -315,7 +315,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         group_by: nil
       }
 
-      {query, _params} = QueryBuilder.build_optimized_query(data_layer)
+      {:ok, {query, _params}} = QueryBuilder.build_optimized_query(data_layer)
       assert query =~ "SELECT * FROM tenant_resource"
     end
 
@@ -334,7 +334,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         group_by: nil
       }
 
-      {query, _params} = QueryBuilder.build_optimized_query(data_layer)
+      {:ok, {query, _params}} = QueryBuilder.build_optimized_query(data_layer)
       assert query =~ "SELECT * FROM tenant_resource"
     end
 
@@ -354,7 +354,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         group_by: nil
       }
 
-      {query, params} = QueryBuilder.build_optimized_query(data_layer)
+      {:ok, {query, params}} = QueryBuilder.build_optimized_query(data_layer)
       assert query =~ "SELECT * FROM tenant_resource"
       assert query =~ "WHERE status = ?"
       assert query =~ "LIMIT ?"
@@ -405,7 +405,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
   describe "OR-to-IN rewriting" do
     test "IN with list value" do
       filter = %{operator: :in, left: %{name: :status}, right: %{value: ["active", "pending"]}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
 
       assert cql =~ "status IN (?, ?)"
       assert params == ["active", "pending"]
@@ -413,7 +413,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
 
     test "IN with single value" do
       filter = %{operator: :in, left: %{name: :status}, right: %{value: ["active"]}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql =~ "status IN (?)"
       assert params == ["active"]
     end
@@ -427,7 +427,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         right: MapSet.new(["active", "pending"])
       }
 
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql =~ "status IN (?, ?)"
       assert length(params) == 2
     end
@@ -435,7 +435,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
     test "IN with large list" do
       values = Enum.to_list(1..100)
       filter = %{operator: :in, left: %{name: :id}, right: %{value: values}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
 
       assert cql =~ "id IN ("
       assert length(params) == 100
@@ -464,7 +464,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
 
       # Same-field OR (status = active OR status = pending) is rewritable to IN,
       # so this should succeed with status IN (?, ?)
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql =~ "status IN"
       assert cql =~ "email = ?"
       assert cql =~ "org_id = ?"
@@ -478,7 +478,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         right: %{name: :org_id, op: :in, right: %{value: ["org-1", "org-2"]}}
       }
 
-      {cql, params} = QueryBuilder.build_where_clause([filter])
+      {:ok, {cql, params}} = QueryBuilder.build_where_clause([filter], %MapSet{}, %{})
       assert cql =~ "status IN (?, ?)"
       assert cql =~ "org_id IN (?, ?)"
       assert length(params) == 4
@@ -495,7 +495,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
         }
       }
 
-      {cql, params} = QueryBuilder.build_where_clause([filter])
+      {:ok, {cql, params}} = QueryBuilder.build_where_clause([filter], %MapSet{}, %{})
       assert cql =~ "id = ?"
       assert cql =~ "created_at >= ?"
       assert cql =~ "created_at < ?"
@@ -504,7 +504,7 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
 
     test "LIKE contains operator embeds wildcards" do
       filter = %{name: :email, op: :contains, right: %{value: "@example.com"}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql =~ "LIKE ?"
       # contains wraps with %...%
       assert params == ["%@example.com%"]
@@ -512,42 +512,42 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
 
     test "LIKE starts_with embeds wildcard suffix" do
       filter = %{name: :email, op: :starts_with, right: %{value: "alice"}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql =~ "LIKE ?"
       assert params == ["%alice"]
     end
 
     test "LIKE ends_with embeds wildcard prefix" do
       filter = %{name: :email, op: :ends_with, right: %{value: "example.com"}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql =~ "LIKE ?"
       assert params == ["example.com%"]
     end
 
     test "CONTAINS KEY for map column" do
       filter = %{name: :metadata, op: :contains_key, right: %{value: "role"}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql =~ "CONTAINS KEY ?"
       assert params == ["role"]
     end
 
     test "IS NULL" do
       nil_filter = %{name: :email, op: :is_nil, right: %{value: true}}
-      {cql, params} = QueryBuilder.filter_to_cql(nil_filter)
+      {cql, params} = QueryBuilder.filter_to_cql(nil_filter, %MapSet{}, %{})
       assert cql =~ "IS NULL"
       assert params == []
     end
 
     test "IS NOT NULL" do
       not_nil_filter = %{name: :email, op: :is_nil, right: %{value: false}}
-      {cql, params} = QueryBuilder.filter_to_cql(not_nil_filter)
+      {cql, params} = QueryBuilder.filter_to_cql(not_nil_filter, %MapSet{}, %{})
       assert cql =~ "IS NOT NULL"
       assert params == []
     end
 
     test "EXISTS operator" do
       filter = %{name: :email, op: :exists, right: %{value: true}}
-      {cql, params} = QueryBuilder.filter_to_cql(filter)
+      {cql, params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert cql =~ "IS NOT NULL"
       assert params == []
     end
@@ -659,31 +659,31 @@ defmodule AshScylla.QueryAdvancedPipelineTest do
   describe "cql_identifier edge cases via build_where_clause" do
     test "reserved keyword columns are quoted" do
       filter = %{name: :select, op: :eq, right: %{value: "x"}}
-      {cql, _params} = QueryBuilder.build_where_clause([filter])
+      {:ok, {cql, _params}} = QueryBuilder.build_where_clause([filter], %MapSet{}, %{})
       assert cql =~ "\"select\" = ?"
     end
 
     test "reserved keyword 'from' is quoted" do
       filter = %{name: :from, op: :eq, right: %{value: "x"}}
-      {cql, _params} = QueryBuilder.build_where_clause([filter])
+      {:ok, {cql, _params}} = QueryBuilder.build_where_clause([filter], %MapSet{}, %{})
       assert cql =~ "\"from\" = ?"
     end
 
     test "reserved keyword 'where' is quoted" do
       filter = %{name: :where, op: :eq, right: %{value: "x"}}
-      {cql, _params} = QueryBuilder.build_where_clause([filter])
+      {:ok, {cql, _params}} = QueryBuilder.build_where_clause([filter], %MapSet{}, %{})
       assert cql =~ "\"where\" = ?"
     end
 
     test "reserved keyword 'order' is quoted" do
       filter = %{name: :order, op: :eq, right: %{value: "x"}}
-      {cql, _params} = QueryBuilder.build_where_clause([filter])
+      {:ok, {cql, _params}} = QueryBuilder.build_where_clause([filter], %MapSet{}, %{})
       assert cql =~ "\"order\" = ?"
     end
 
     test "non-reserved column is not quoted" do
       filter = %{name: :username, op: :eq, right: %{value: "x"}}
-      {cql, _params} = QueryBuilder.build_where_clause([filter])
+      {:ok, {cql, _params}} = QueryBuilder.build_where_clause([filter], %MapSet{}, %{})
       assert cql =~ "username = ?"
       refute cql =~ "\"username\""
     end

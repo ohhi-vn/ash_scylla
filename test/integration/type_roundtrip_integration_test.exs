@@ -247,7 +247,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         limit: 1
       }
 
-      {cql, params} = DataLayer.QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
@@ -276,7 +276,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         limit: 1
       }
 
-      {cql, params} = DataLayer.QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
@@ -304,7 +304,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         limit: 1
       }
 
-      {cql, params} = DataLayer.QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
@@ -333,7 +333,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         limit: 1
       }
 
-      {cql, params} = DataLayer.QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
@@ -364,7 +364,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         limit: 1
       }
 
-      {cql, params} = DataLayer.QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
@@ -394,7 +394,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         limit: 1
       }
 
-      {cql, params} = DataLayer.QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
@@ -423,7 +423,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         limit: 1
       }
 
-      {cql, params} = DataLayer.QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
@@ -450,7 +450,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         limit: 1
       }
 
-      {cql, params} = DataLayer.QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
@@ -478,7 +478,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         limit: 1
       }
 
-      {cql, params} = DataLayer.QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
@@ -506,7 +506,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         limit: 1
       }
 
-      {cql, params} = DataLayer.QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
@@ -535,7 +535,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         limit: 1
       }
 
-      {cql, params} = DataLayer.QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
@@ -565,7 +565,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         limit: 1
       }
 
-      {cql, params} = DataLayer.QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 
@@ -593,7 +593,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         limit: 250
       }
 
-      {cql, params} = DataLayer.QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
 
       # The limit param is tagged as {"int", value} for ScyllaDB INT type compatibility
       assert cql =~ "LIMIT ?"
@@ -636,7 +636,7 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
         limit: 1
       }
 
-      {cql, params} = DataLayer.QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
       encoded = Enum.map(params, &encode_param/1)
       {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
 

@@ -9,6 +9,7 @@ defmodule AshScylla.DataLayer.CodegenTest do
   import ExUnit.CaptureIO
 
   alias AshScylla.DataLayer
+  alias AshScylla.DataLayer.Codegen
 
   describe "codegen/2" do
     test "returns ok with empty list when no resources found" do
@@ -34,7 +35,7 @@ defmodule AshScylla.DataLayer.CodegenTest do
   describe "codegen meta change detection" do
     test "compute_codegen_meta/1 returns a map of resource keys to hashes" do
       resources = [AshScylla.TestResource]
-      meta = DataLayer.compute_codegen_meta(resources)
+      meta = Codegen.compute_codegen_meta(resources)
 
       assert is_map(meta)
       assert map_size(meta) == 1
@@ -44,22 +45,22 @@ defmodule AshScylla.DataLayer.CodegenTest do
 
     test "compute_codegen_meta/1 returns stable hashes for same resource" do
       resources = [AshScylla.TestResource]
-      meta1 = DataLayer.compute_codegen_meta(resources)
-      meta2 = DataLayer.compute_codegen_meta(resources)
+      meta1 = Codegen.compute_codegen_meta(resources)
+      meta2 = Codegen.compute_codegen_meta(resources)
 
       assert meta1 == meta2
     end
 
     test "compute_codegen_meta/1 returns different hashes for different resources" do
-      meta1 = DataLayer.compute_codegen_meta([AshScylla.TestResource])
-      meta2 = DataLayer.compute_codegen_meta([AshScylla.TestResourceWithIndexes])
+      meta1 = Codegen.compute_codegen_meta([AshScylla.TestResource])
+      meta2 = Codegen.compute_codegen_meta([AshScylla.TestResourceWithIndexes])
 
       assert meta1["AshScylla.TestResource"] != meta2["AshScylla.TestResourceWithIndexes"]
     end
 
     test "filter_changed_resources/2 returns all resources when no previous meta" do
       resources = [AshScylla.TestResource]
-      changed = DataLayer.filter_changed_resources(resources, %{})
+      changed = Codegen.filter_changed_resources(resources, %{})
 
       assert length(changed) == 1
       assert hd(changed) == AshScylla.TestResource
@@ -67,8 +68,8 @@ defmodule AshScylla.DataLayer.CodegenTest do
 
     test "filter_changed_resources/2 returns empty when nothing changed" do
       resources = [AshScylla.TestResource]
-      meta = DataLayer.compute_codegen_meta(resources)
-      changed = DataLayer.filter_changed_resources(resources, meta)
+      meta = Codegen.compute_codegen_meta(resources)
+      changed = Codegen.filter_changed_resources(resources, meta)
 
       assert changed == []
     end
@@ -76,18 +77,18 @@ defmodule AshScylla.DataLayer.CodegenTest do
     test "filter_changed_resources/2 returns changed resources" do
       resources = [AshScylla.TestResource, AshScylla.TestResourceWithIndexes]
       # Only track TestResource in previous meta
-      previous_meta = DataLayer.compute_codegen_meta([AshScylla.TestResource])
+      previous_meta = Codegen.compute_codegen_meta([AshScylla.TestResource])
 
       # Now filter with both resources - TestResourceWithIndexes should be "changed"
       # because it wasn't in the previous meta
-      changed = DataLayer.filter_changed_resources(resources, previous_meta)
+      changed = Codegen.filter_changed_resources(resources, previous_meta)
 
       assert length(changed) == 1
       assert hd(changed) == AshScylla.TestResourceWithIndexes
     end
 
     test "load_codegen_meta/1 returns empty map for non-existent file" do
-      meta = DataLayer.load_codegen_meta("/non/existent/file")
+      meta = Codegen.load_codegen_meta("/non/existent/file")
       assert meta == %{}
     end
 
@@ -95,8 +96,8 @@ defmodule AshScylla.DataLayer.CodegenTest do
       meta_file = "tmp/test_codegen_meta_roundtrip"
       test_meta = %{"SomeResource" => 12345, "AnotherResource" => 67890}
 
-      :ok = DataLayer.save_codegen_meta(meta_file, test_meta)
-      loaded = DataLayer.load_codegen_meta(meta_file)
+      :ok = Codegen.save_codegen_meta(meta_file, test_meta)
+      loaded = Codegen.load_codegen_meta(meta_file)
 
       assert loaded == test_meta
 
@@ -109,7 +110,7 @@ defmodule AshScylla.DataLayer.CodegenTest do
       current_meta = %{"OldResource" => 11111, "NewResource" => 22222}
       changed_resources = []
 
-      merged = DataLayer.merge_codegen_meta(previous_meta, changed_resources, current_meta)
+      merged = Codegen.merge_codegen_meta(previous_meta, changed_resources, current_meta)
 
       # OldResource should be kept (exists in current_meta), NewResource should be added
       assert merged["OldResource"] == 11111
@@ -121,7 +122,7 @@ defmodule AshScylla.DataLayer.CodegenTest do
       current_meta = %{"OldResource" => 11111}
       changed_resources = []
 
-      merged = DataLayer.merge_codegen_meta(previous_meta, changed_resources, current_meta)
+      merged = Codegen.merge_codegen_meta(previous_meta, changed_resources, current_meta)
 
       assert merged["OldResource"] == 11111
       refute Map.has_key?(merged, "RemovedResource")
@@ -148,8 +149,8 @@ defmodule AshScylla.DataLayer.CodegenTest do
       resource = AshScylla.TestResource
 
       # Compute hash twice and verify consistency
-      meta1 = DataLayer.compute_codegen_meta([resource])
-      meta2 = DataLayer.compute_codegen_meta([resource])
+      meta1 = Codegen.compute_codegen_meta([resource])
+      meta2 = Codegen.compute_codegen_meta([resource])
 
       assert meta1 == meta2
       assert is_integer(meta1["AshScylla.TestResource"])
@@ -680,46 +681,46 @@ defmodule AshScylla.ExtensionTest do
 
         assert output =~ "DRY RUN" or output =~ "No " or output =~ "migration" or
                  output =~ "No repo configured" or output =~ "Setting up" or
-                          output =~ "Resetting" or output =~ "Rolling back" or
-                          output =~ "Tearing down",
-                        "Expected DRY RUN or skip message in output for #{inspect(fun)}, got: #{output}"
-               end)
-             end
-           end
+                 output =~ "Resetting" or output =~ "Rolling back" or
+                 output =~ "Tearing down",
+               "Expected DRY RUN or skip message in output for #{inspect(fun)}, got: #{output}"
+      end)
+    end
+  end
 
-           # Helper function that replicates the template logic from AshScylla.Extension.render_migration_file/2
-           # This allows us to test the generated content without calling the private function directly.
-           defp generate_test_migration_content(resource, statements) do
-             resource_name = resource |> Module.split() |> List.last()
-             app = AshScylla.MixHelpers.app_name()
-             app_module = app |> Atom.to_string() |> Macro.camelize() |> String.to_atom()
-             module_name = Module.concat([app_module, :Migrations, Macro.camelize(resource_name)])
+  # Helper function that replicates the template logic from AshScylla.Extension.render_migration_file/2
+  # This allows us to test the generated content without calling the private function directly.
+  defp generate_test_migration_content(resource, statements) do
+    resource_name = resource |> Module.split() |> List.last()
+    app = AshScylla.MixHelpers.app_name()
+    app_module = app |> Atom.to_string() |> Macro.camelize() |> String.to_atom()
+    module_name = Module.concat([app_module, :Migrations, Macro.camelize(resource_name)])
 
-             statements_literal =
-               statements
-               |> Enum.map_join(",\n", &"  \"#{escape_cql(&1)}\"")
+    statements_literal =
+      statements
+      |> Enum.map_join(",\n", &"  \"#{escape_cql(&1)}\"")
 
-             # This is the corrected template - uses \"\"\" (escaped triple quotes)
-             # which produces """ in the generated output
-             """
-             defmodule #{module_name} do
-               @moduledoc \"\"\"
-               Migration for #{resource_name}.
+    # This is the corrected template - uses \"\"\" (escaped triple quotes)
+    # which produces """ in the generated output
+    """
+    defmodule #{module_name} do
+      @moduledoc \"\"\"
+      Migration for #{resource_name}.
 
-               This file was autogenerated with `mix ash.codegen`
-               \"\"\"
+      This file was autogenerated with `mix ash.codegen`
+      \"\"\"
 
-               use AshScylla.Schema
+      use AshScylla.Schema
 
-               @impl AshScylla.Schema
-               def change do
-             [
-             #{statements_literal}
-             ]
-               end
-             end
-             """
-           end
+      @impl AshScylla.Schema
+      def change do
+    [
+    #{statements_literal}
+    ]
+      end
+    end
+    """
+  end
 
   defp escape_cql(s) do
     s |> String.replace("\\", "\\\\") |> String.replace("\"", "\\\"")

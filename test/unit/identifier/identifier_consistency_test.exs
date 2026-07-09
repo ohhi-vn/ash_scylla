@@ -47,7 +47,7 @@ defmodule AshScylla.IdentifierConsistencyTest do
         %{operator: :eq, left: %{name: :valid_column}, right: %{value: "test"}}
       ]
 
-      {clause, _params} = AshScylla.DataLayer.QueryBuilder.build_where_clause(filters)
+      {:ok, {clause, _params}} = AshScylla.DataLayer.QueryBuilder.build_where_clause(filters, %MapSet{}, %{})
       assert clause =~ "valid_column"
     end
 

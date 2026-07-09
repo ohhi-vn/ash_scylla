@@ -197,16 +197,11 @@ defmodule AshScylla.Connection do
           # again and updated the state).
           updated_conn = get_conn(name) || conn
 
-          # Keep keyspace in opts when:
-          # 1. Cluster connection — pooled connections don't share keyspace context
-          # 2. keyspace_used is still false — keyspace doesn't exist yet (e.g.
-          #    migration will create it), so we must retry `USE` each time
-          opts =
-            if updated_conn.cluster? or not updated_conn.keyspace_used do
-              opts
-            else
-              Keyword.delete(opts, :keyspace)
-            end
+          # Always keep keyspace in opts so `query/4` re-issues `USE keyspace`
+          # before each statement. This guarantees the correct keyspace context
+          # for every statement regardless of connection type (single-node or
+          # cluster) or whether a prior `USE` appeared to succeed.
+          opts = opts
 
           query(updated_conn, query, params, opts)
         end

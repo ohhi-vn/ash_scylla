@@ -319,7 +319,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "SELECT id, name FROM ash_scylla_dl_test.items"
       assert cql =~ "WHERE"
       assert cql =~ "LIMIT ?"
@@ -355,7 +355,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "IN"
       assert "active" in params
       assert "pending" in params
@@ -389,7 +389,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       assert cql =~ ">="
       assert cql =~ "<="
       assert 40 in params
@@ -421,7 +421,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "ORDER BY"
       assert cql =~ "desc"
     end
@@ -650,7 +650,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
           operator: :in,
           left: %{name: :status},
           right: %{value: ["active", "pending"]}
-        })
+        }, %MapSet{}, %{})
 
       full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
       result = xq(conn, full_cql, ["active", "pending"])
@@ -671,7 +671,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
           op: :or,
           left: %{operator: :eq, left: %{name: :status}, right: %{value: "active"}},
           right: %{operator: :eq, left: %{name: :value}, right: %{value: 10}}
-        })
+        }, %MapSet{}, %{})
       end
     end
 
@@ -715,7 +715,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         right: %{operator: :eq, left: %{name: :score}, right: %{value: 3.5}}
       }
 
-      {cql, _params} = QueryBuilder.filter_to_cql(filter)
+      {cql, _params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       encoded = Enum.map(["active", 42, 3.5], &encode_param/1)
 
       full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
@@ -776,7 +776,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         right: %{operator: :eq, left: %{name: :value}, right: %{value: 20}}
       }
 
-      {cql, _params} = QueryBuilder.filter_to_cql(filter)
+      {cql, _params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
 
       # Params order: from IN clause (active, pending), then value (20)
       encoded = Enum.map(["active", "pending", 20], &encode_param/1)
@@ -821,7 +821,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         right: %{operator: :eq, left: %{name: :status}, right: %{value: "pending"}}
       }
 
-      {cql, _params} = QueryBuilder.filter_to_cql(filter)
+      {cql, _params} = QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       # Must be rewritten to IN clause, not OR
       assert cql =~ "IN ("
 
@@ -957,7 +957,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
           operator: :has,
           left: %{name: :tags},
           right: %{value: "elixir"}
-        })
+        }, %MapSet{}, %{})
 
       assert cql == "tags CONTAINS ?"
       assert params == ["elixir"]
@@ -984,7 +984,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
           operator: :has,
           left: %{name: :tags},
           right: %{value: "ruby"}
-        })
+        }, %MapSet{}, %{})
 
       full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
       result = xq(conn, full_cql, ["ruby"])
@@ -1005,7 +1005,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         QueryBuilder.filter_to_cql(%Ash.Query.Operator.Has{
           left: %{name: :tags},
           right: "rust"
-        })
+        }, %MapSet{}, %{})
 
       assert cql == "tags CONTAINS ?"
       full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
@@ -1029,7 +1029,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         QueryBuilder.filter_to_cql(%Ash.Query.Operator.Overlaps{
           left: %{name: :tags},
           right: ["elixir"]
-        })
+        }, %MapSet{}, %{})
 
       assert cql == "tags CONTAINS ?"
       full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
@@ -1044,7 +1044,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         QueryBuilder.filter_to_cql(%Ash.Query.Operator.Overlaps{
           left: %{name: :tags},
           right: ["elixir", "rust"]
-        })
+        }, %MapSet{}, %{})
       end
     end
 
@@ -1063,7 +1063,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
         QueryBuilder.filter_to_cql(%Ash.Query.Operator.Overlaps{
           left: %{name: :tags},
           right: ["ruby"]
-        })
+        }, %MapSet{}, %{})
 
       assert cql == "tags CONTAINS ?"
       full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
@@ -1092,7 +1092,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
             {:raw, "status = "},
             {:expr, "active"}
           ]
-        })
+        }, %MapSet{}, %{})
 
       assert cql == "status = ?"
       assert params == ["active"]
@@ -1125,7 +1125,7 @@ defmodule AshScylla.DataLayer.IntegrationTest do
             {:raw, " AND value = "},
             {:expr, 42}
           ]
-        })
+        }, %MapSet{}, %{})
 
       assert cql == "status = ? AND value = ?"
       assert params == ["active", 42]

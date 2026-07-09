@@ -39,8 +39,7 @@ defmodule AshScylla.WorkloadTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       table("workload_test")
@@ -126,7 +125,7 @@ defmodule AshScylla.WorkloadTest do
       results = Task.await_many(tasks, 30_000)
       assert length(results) == 100
 
-      Enum.each(results, fn {cql, params} ->
+      Enum.each(results, fn {:ok, {cql, params}} ->
         assert is_binary(cql)
         assert is_list(params)
         assert String.contains?(cql, "SELECT")
@@ -187,7 +186,9 @@ defmodule AshScylla.WorkloadTest do
       results = Task.await_many(tasks, 15_000)
       assert length(results) == 3
 
-      [{simple_cql, _}, {complex_cql, _complex_params}, {in_cql, in_params}] = results
+      [{:ok, {simple_cql, _}}, {:ok, {complex_cql, _complex_params}}, {:ok, {in_cql, in_params}}] =
+        results
+
       assert simple_cql == "SELECT * FROM t"
       assert String.contains?(complex_cql, "ORDER BY a asc, b desc")
       assert String.contains?(in_cql, "IN")
@@ -597,15 +598,16 @@ defmodule AshScylla.WorkloadTest do
               end
 
             page_size = 10 + rem(i, 90)
-            _token = if rem(i, 2) == 0, do: Pagination.encode_page_token("token_#{i}"), else: nil
-            Pagination.build_paginated_query("users", filters, page_size)
+
+            {:ok, {query, params}} =
+              Pagination.build_paginated_query("users", filters, page_size)
           end)
         end)
 
       results = Task.await_many(tasks, 15_000)
       assert length(results) == 50
 
-      Enum.each(results, fn {query, params} ->
+      Enum.each(results, fn {:ok, {query, params}} ->
         assert is_binary(query)
         assert String.contains?(query, "SELECT * FROM users")
         assert String.contains?(query, "LIMIT ?")
@@ -617,7 +619,7 @@ defmodule AshScylla.WorkloadTest do
       tasks =
         Enum.map(1..30, fn i ->
           Task.async(fn ->
-            {_query, params} = Pagination.build_paginated_query("t", [], i * 100)
+            {:ok, {_query, params}} = Pagination.build_paginated_query("t", [], i * 100)
             params
           end)
         end)
@@ -678,7 +680,7 @@ defmodule AshScylla.WorkloadTest do
 
       {read_results, write_results} = Enum.split(results, read_count)
 
-      Enum.each(read_results, fn {cql, _params} ->
+      Enum.each(read_results, fn {:ok, {cql, _params}} ->
         assert String.contains?(cql, "SELECT")
       end)
 
@@ -902,7 +904,7 @@ defmodule AshScylla.WorkloadTest do
               ])
 
             # Step 2: Build query
-            {cql, params} =
+            {:ok, {cql, params}} =
               QueryBuilder.build_optimized_query(%AshScylla.Query{
                 table: "users",
                 filters: [

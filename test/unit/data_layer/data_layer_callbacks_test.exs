@@ -190,7 +190,7 @@ defmodule AshScylla.DataLayer.TransformQueryTest do
       [rewritten] = updated.filters
       assert rewritten.operator == :in
       assert rewritten.left == %{name: :status}
-      assert rewritten.right.value == ["pending", "active"]
+      assert rewritten.right.value == ["active", "pending"]
     end
 
     test "does not rewrite OR on different columns" do

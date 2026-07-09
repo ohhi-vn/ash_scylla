@@ -81,38 +81,44 @@ defmodule AshScylla.DataLayer.Pagination do
         "has_token=#{not is_nil(page_token)}"
     )
 
-    {where_clause, params} = build_where_clause(filters)
+    case build_where_clause(filters) do
+      {:error, {:unknown_filter, unknown}} ->
+        {:error,
+         "Unable to translate filter expression to CQL: #{inspect(unknown)}. " <>
+           "The query was not executed to avoid returning a broader result set than intended."}
 
-    query =
-      [
-        "SELECT * FROM ",
-        table,
-        if(where_clause != "", do: [" WHERE ", where_clause], else: []),
-        " LIMIT ?"
-      ]
-      |> IO.iodata_to_binary()
+      {:ok, {where_clause, params}} ->
+        query =
+          [
+            "SELECT * FROM ",
+            table,
+            if(where_clause != "", do: [" WHERE ", where_clause], else: []),
+            " LIMIT ?"
+          ]
+          |> IO.iodata_to_binary()
 
-    params = params ++ [page_size]
+        params = params ++ [page_size]
 
-    page_opts =
-      if page_token do
-        case Base.decode64(page_token) do
-          {:ok, page_state} when is_binary(page_state) ->
-            [page_size: page_size, paging_state: page_state]
+        page_opts =
+          if page_token do
+            case Base.decode64(page_token) do
+              {:ok, page_state} when is_binary(page_state) ->
+                [page_size: page_size, paging_state: page_state]
 
-          _ ->
-            nil
+              _ ->
+                nil
+            end
+          else
+            [page_size: page_size]
+          end
+
+        case page_opts do
+          nil ->
+            {:error, :invalid_page_token}
+
+          opts ->
+            execute_page_query(repo, query, params, opts)
         end
-      else
-        [page_size: page_size]
-      end
-
-    case page_opts do
-      nil ->
-        {:error, :invalid_page_token}
-
-      opts ->
-        execute_page_query(repo, query, params, opts)
     end
   end
 
@@ -146,7 +152,8 @@ defmodule AshScylla.DataLayer.Pagination do
 
   Returns `{query, params}` suitable for `repo.query/3`.
   """
-  @spec build_paginated_query(String.t(), list(), pos_integer()) :: {String.t(), list()}
+  @spec build_paginated_query(String.t(), list(), pos_integer()) ::
+          {:ok, {String.t(), list()}} | {:error, {:unknown_filter, term()}}
   def build_paginated_query(table, filters, page_size) do
     build_paginated_query(table, filters, nil, page_size)
   end
@@ -158,36 +165,41 @@ defmodule AshScylla.DataLayer.Pagination do
   Returns `{query, params}` suitable for `repo.query/3`.
   """
   @spec build_paginated_query(String.t(), list(), page_token(), pos_integer()) ::
-          {String.t(), list()}
+          {:ok, {String.t(), list()}} | {:error, {:unknown_filter, term()}}
   def build_paginated_query(table, filters, page_token, page_size) do
     page_size = min(page_size, @max_page_size)
-    {where_clause, params} = build_where_clause(filters)
 
-    where_clause =
-      if is_nil(page_token) do
-        where_clause
-      else
-        token_clause = "token() > ?"
-        if where_clause != "", do: where_clause <> " AND " <> token_clause, else: token_clause
-      end
+    case build_where_clause(filters) do
+      {:error, _} = error ->
+        error
 
-    params =
-      if is_nil(page_token) do
-        params
-      else
-        params ++ [page_token]
-      end
+      {:ok, {where_clause, params}} ->
+        where_clause =
+          if is_nil(page_token) do
+            where_clause
+          else
+            token_clause = "token() > ?"
+            if where_clause != "", do: where_clause <> " AND " <> token_clause, else: token_clause
+          end
 
-    query =
-      [
-        "SELECT * FROM ",
-        table,
-        if(where_clause != "", do: [" WHERE ", where_clause], else: []),
-        " LIMIT ?"
-      ]
-      |> IO.iodata_to_binary()
+        params =
+          if is_nil(page_token) do
+            params
+          else
+            params ++ [page_token]
+          end
 
-    {query, params ++ [page_size]}
+        query =
+          [
+            "SELECT * FROM ",
+            table,
+            if(where_clause != "", do: [" WHERE ", where_clause], else: []),
+            " LIMIT ?"
+          ]
+          |> IO.iodata_to_binary()
+
+        {:ok, {query, params ++ [page_size]}}
+    end
   end
 
   @doc """
@@ -267,8 +279,9 @@ defmodule AshScylla.DataLayer.Pagination do
   @spec max_page_size() :: pos_integer()
   def max_page_size, do: @max_page_size
 
-  @spec build_where_clause(list()) :: {String.t(), list()}
-  defp build_where_clause([]), do: {"", []}
+  @spec build_where_clause(list()) ::
+          {:ok, {String.t(), list()}} | {:error, {:unknown_filter, term()}}
+  defp build_where_clause([]), do: {:ok, {"", []}}
 
   defp build_where_clause(filters) do
     filter_structs =
@@ -283,7 +296,7 @@ defmodule AshScylla.DataLayer.Pagination do
           %{operator: :eq, left: %{name: key}, right: %{value: value}}
       end)
 
-    QueryBuilder.build_where_clause(filter_structs)
+    QueryBuilder.build_where_clause(filter_structs, %MapSet{}, %{})
   end
 
   @spec normalize_record(term()) :: map()

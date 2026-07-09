@@ -8,5 +8,6 @@ defmodule AshScylla.TestDomain do
     resource(AshScylla.TestResource)
     resource(AshScylla.TestResourceWithIndexes)
     resource(AshScylla.TestResourceCompositePK)
+    resource(AshScylla.TestResourceNoKeyspace)
   end
 end

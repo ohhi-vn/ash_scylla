@@ -659,7 +659,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       }
 
       assert_raise AshScylla.Error, ~r/CQL does not support OR across different fields/, fn ->
-        AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
+        AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       end
     end
 
@@ -670,7 +670,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
         right: %{name: :status, op: :eq, right: %{value: "inactive"}}
       }
 
-      {cql, params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
+      {cql, params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
 
       # Same-field OR with eq should be rewritten to IN
       assert cql =~ "status IN"
@@ -685,7 +685,7 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       }
 
       assert_raise AshScylla.Error, ~r/CQL does not support OR across different fields/, fn ->
-        AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
+        AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       end
     end
   end

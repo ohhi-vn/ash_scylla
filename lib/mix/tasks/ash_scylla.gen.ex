@@ -126,23 +126,27 @@ defmodule Mix.Tasks.AshScylla.Gen do
   defp maybe_generate_migration(resources, remaining, opts) do
     force? = Keyword.get(opts, :force, false)
     meta_file = schema_meta_path()
-    previous_meta = AshScylla.DataLayer.load_codegen_meta(meta_file)
+    previous_meta = AshScylla.DataLayer.Codegen.load_codegen_meta(meta_file)
 
     changed_resources =
       if force? do
         resources
       else
-        AshScylla.DataLayer.filter_changed_resources(resources, previous_meta)
+        AshScylla.DataLayer.Codegen.filter_changed_resources(resources, previous_meta)
       end
 
     if changed_resources == [] do
       Mix.shell().info("Schema is up to date. No changes detected.")
     else
-      current_meta = AshScylla.DataLayer.compute_codegen_meta(resources)
+      current_meta = AshScylla.DataLayer.Codegen.compute_codegen_meta(resources)
 
-      AshScylla.DataLayer.save_codegen_meta(
+      AshScylla.DataLayer.Codegen.save_codegen_meta(
         meta_file,
-        AshScylla.DataLayer.merge_codegen_meta(previous_meta, changed_resources, current_meta)
+        AshScylla.DataLayer.Codegen.merge_codegen_meta(
+          previous_meta,
+          changed_resources,
+          current_meta
+        )
       )
 
       schema_name = schema_module_name(remaining, opts)

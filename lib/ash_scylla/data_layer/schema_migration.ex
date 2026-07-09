@@ -121,6 +121,18 @@ defmodule AshScylla.DataLayer.SchemaMigration do
     end
   end
 
+  # Resolves the keyspace to diff against. Prefers the keyspace declared on
+  # the resource via DSL (e.g. `scylla do keyspace(...)`) so that migration
+  # statements are generated and diffed against the correct keyspace even when
+  # it differs from the repo's configured keyspace. Falls back to the repo
+  # keyspace when the resource doesn't declare one.
+  defp migration_keyspace(resource, repo) do
+    case AshScylla.Migration.keyspace(resource) do
+      nil -> repo.keyspace()
+      ks -> ks
+    end
+  end
+
   @doc false
   @spec table_not_found_error?(term()) :: boolean()
   def table_not_found_error?(%{message: msg}) when is_binary(msg),
@@ -198,7 +210,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
   """
   @spec fetch_table_schema(module(), module()) :: {:ok, map()} | {:error, term()}
   def fetch_table_schema(resource, repo) do
-    keyspace = repo.keyspace()
+    keyspace = migration_keyspace(resource, repo)
     table_name = SchemaUtils.get_table_name(resource)
 
     query = """
@@ -234,7 +246,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
   @spec fetch_indexes(module(), module()) :: {:ok, [map()]} | {:error, term()}
   def fetch_indexes(resource, repo) do
     table_name = SchemaUtils.get_table_name(resource)
-    keyspace = repo.keyspace()
+    keyspace = migration_keyspace(resource, repo)
 
     query = """
     SELECT * FROM system_schema.indexes
@@ -270,7 +282,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
   """
   @spec fetch_materialized_views(module(), module()) :: {:ok, [map()]} | {:error, term()}
   def fetch_materialized_views(resource, repo) do
-    keyspace = repo.keyspace()
+    keyspace = migration_keyspace(resource, repo)
     table_name = SchemaUtils.get_table_name(resource)
 
     query = """
@@ -345,6 +357,13 @@ defmodule AshScylla.DataLayer.SchemaMigration do
   @spec generate_add_columns(module(), [atom()]) :: [String.t()]
   def generate_add_columns(resource, columns) do
     table_name = SchemaUtils.get_table_name(resource)
+    ks = AshScylla.Migration.keyspace(resource)
+
+    qualified_table_name =
+      if ks,
+        do:
+          "#{AshScylla.Identifier.quote_name(ks)}.#{AshScylla.Identifier.quote_name(table_name)}",
+        else: AshScylla.Identifier.quote_name(table_name)
 
     attributes =
       resource
@@ -363,7 +382,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
         attr ->
           type_str = attr.type |> Migration.ash_type_to_cql_type(attr.constraints)
 
-          "ALTER TABLE #{AshScylla.Identifier.quote_name(table_name)} ADD #{AshScylla.Identifier.quote_name(col_name)} #{type_str}"
+          "ALTER TABLE #{qualified_table_name} ADD #{AshScylla.Identifier.quote_name(col_name)} #{type_str}"
       end
     end)
     |> Enum.reject(&is_nil/1)

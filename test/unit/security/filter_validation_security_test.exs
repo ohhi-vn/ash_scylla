@@ -78,7 +78,7 @@ defmodule AshScylla.FilterValidationSecurityTest do
         limit: 10
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
       refute cql =~ "ALLOW FILTERING"
     end
 
@@ -97,7 +97,7 @@ defmodule AshScylla.FilterValidationSecurityTest do
         limit: 50
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
       # ALLOW FILTERING is present because the query uses a secondary index (:email)
       assert cql =~ "ALLOW FILTERING"
     end
@@ -116,7 +116,7 @@ defmodule AshScylla.FilterValidationSecurityTest do
         limit: 50
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
       refute cql =~ "ALLOW FILTERING"
     end
   end
@@ -138,7 +138,7 @@ defmodule AshScylla.FilterValidationSecurityTest do
         limit: 10
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
       refute cql =~ ~r/\bOFFSET\b/i
     end
   end

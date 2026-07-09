@@ -293,7 +293,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "SELECT * FROM users"
       assert cql =~ "WHERE"
       assert cql =~ "status = ?"
@@ -312,7 +312,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "SELECT id, name, email FROM users"
     end
 
@@ -328,7 +328,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "LIMIT ?"
       assert {"int", 25} in params
     end
@@ -345,7 +345,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "ORDER BY"
       assert cql =~ "name ASC"
     end
@@ -362,7 +362,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "SELECT id, name FROM users"
       assert cql =~ "WHERE"
       # ScyllaDB does not support ORDER BY with secondary index scans;
@@ -384,7 +384,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
         tenant: nil
       }
 
-      {cql_no_idx, _} = QueryBuilder.build_optimized_query(query_no_idx)
+      {:ok, {cql_no_idx, _}} = QueryBuilder.build_optimized_query(query_no_idx)
       assert cql_no_idx =~ "ORDER BY created_at desc"
     end
 
@@ -402,7 +402,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
         tenant: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "IN"
       assert length(params) == 3
     end
@@ -419,7 +419,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
         tenant: nil
       }
 
-      {cql, _params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, _params}} = QueryBuilder.build_optimized_query(query)
       assert cql == "SELECT * FROM users"
     end
   end
@@ -435,7 +435,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
           operator: :eq,
           left: %{name: :status},
           right: %{value: "active"}
-        })
+        }, %MapSet{}, %{})
 
       assert cql == "status = ?"
       assert value == "active"
@@ -447,7 +447,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
           operator: :in,
           left: %{name: :id},
           right: %{value: ["a", "b", "c"]}
-        })
+        }, %MapSet{}, %{})
 
       assert cql =~ "IN (?, ?, ?)"
       assert values == ["a", "b", "c"]
@@ -460,7 +460,7 @@ defmodule AshScylla.DataLayer.PipelineTest do
         right: %{operator: :eq, left: %{name: :age}, right: %{value: 25}}
       }
 
-      {cql, _values} = QueryBuilder.filter_to_cql!(filter)
+      {cql, _values} = QueryBuilder.filter_to_cql!(filter, %MapSet{}, %{})
       assert cql =~ "status"
       assert cql =~ "age"
     end
@@ -472,12 +472,12 @@ defmodule AshScylla.DataLayer.PipelineTest do
         right: %{operator: :eq, left: %{name: :status}, right: %{value: "inactive"}}
       }
 
-      {cql, _values} = QueryBuilder.filter_to_cql!(filter)
+      {cql, _values} = QueryBuilder.filter_to_cql!(filter, %MapSet{}, %{})
       assert cql =~ "IN"
     end
 
     test "handles empty expressions" do
-      assert QueryBuilder.filter_to_cql(:unknown) == {"?", [:unknown]}
+      assert QueryBuilder.filter_to_cql(:unknown, %MapSet{}, %{}) == {"?", [:unknown]}
     end
   end
 

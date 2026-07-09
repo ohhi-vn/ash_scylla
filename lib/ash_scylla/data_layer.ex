@@ -117,6 +117,16 @@ defmodule AshScylla.DataLayer do
   - No complex WHERE clauses on non-primary key columns without secondary indexes
   - Cross-partition aggregates require materialized views
   - CQL ORDER BY only works on clustering columns within a partition
+
+  ## Filtering with LIKE (`contains` / `starts_with` / `ends_with`)
+
+  Ash's `contains/2`, `starts_with/2`, and `ends_with/2` are translated to CQL
+  `LIKE`. In ScyllaDB, `LIKE` is only available on columns indexed with a
+  SASI index (or a similar text index). A `LIKE` filter against an unindexed
+  column will fail at query time rather than silently returning wrong results.
+  If you rely on substring/prefix/suffix matching, declare a SASI index on the
+  relevant column (e.g. via `secondary_index` with the appropriate index type)
+  or expect the query to error.
   """
 
   @behaviour Ash.DataLayer
@@ -455,48 +465,55 @@ defmodule AshScylla.DataLayer do
     FilterValidator.validate_filters(resource, filters)
 
     # Build the optimized query with filters, sorts, limit, offset
-    {query, params} = QueryBuilder.build_optimized_query(data_layer_query)
+    case QueryBuilder.build_optimized_query(data_layer_query) do
+      {:error, {:unknown_filter, unknown}} ->
+        raise AshScylla.Error,
+          message:
+            "AshScylla: Unable to translate filter expression to CQL: " <>
+              "#{inspect(unknown)}. The query was not executed to avoid returning " <>
+              "a broader result set than intended."
 
-    # Detect if ORDER BY was dropped due to secondary index scan
-    order_dropped? =
-      resource != nil and sorts != [] and sorts != nil and
-        QueryBuilder.secondary_index_scan?(resource, filters)
+      {:ok, {query, params}} ->
+        # Detect if ORDER BY was dropped due to secondary index scan
+        order_dropped? =
+          resource != nil and sorts != [] and sorts != nil and
+            QueryBuilder.secondary_index_scan?(resource, filters)
 
-    # Convert UUID string params to binary for Xandra
-    params = convert_uuid_params(params, resource)
+        # UUID string params are already converted to 16-byte binaries by
+        # QueryBuilder.filter_to_cql (gated on the declared attribute type).
+        opts = build_query_opts(resource, tenant)
 
-    opts = build_query_opts(resource, tenant)
+        Logger.debug("Executing run_query on #{table}")
+        Logger.debug("AshScylla: Final query: #{inspect(query)}")
+        Logger.debug("AshScylla: Final params: #{inspect(params)}")
 
-    Logger.debug("Executing run_query on #{table}")
-    Logger.debug("AshScylla: Final query: #{inspect(query)}")
-    Logger.debug("AshScylla: Final params: #{inspect(params)}")
+        result =
+          Telemetry.span(resource, :read, query, fn ->
+            case repo.query(query, params, opts) do
+              {:ok, %Xandra.Page{content: content, columns: columns}} when columns != nil ->
+                rows = content || []
+                records = Enum.map(rows, &to_ash_record(&1, resource, columns))
+                records = maybe_apply_in_memory_sort(records, sorts, order_dropped?)
+                {:ok, records}
 
-    result =
-      Telemetry.span(resource, :read, query, fn ->
-        case repo.query(query, params, opts) do
-          {:ok, %Xandra.Page{content: content, columns: columns}} when columns != nil ->
-            rows = content || []
-            records = Enum.map(rows, &to_ash_record(&1, resource, columns))
-            records = maybe_apply_in_memory_sort(records, sorts, order_dropped?)
-            {:ok, records}
+              {:ok, %Xandra.Page{content: content}} ->
+                rows = content || []
+                records = Enum.map(rows, &to_ash_record(&1, resource))
+                records = maybe_apply_in_memory_sort(records, sorts, order_dropped?)
+                {:ok, records}
 
-          {:ok, %Xandra.Page{content: content}} ->
-            rows = content || []
-            records = Enum.map(rows, &to_ash_record(&1, resource))
-            records = maybe_apply_in_memory_sort(records, sorts, order_dropped?)
-            {:ok, records}
+              error ->
+                handle_result(error)
+            end
+          end)
 
-          error ->
-            handle_result(error)
+        with {:ok, records} <- result do
+          %Query{context: context} = data_layer_query
+          aggregates = Map.get(context, :aggregates, [])
+          records = apply_calculations(records, context)
+          records = attach_aggregates(records, aggregates, resource, repo, opts)
+          {:ok, records}
         end
-      end)
-
-    with {:ok, records} <- result do
-      %Query{context: context} = data_layer_query
-      aggregates = Map.get(context, :aggregates, [])
-      records = apply_calculations(records, context)
-      records = attach_aggregates(records, aggregates, resource, repo, opts)
-      {:ok, records}
     end
   rescue
     e in [AshScylla.Error] -> reraise(e, __STACKTRACE__)
@@ -525,9 +542,31 @@ defmodule AshScylla.DataLayer do
   @spec filter(t(), term(), Ash.Resource.t()) :: {:ok, t()}
   def filter(data_layer_query, filter, _resource) do
     %Query{filters: filters} = data_layer_query
-    filter = maybe_rewrite_or_to_in(filter)
-    {:ok, %{data_layer_query | filters: [filter | filters]}}
+    {:ok, %{data_layer_query | filters: [maybe_rewrite_or_to_in(filter) | filters]}}
   end
+
+  # Rewrites a 2-way OR of equality predicates on the same column into a single
+  # IN filter, since CQL does not support OR. Returns the rewritten filter (with
+  # an `:operator` key) or the original filter when no rewrite applies.
+  @doc false
+  @spec maybe_rewrite_or_to_in(term()) :: term()
+  def maybe_rewrite_or_to_in(
+        %{op: :or, left: left, right: right} = filter
+      ) do
+    case QueryBuilder.rewrite_or_to_in(left, right) do
+      {:ok, {field_name, values}} ->
+        %{
+          operator: :in,
+          left: %{name: field_name},
+          right: %{value: values}
+        }
+
+      :error ->
+        filter
+    end
+  end
+
+  def maybe_rewrite_or_to_in(filter), do: filter
 
   # ============================================================================
   # Optional Callbacks - Sort
@@ -715,7 +754,9 @@ defmodule AshScylla.DataLayer do
         cached
     end
   rescue
-    _ ->
+    ArgumentError ->
+      # Only the specific ArgumentError from an unset module attribute is expected
+      # here; any other exception is a real bug and should propagate.
       resolve_table_name(resource)
   end
 
@@ -782,28 +823,40 @@ defmodule AshScylla.DataLayer do
 
     %Query{filters: filters} = data_layer_query
 
-    {where_clause, where_params} =
+    where_result =
       case filters do
-        [] -> build_pk_where_clause(changeset, resource)
-        _ -> QueryBuilder.build_where_clause(filters)
+        [] ->
+          {clause, params} = build_pk_where_clause(changeset, resource)
+          {:ok, {clause, params}}
+
+        _ ->
+          QueryBuilder.build_where_clause(filters)
       end
 
-    where_params = convert_uuid_params(where_params, resource)
+    case where_result do
+      {:error, {:unknown_filter, unknown}} ->
+        raise AshScylla.Error,
+          message:
+            "AshScylla: Unable to translate filter expression to CQL: " <>
+              "#{inspect(unknown)}. The query was not executed to avoid returning " <>
+              "a broader result set than intended."
 
-    query =
-      IO.iodata_to_binary([
-        "UPDATE ",
-        sanitized_table,
-        " SET ",
-        Enum.join(set_clauses, ", "),
-        " WHERE ",
-        where_clause
-      ])
+      {:ok, {where_clause, where_params}} ->
+        query =
+          IO.iodata_to_binary([
+            "UPDATE ",
+            sanitized_table,
+            " SET ",
+            Enum.join(set_clauses, ", "),
+            " WHERE ",
+            where_clause
+          ])
 
-    Logger.debug("Executing bulk UPDATE on #{sanitized_table}")
+        Logger.debug("Executing bulk UPDATE on #{sanitized_table}")
 
-    with {:ok, _} <- repo.query(query, set_values ++ where_params, opts) do
-      run_query(data_layer_query, resource)
+        with {:ok, _} <- repo.query(query, set_values ++ where_params, opts) do
+          run_query(data_layer_query, resource)
+        end
     end
   end
 
@@ -817,51 +870,63 @@ defmodule AshScylla.DataLayer do
 
     %Query{filters: filters} = data_layer_query
 
-    {where_clause, where_params} =
+    where_result =
       case filters do
-        [] -> build_pk_where_clause(changeset, resource)
-        _ -> QueryBuilder.build_where_clause(filters)
+        [] ->
+          {clause, params} = build_pk_where_clause(changeset, resource)
+          {:ok, {clause, params}}
+
+        _ ->
+          QueryBuilder.build_where_clause(filters)
       end
 
-    where_params = convert_uuid_params(where_params, resource)
+    case where_result do
+      {:error, {:unknown_filter, unknown}} ->
+        raise AshScylla.Error,
+          message:
+            "AshScylla: Unable to translate filter expression to CQL: " <>
+              "#{inspect(unknown)}. The query was not executed to avoid returning " <>
+              "a broader result set than intended."
 
-    # Check if this is a secondary index scan (for bulk delete by filter)
-    pk_columns =
-      if Ash.Resource.Info.resource?(resource) do
-        resource
-        |> Ash.Resource.Info.primary_key()
-        |> MapSet.new()
-      else
-        MapSet.new()
-      end
+      {:ok, {where_clause, where_params}} ->
+        # Check if this is a secondary index scan (for bulk delete by filter)
+        pk_columns =
+          if Ash.Resource.Info.resource?(resource) do
+            resource
+            |> Ash.Resource.Info.primary_key()
+            |> MapSet.new()
+          else
+            MapSet.new()
+          end
 
-    secondary_indexed_columns =
-      resource
-      |> Dsl.secondary_indexes()
-      |> Enum.flat_map(fn idx -> idx.columns end)
-      |> MapSet.new()
+        secondary_indexed_columns =
+          resource
+          |> Dsl.secondary_indexes()
+          |> Enum.flat_map(fn idx -> idx.columns end)
+          |> MapSet.new()
 
-    filter_columns = QueryBuilder.get_filter_columns(filters)
+        filter_columns = QueryBuilder.get_filter_columns(filters)
 
-    needs_allow_filtering =
-      filter_columns != [] and
-        Enum.any?(filter_columns, fn col -> MapSet.member?(secondary_indexed_columns, col) end) and
-        Enum.all?(filter_columns, fn col ->
-          MapSet.member?(pk_columns, col) or MapSet.member?(secondary_indexed_columns, col)
-        end)
+        needs_allow_filtering =
+          filter_columns != [] and
+            Enum.any?(filter_columns, fn col -> MapSet.member?(secondary_indexed_columns, col) end) and
+            Enum.all?(filter_columns, fn col ->
+              MapSet.member?(pk_columns, col) or MapSet.member?(secondary_indexed_columns, col)
+            end)
 
-    query =
-      IO.iodata_to_binary([
-        "DELETE FROM ",
-        sanitized_table,
-        " WHERE ",
-        where_clause,
-        if(needs_allow_filtering, do: " ALLOW FILTERING", else: "")
-      ])
+        query =
+          IO.iodata_to_binary([
+            "DELETE FROM ",
+            sanitized_table,
+            " WHERE ",
+            where_clause,
+            if(needs_allow_filtering, do: " ALLOW FILTERING", else: "")
+          ])
 
-    Logger.debug("Executing bulk DELETE on #{sanitized_table}")
+        Logger.debug("Executing bulk DELETE on #{sanitized_table}")
 
-    with {:ok, _} <- repo.query(query, where_params, opts), do: :ok
+        with {:ok, _} <- repo.query(query, where_params, opts), do: :ok
+    end
   end
 
   @impl Ash.DataLayer
@@ -941,50 +1006,58 @@ defmodule AshScylla.DataLayer do
     sanitized_table = qualified_table(resource)
     %Query{filters: filters} = data_layer_query
 
-    {where_clause, where_params} =
+    where_result =
       case filters do
         nil ->
-          {"", []}
+          {:ok, {"", []}}
 
         [] ->
-          {"", []}
+          {:ok, {"", []}}
 
         _ ->
           QueryBuilder.build_where_clause(filters)
       end
 
-    where_params = convert_uuid_params(where_params, resource)
+    case where_result do
+      {:error, {:unknown_filter, unknown}} ->
+        raise AshScylla.Error,
+          message:
+            "AshScylla: Unable to translate filter expression to CQL: " <>
+              "#{inspect(unknown)}. The query was not executed to avoid returning " <>
+              "a broader result set than intended."
 
-    # Build aggregate queries for each aggregate
-    results =
-      Enum.reduce_while(aggregates, %{}, fn aggregate, acc ->
-        case build_aggregate_query(aggregate, sanitized_table, where_clause, resource, filters) do
-          {:error, reason} ->
-            {:halt, {:error, reason}}
-
-          {query, params} ->
-            case repo.query(query, where_params ++ params, opts) do
-              {:ok, %Xandra.Page{content: [[value]]}} when not is_nil(value) ->
-                {:cont, Map.put(acc, aggregate.name, value)}
-
-              {:ok, %Xandra.Page{content: [[value]]}} when is_nil(value) ->
-                {:cont, Map.put(acc, aggregate.name, nil)}
-
-              {:ok, %Xandra.Page{content: []}} ->
-                {:cont, Map.put(acc, aggregate.name, Map.get(aggregate, :default_value))}
-
-              {:ok, %Xandra.Page{content: nil}} ->
-                {:cont, Map.put(acc, aggregate.name, Map.get(aggregate, :default_value))}
-
+      {:ok, {where_clause, where_params}} ->
+        # Build aggregate queries for each aggregate
+        results =
+          Enum.reduce_while(aggregates, %{}, fn aggregate, acc ->
+            case build_aggregate_query(aggregate, sanitized_table, where_clause, resource, filters) do
               {:error, reason} ->
                 {:halt, {:error, reason}}
-            end
-        end
-      end)
 
-    case results do
-      {:error, error} -> handle_result({:error, error})
-      map when is_map(map) -> {:ok, map}
+              {query, params} ->
+                case repo.query(query, where_params ++ params, opts) do
+                  {:ok, %Xandra.Page{content: [[value]]}} when not is_nil(value) ->
+                    {:cont, Map.put(acc, aggregate.name, value)}
+
+                  {:ok, %Xandra.Page{content: [[value]]}} when is_nil(value) ->
+                    {:cont, Map.put(acc, aggregate.name, nil)}
+
+                  {:ok, %Xandra.Page{content: []}} ->
+                    {:cont, Map.put(acc, aggregate.name, Map.get(aggregate, :default_value))}
+
+                  {:ok, %Xandra.Page{content: nil}} ->
+                    {:cont, Map.put(acc, aggregate.name, Map.get(aggregate, :default_value))}
+
+                  {:error, reason} ->
+                    {:halt, {:error, reason}}
+                end
+            end
+          end)
+
+        case results do
+          {:error, _reason} = error -> error
+          map -> {:ok, map}
+        end
     end
   end
 
@@ -1101,7 +1174,9 @@ defmodule AshScylla.DataLayer do
 
   defp build_aggregate_query(%{kind: kind}, _table, _where_clause, _resource, _filters) do
     {:error,
-     "Aggregate kind #{kind} is not supported in ScyllaDB/Cassandra. Supported kinds: :count, :sum, :avg, :min, :max"}
+     AshScylla.Error.ScyllaError.from_error(
+       "Aggregate kind #{kind} is not supported in ScyllaDB/Cassandra. Supported kinds: :count, :sum, :avg, :min, :max"
+     )}
   end
 
   defp resolve_aggregate_field(nil, _resource), do: "*"
@@ -1134,22 +1209,45 @@ defmodule AshScylla.DataLayer do
   def attach_aggregates(records, aggregates, resource, repo, opts) do
     pkey = Ash.Resource.Info.primary_key(resource)
 
-    Enum.map(records, fn record ->
-      pk_values = Map.take(record, pkey)
+    # Compute each record's aggregates concurrently. Relationship aggregates
+    # issue one synchronous ScyllaDB query per record, so a page of N records
+    # would otherwise be N sequential round trips. We parallelize across records
+    # with Task.async_stream (bounded concurrency) to avoid the N+1 latency.
+    max_concurrency = System.schedulers_online()
 
-      agg_values =
-        Enum.reduce(aggregates, %{}, fn aggregate, acc ->
-          case compute_record_aggregate(aggregate, pk_values, resource, repo, opts) do
-            {:ok, value} ->
-              Map.put(acc, aggregate.name, value)
+    {records, []} =
+      records
+      |> Task.async_stream(
+        fn record ->
+          pk_values = Map.take(record, pkey)
 
-            :error ->
-              Map.put(acc, aggregate.name, aggregate.default_value)
-          end
-        end)
+          agg_values =
+            Enum.reduce(aggregates, %{}, fn aggregate, acc ->
+              case compute_record_aggregate(aggregate, pk_values, resource, repo, opts) do
+                {:ok, value} ->
+                  Map.put(acc, aggregate.name, value)
 
-      Map.update!(record, :aggregates, &Map.merge(&1, agg_values))
-    end)
+                :error ->
+                  Map.put(acc, aggregate.name, aggregate.default_value)
+              end
+            end)
+
+          {record, agg_values}
+        end,
+        max_concurrency: max_concurrency,
+        ordered: true,
+        on_timeout: :kill_task
+      )
+      |> Enum.reduce({[], []}, fn
+        {:ok, {record, agg_values}}, {acc_records, acc_errors} ->
+          updated = Map.update!(record, :aggregates, &Map.merge(&1, agg_values))
+          {[updated | acc_records], acc_errors}
+
+        {:error, reason}, {acc_records, acc_errors} ->
+          {acc_records, [reason | acc_errors]}
+      end)
+
+    Enum.reverse(records)
   end
 
   defp compute_record_aggregate(aggregate, pk_values, resource, repo, opts) do
@@ -1279,7 +1377,9 @@ defmodule AshScylla.DataLayer do
 
         typed_value =
           cond do
-            (field_name in uuid_fields && is_binary(value)) and uuid_like_string?(value) ->
+            field_name in uuid_fields and is_binary(value) ->
+              # UUID PK: pass the string through; connection.ex will encode it as
+              # a uuid-typed param. Gated on the declared attribute type only.
               value
 
             field_name in atom_fields and is_atom(value) ->
@@ -1436,41 +1536,6 @@ defmodule AshScylla.DataLayer do
 
   defp calculate_in_memory(_, _), do: {:error, :unsupported_calculation}
 
-  @spec maybe_rewrite_or_to_in(term()) :: term()
-  defp maybe_rewrite_or_to_in(filter) do
-    case filter do
-      %{op: :or, left: %{name: name, op: :eq}, right: %{name: name, op: :eq}} ->
-        values = collect_or_values(filter, name, [])
-        %{operator: :in, left: %{name: name}, right: %{value: values}}
-
-      _ ->
-        filter
-    end
-  end
-
-  @spec collect_or_values(term(), atom(), list()) :: list()
-  defp collect_or_values(%{op: :or, left: left, right: right}, name, acc) do
-    acc = collect_or_values(left, name, acc)
-    collect_or_values(right, name, acc)
-  end
-
-  defp collect_or_values(%{name: name, right: %{value: value}}, name, acc) do
-    [value | acc]
-  end
-
-  defp collect_or_values(%{operator: op, left: %{name: name}, right: %{value: value}}, name, acc)
-       when op in [:eq, :==] do
-    [value | acc]
-  end
-
-  defp collect_or_values(%{op: op, left: %{name: name}, right: %{value: value}}, name, acc)
-       when op in [:eq, :==] do
-    [value | acc]
-  end
-
-  @spec collect_or_values(term(), atom(), list()) :: list()
-  defp collect_or_values(_, _, acc), do: acc
-
   # ============================================================================
   # Helper Functions
   # ============================================================================
@@ -1483,6 +1548,10 @@ defmodule AshScylla.DataLayer do
 
   @spec repo(module()) :: module()
   defp repo(resource) do
+    # The repo for a resource is fixed for the lifetime of the process (it is
+    # derived from static DSL config / a module attribute), so this ETS cache is
+    # intentionally permanent — there is no invalidation path by design. An
+    # unexplained persistent ETS table here is expected, not a leak.
     case :ets.lookup(:ash_scylla_repo_cache, resource) do
       [{^resource, repo}] ->
         repo
@@ -2109,19 +2178,26 @@ defmodule AshScylla.DataLayer do
     {Enum.reverse(clauses) |> Enum.join(" AND "), :lists.reverse(values)}
   end
 
+  # Returns a MapSet of attribute names (atoms and strings) declared as UUID.
+  # Used by the read path to decide which filter string values should be
+  # encoded as 16-byte UUID binaries.
   @spec uuid_attribute_names(module()) :: MapSet.t(atom() | String.t())
-  defp uuid_attribute_names(resource) do
-    resource
-    |> Info.attributes()
-    |> Enum.filter(fn attr ->
-      case attr.type do
-        Ash.Type.UUID -> true
-        :uuid -> true
-        _ -> false
-      end
-    end)
-    |> Enum.flat_map(fn attr -> [attr.name, to_string(attr.name)] end)
-    |> MapSet.new()
+  def uuid_attribute_names(resource) do
+    if Ash.Resource.Info.resource?(resource) do
+      resource
+      |> Info.attributes()
+      |> Enum.filter(fn attr ->
+        case attr.type do
+          Ash.Type.UUID -> true
+          :uuid -> true
+          _ -> false
+        end
+      end)
+      |> Enum.flat_map(fn attr -> [attr.name, to_string(attr.name)] end)
+      |> MapSet.new()
+    else
+      %MapSet{}
+    end
   end
 
   # Returns a MapSet of attribute names (atoms) that are typed as Atom.
@@ -2142,46 +2218,34 @@ defmodule AshScylla.DataLayer do
   end
 
   # Returns true if the value should be converted from a UUID string to binary.
-  # Checks both the attribute-name-based uuid_fields lookup AND a value-based
-  # validation (36-byte string with 4 hyphens and valid hex segments) as a
-  # fallback for cases where the attribute type is not recognized as UUID.
+  # Conversion is gated strictly on the *attribute's declared type*: only
+  # attributes configured as UUID (by name) are eligible. We deliberately do
+  # NOT fall back to a value-based heuristic (36-char string with 4 hyphens)
+  # because ordinary text values can match that shape by coincidence and would
+  # be silently corrupted into a 16-byte binary.
   @spec uuid_field?(term(), term(), MapSet.t(), module()) :: boolean()
   defp uuid_field?(k, v, uuid_fields, _resource) do
-    is_binary(v) and
-      (k in uuid_fields or uuid_like_string?(v))
+    is_binary(v) and k in uuid_fields
   end
-
-  @spec uuid_like_string?(term()) :: boolean()
-  defp uuid_like_string?(value) when is_binary(value) and byte_size(value) == 36 do
-    case String.split(value, "-") do
-      [a, b, c, d, e]
-      when byte_size(a) == 8 and byte_size(b) == 4 and byte_size(c) == 4 and byte_size(d) == 4 and
-             byte_size(e) == 12 ->
-        # Verify all segments are valid hex
-        hex = a <> b <> c <> d <> e
-        match?({:ok, <<_::16-binary>>}, Base.decode16(hex, case: :mixed))
-
-      _ ->
-        false
-    end
-  end
-
-  defp uuid_like_string?(_), do: false
 
   # Builds a map of attribute name (atom & string) => CQL type string for typed params.
   # This allows the data layer to correctly tag FLOAT vs DOUBLE values for Xandra.
   @doc false
   @spec attr_cql_type_map(module()) :: %{(atom() | String.t()) => String.t()}
   def attr_cql_type_map(resource) do
-    resource
-    |> Info.attributes()
-    |> Enum.reduce(%{}, fn attr, acc ->
-      cql = resolve_attr_cql_type(attr)
+    if Ash.Resource.Info.resource?(resource) do
+      resource
+      |> Info.attributes()
+      |> Enum.reduce(%{}, fn attr, acc ->
+        cql = resolve_attr_cql_type(attr)
 
-      acc
-      |> Map.put(attr.name, cql)
-      |> Map.put(to_string(attr.name), cql)
-    end)
+        acc
+        |> Map.put(attr.name, cql)
+        |> Map.put(to_string(attr.name), cql)
+      end)
+    else
+      %{}
+    end
   end
 
   # Resolves the CQL type for an Ash attribute, trying storage_type/1 first
@@ -2306,31 +2370,32 @@ defmodule AshScylla.DataLayer do
   # type for each attribute. When the runtime value type conflicts with the
   # declared type (e.g., a list value for a :string attribute), runtime
   # inference takes precedence to avoid Xandra encoding errors.
-
+  #
+  # Public so the read path (QueryBuilder.filter_to_cql/3) can type filter
+  # parameters identically to the write path.
+  @doc false
   @spec wrap_typed(term(), atom() | String.t(), %{(atom() | String.t()) => String.t()}) ::
           {String.t(), term()} | nil
-
-  # Already-wrapped values pass through unchanged
-  defp wrap_typed({type_str, _value} = typed, _key, _cql_types) when is_binary(type_str),
+  def wrap_typed({type_str, _value} = typed, _key, _cql_types) when is_binary(type_str),
     do: typed
 
   # nil — wrapped as typed nil so Xandra's encode_query_value/1 handles it.
   # Raw nil would hit encode_query_value(nil) which has no matching clause.
-  defp wrap_typed(nil, _key, _cql_types), do: {"text", nil}
+  def wrap_typed(nil, _key, _cql_types), do: {"text", nil}
 
   # Boolean — always "boolean"
-  defp wrap_typed(value, _key, _cql_types) when is_boolean(value),
+  def wrap_typed(value, _key, _cql_types) when is_boolean(value),
     do: {"boolean", value}
 
   # Float — use declared type (float vs double matters for ScyllaDB)
-  defp wrap_typed(value, key, cql_types) when is_float(value) do
+  def wrap_typed(value, key, cql_types) when is_float(value) do
     declared = Map.get(cql_types, key) || Map.get(cql_types, to_string(key))
     cql_type = if declared in ["float", "double"], do: declared, else: "double"
     {cql_type, value}
   end
 
   # Integer — use declared type or default to "bigint"
-  defp wrap_typed(value, key, cql_types) when is_integer(value) do
+  def wrap_typed(value, key, cql_types) when is_integer(value) do
     declared = Map.get(cql_types, key) || Map.get(cql_types, to_string(key))
 
     cql_type =
@@ -2342,19 +2407,19 @@ defmodule AshScylla.DataLayer do
   end
 
   # Atom — convert to string, use declared type or default to "text"
-  defp wrap_typed(value, key, cql_types) when is_atom(value) do
+  def wrap_typed(value, key, cql_types) when is_atom(value) do
     cql_type = Map.get(cql_types, key) || Map.get(cql_types, to_string(key), "text")
     {cql_type, Atom.to_string(value)}
   end
 
   # Binary — use declared type or default to "text"
-  defp wrap_typed(value, key, cql_types) when is_binary(value) do
+  def wrap_typed(value, key, cql_types) when is_binary(value) do
     cql_type = Map.get(cql_types, key) || Map.get(cql_types, to_string(key), "text")
     {cql_type, value}
   end
 
   # List — must be wrapped as a list-compatible type for Xandra
-  defp wrap_typed(value, key, cql_types) when is_list(value) do
+  def wrap_typed(value, key, cql_types) when is_list(value) do
     declared = Map.get(cql_types, key) || Map.get(cql_types, to_string(key))
 
     cql_type =
@@ -2369,14 +2434,14 @@ defmodule AshScylla.DataLayer do
 
   # Structs — must come before is_map since structs are maps.
   # These pass through unchanged; connection.ex typed_params handles wrapping.
-  defp wrap_typed(%DateTime{} = value, _key, _cql_types), do: value
-  defp wrap_typed(%Date{} = value, _key, _cql_types), do: value
-  defp wrap_typed(%Time{} = value, _key, _cql_types), do: value
-  defp wrap_typed(%Decimal{} = value, _key, _cql_types), do: value
-  defp wrap_typed(%MapSet{} = value, _key, _cql_types), do: value
+  def wrap_typed(%DateTime{} = value, _key, _cql_types), do: value
+  def wrap_typed(%Date{} = value, _key, _cql_types), do: value
+  def wrap_typed(%Time{} = value, _key, _cql_types), do: value
+  def wrap_typed(%Decimal{} = value, _key, _cql_types), do: value
+  def wrap_typed(%MapSet{} = value, _key, _cql_types), do: value
 
   # Map — must be wrapped as a map-compatible type for Xandra
-  defp wrap_typed(value, key, cql_types) when is_map(value) do
+  def wrap_typed(value, key, cql_types) when is_map(value) do
     declared = Map.get(cql_types, key) || Map.get(cql_types, to_string(key))
 
     cql_type =
@@ -2391,273 +2456,15 @@ defmodule AshScylla.DataLayer do
 
   # Catch-all: structs and unknown types pass through unchanged.
   # connection.ex typed_params handles struct wrapping (DateTime, Date, etc.).
-  defp wrap_typed(value, _key, _cql_types), do: value
-
-  # Converts UUID string params to 16-byte binaries for Xandra.
-  # This handles filter params where we don't have attribute name context -
-  # we check if the param looks like a UUID string (36 chars, 4 hyphens).
-  @spec convert_uuid_params(list(), module()) :: list()
-  defp convert_uuid_params(params, _resource) do
-    Enum.map(params, fn
-      value when is_binary(value) and byte_size(value) == 36 ->
-        bin_count = value |> String.graphemes() |> Enum.count(&(&1 == "-"))
-
-        if bin_count == 4 do
-          case Types.uuid_string_to_binary(value) do
-            {:ok, bin} -> bin
-            _ -> value
-          end
-        else
-          value
-        end
-
-      value ->
-        value
-    end)
-  end
+  def wrap_typed(value, _key, _cql_types), do: value
 
   # ============================================================================
-  # Codegen Callback (mix ash.codegen)
+  # Codegen delegation
   # ============================================================================
+  # Codegen tooling (CQL generation, migration rendering, schema-hash change
+  # detection) lives in AshScylla.DataLayer.Codegen to keep this runtime
+  # behaviour implementation focused. This callback delegates to it.
 
   @spec codegen(atom(), keyword()) :: {:ok, term()} | {:error, term()}
-  def codegen(action, opts) when action in [:dev, :init] do
-    resources = AshScylla.MixHelpers.find_all_resources()
-
-    if resources == [] do
-      Mix.shell().info("No AshScylla resources found for codegen.")
-      {:ok, []}
-    else
-      repo = AshScylla.MixHelpers.find_default_repo()
-      repo_name = repo |> Module.split() |> List.last() |> Macro.underscore()
-      migrations_path = Path.join([File.cwd!(), "priv", repo_name, "migrations"])
-
-      # Load previous meta to detect changes
-      # Uses the same `.schema_meta` file as `mix ash_scylla.gen` so both commands
-      # share change detection state.
-      meta_file = Path.join(migrations_path, ".schema_meta")
-      previous_meta = load_codegen_meta(meta_file)
-      current_meta = compute_codegen_meta(resources)
-
-      force? = Keyword.get(opts, :force, false)
-
-      changed_resources =
-        if force? do
-          resources
-        else
-          Enum.filter(resources, fn resource ->
-            key = resource_to_key(resource)
-            Map.get(previous_meta, key) != Map.get(current_meta, key)
-          end)
-        end
-
-      if changed_resources == [] do
-        Mix.shell().info("Schema is up to date. No changes detected.")
-        {:ok, []}
-      else
-        Mix.shell().info("Generating migrations for #{length(changed_resources)} resource(s)...")
-
-        generated_files =
-          Enum.flat_map(changed_resources, fn resource ->
-            statements = generate_resource_cql(resource)
-
-            if statements != [""] do
-              migration_name = generate_migration_name(resource, action, opts)
-              file_path = Path.join(migrations_path, migration_name <> ".ex")
-              content = render_migration_file(resource, statements, repo)
-
-              File.mkdir_p!(migrations_path)
-              File.write!(file_path, content)
-
-              Mix.shell().info("  Generated #{file_path}")
-              [file_path]
-            else
-              []
-            end
-          end)
-
-        save_codegen_meta(
-          meta_file,
-          merge_codegen_meta(previous_meta, changed_resources, current_meta)
-        )
-
-        {:ok, generated_files}
-      end
-    end
-  end
-
-  # Generates CQL CREATE TABLE and CREATE INDEX statements for a resource.
-  @spec generate_resource_cql(module()) :: [String.t()]
-  defp generate_resource_cql(resource) do
-    table_name = AshScylla.DataLayer.SchemaUtils.get_table_name(resource)
-    keyspace = AshScylla.DataLayer.Dsl.keyspace(resource)
-
-    qualified_table_name =
-      if keyspace, do: "#{keyspace}.#{table_name}", else: table_name
-
-    indexes = AshScylla.DataLayer.Dsl.secondary_indexes(resource)
-
-    table_cql = AshScylla.Migration.create_table_cql(resource)
-
-    index_cqls =
-      indexes
-      |> Enum.flat_map(fn idx ->
-        idx.columns
-        |> Enum.map(fn col ->
-          index_name = idx.name || "idx_#{table_name}_#{col}"
-          "CREATE INDEX IF NOT EXISTS #{index_name} ON #{qualified_table_name} (#{col})"
-        end)
-      end)
-
-    [table_cql | index_cqls]
-  end
-
-  # Generates a migration file name based on the resource and action.
-  @spec generate_migration_name(module(), atom(), keyword()) :: String.t()
-  defp generate_migration_name(resource, action, opts) do
-    resource_name = resource |> Module.split() |> List.last() |> Macro.underscore()
-
-    case action do
-      :dev ->
-        timestamp = DateTime.utc_now() |> Calendar.strftime("%Y%m%d%H%M%S")
-        "#{timestamp}_#{resource_name}_dev"
-
-      :init ->
-        Keyword.get(opts, :name, "#{resource_name}_init")
-
-      _ ->
-        timestamp = DateTime.utc_now() |> Calendar.strftime("%Y%m%d%H%M%S")
-        "#{timestamp}_#{resource_name}"
-    end
-  end
-
-  # Renders the migration file content.
-  @spec render_migration_file(module(), [String.t()], module()) :: String.t()
-  defp render_migration_file(resource, statements, _repo) do
-    resource_name = resource |> Module.split() |> List.last()
-    app = AshScylla.MixHelpers.app_name()
-    app_module = app |> Atom.to_string() |> Macro.camelize() |> String.to_atom()
-    module_name = Module.concat([app_module, :Migrations, Macro.camelize(resource_name)])
-
-    statements_literal =
-      statements
-      |> Enum.map_join(",\n", &"  \"#{&1}\"")
-
-    """
-    defmodule #{module_name} do
-      @moduledoc \"\"\"
-      Migration for #{resource_name}.
-
-      This file was autogenerated with `mix ash.codegen`
-      \"\"\"
-
-      use AshScylla.Schema
-
-      @impl AshScylla.Schema
-      def change do
-    [
-    #{statements_literal}
-    ]
-      end
-    end
-    """
-  end
-
-  # ── Codegen Meta Change Detection ─────────────────────────────────────────
-
-  @doc """
-  Computes the meta map for a list of resources.
-
-  Returns a map of resource_key => schema_hash that can be used to detect
-  changes between runs.
-  """
-  @spec compute_codegen_meta([module()]) :: %{String.t() => integer()}
-  def compute_codegen_meta(resources) do
-    Map.new(resources, fn resource ->
-      {resource_to_key(resource), hash_resource_schema(resource)}
-    end)
-  end
-
-  @doc """
-  Filters a list of resources to only those whose schema has changed compared
-  to the previous meta map.
-
-  Returns the list of changed resources.
-  """
-  @spec filter_changed_resources([module()], map()) :: [module()]
-  def filter_changed_resources(resources, previous_meta) do
-    current_meta = compute_codegen_meta(resources)
-
-    Enum.filter(resources, fn resource ->
-      key = resource_to_key(resource)
-      Map.get(previous_meta, key) != Map.get(current_meta, key)
-    end)
-  end
-
-  @doc """
-  Merges previous meta with updated entries for changed resources.
-  """
-  @spec merge_codegen_meta(map(), [module()], map()) :: map()
-  def merge_codegen_meta(previous_meta, changed_resources, current_meta) do
-    changed_keys = Map.new(changed_resources, &{resource_to_key(&1), true})
-
-    # Start with previous meta, overlay changed resources from current_meta,
-    # then add any new resources that exist in current_meta but not in previous_meta.
-    # Finally, remove resources that no longer exist in current_meta.
-    Map.merge(previous_meta, Map.take(current_meta, Map.keys(changed_keys)))
-    |> Map.merge(Map.take(current_meta, Map.keys(current_meta) -- Map.keys(previous_meta)))
-    |> Enum.reject(fn {key, _} -> key not in Map.keys(current_meta) end)
-    |> Map.new()
-  end
-
-  @doc """
-  Loads the codegen meta file from disk.
-
-  Returns an empty map if the file doesn't exist or can't be parsed.
-  """
-  @spec load_codegen_meta(String.t()) :: map()
-  def load_codegen_meta(meta_file) do
-    case File.read(meta_file) do
-      {:ok, content} ->
-        case Code.eval_string(content) do
-          {map, _} when is_map(map) -> map
-          _ -> %{}
-        end
-
-      {:error, _} ->
-        %{}
-    end
-  end
-
-  @doc """
-  Saves the codegen meta map to disk.
-  """
-  @spec save_codegen_meta(String.t(), map()) :: :ok
-  def save_codegen_meta(meta_file, meta) do
-    File.mkdir_p!(Path.dirname(meta_file))
-    File.write!(meta_file, inspect(meta, limit: :infinity, printable_limit: :infinity))
-    :ok
-  end
-
-  defp resource_to_key(resource), do: inspect(resource)
-
-  defp hash_resource_schema(resource) do
-    attributes =
-      resource
-      |> Ash.Resource.Info.attributes()
-      |> Enum.sort_by(& &1.name)
-      |> Enum.map(fn attr ->
-        {attr.name, attr.type, attr.primary_key?, attr.allow_nil?}
-      end)
-
-    indexes =
-      resource
-      |> Dsl.secondary_indexes()
-      |> Enum.sort_by(& &1.name)
-      |> Enum.map(fn idx ->
-        {idx.name, Enum.sort(idx.columns)}
-      end)
-
-    :erlang.phash2({attributes, indexes})
-  end
+  def codegen(action, opts), do: AshScylla.DataLayer.Codegen.codegen(action, opts)
 end

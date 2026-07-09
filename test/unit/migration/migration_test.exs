@@ -189,6 +189,42 @@ defmodule AshScylla.MigrationTest do
     end
   end
 
+  describe "generate_add_columns/2 (ALTER TABLE ADD)" do
+    @describetag :unit
+
+    # generate_add_columns/2 is private; invoke via apply/3 to assert on the
+    # generated CQL string. This guards against regression of the migration
+    # bug where ALTER TABLE was emitted WITHOUT a keyspace qualifier, causing
+    # "No keyspace has been specified" failures when USE context was lost.
+    test "qualifies the table with the configured keyspace" do
+      statements =
+        AshScylla.DataLayer.SchemaMigration
+        |> apply(:generate_add_columns, [AshScylla.TestResource, [:age]])
+
+      assert [stmt] = statements
+      assert stmt =~ ~s/ALTER TABLE "ash_scylla_test"."test_resource" ADD "age"/
+    end
+
+    test "qualifies the table even when multiple columns are added" do
+      statements =
+        AshScylla.DataLayer.SchemaMigration
+        |> apply(:generate_add_columns, [AshScylla.TestResource, [:age, :email]])
+
+      assert length(statements) == 2
+      assert Enum.all?(statements, &(&1 =~ ~s/ALTER TABLE "ash_scylla_test"."test_resource"/))
+    end
+
+    test "falls back to unqualified table name when no keyspace is configured" do
+      statements =
+        AshScylla.DataLayer.SchemaMigration
+        |> apply(:generate_add_columns, [AshScylla.TestResourceNoKeyspace, [:age]])
+
+      assert [stmt] = statements
+      refute stmt =~ ~s/"ash_scylla_test"\./
+      assert stmt =~ ~s/ALTER TABLE "test_resource_no_ks" ADD "age"/
+    end
+  end
+
   describe "quote_name/1" do
     test "quotes simple identifiers" do
       assert Migration.quote_name("users") == ~s("users")

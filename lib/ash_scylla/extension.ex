@@ -75,13 +75,13 @@ defmodule AshScylla.Extension do
       # Uses the same `.schema_meta` file as `mix ash_scylla.gen` so both commands
       # share change detection state.
       meta_file = Path.join(migrations_path, ".schema_meta")
-      previous_meta = AshScylla.DataLayer.load_codegen_meta(meta_file)
+      previous_meta = AshScylla.DataLayer.Codegen.load_codegen_meta(meta_file)
 
       changed_resources =
         if force? do
           resources
         else
-          AshScylla.DataLayer.filter_changed_resources(resources, previous_meta)
+          AshScylla.DataLayer.Codegen.filter_changed_resources(resources, previous_meta)
         end
 
       if changed_resources == [] do
@@ -113,11 +113,15 @@ defmodule AshScylla.Extension do
           end)
 
         if !dry_run? do
-          current_meta = AshScylla.DataLayer.compute_codegen_meta(resources)
+          current_meta = AshScylla.DataLayer.Codegen.compute_codegen_meta(resources)
 
-          AshScylla.DataLayer.save_codegen_meta(
+          AshScylla.DataLayer.Codegen.save_codegen_meta(
             meta_file,
-            AshScylla.DataLayer.merge_codegen_meta(previous_meta, changed_resources, current_meta)
+            AshScylla.DataLayer.Codegen.merge_codegen_meta(
+              previous_meta,
+              changed_resources,
+              current_meta
+            )
           )
         end
 

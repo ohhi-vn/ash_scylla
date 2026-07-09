@@ -5,7 +5,6 @@ defmodule AshScylla.DslRepoMigrationTest do
 
   use ExUnit.Case, async: true
 
-  alias AshScylla.DataLayer
   alias AshScylla.DataLayer.Dsl
   alias AshScylla.Migration
 
@@ -445,7 +444,7 @@ defmodule AshScylla.DslRepoMigrationContinuedTest do
     end
 
     test "offset defaults to nil" do
-      query = %AshScylla.Query{resource: nil, repo: nil, table: nil}
+      _query = %AshScylla.Query{resource: nil, repo: nil, table: nil}
     end
 
     test "select defaults to nil" do
@@ -486,7 +485,7 @@ defmodule AshScylla.DslRepoMigrationContinuedTest do
     end
 
     test "creates a proper query struct with nil offset" do
-      query = %AshScylla.Query{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
+      _query = %AshScylla.Query{resource: TestResourceWithIndexes, repo: nil, table: "test_users"}
     end
 
     test "creates a proper query struct with nil select" do

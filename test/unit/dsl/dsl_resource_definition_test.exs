@@ -491,7 +491,7 @@ defmodule AshScylla.DslResourceTest do
       {:ok, q3} = DataLayer.limit(q2, 10, nil)
       {:ok, q4} = DataLayer.select(q3, [:id, :name, :status], nil)
 
-      {cql, params} = AshScylla.DataLayer.QueryBuilder.build_optimized_query(q4)
+      {:ok, {cql, params}} = AshScylla.DataLayer.QueryBuilder.build_optimized_query(q4)
 
       assert cql =~ "SELECT id, name, status FROM full_items"
       assert cql =~ "WHERE"

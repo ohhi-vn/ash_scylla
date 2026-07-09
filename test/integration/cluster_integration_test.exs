@@ -210,6 +210,15 @@ defmodule AshScylla.ClusterIntegrationTest do
   # ── Schema helpers ──────────────────────────────────────────────────────────
 
   defp create_keyspace(conn) do
+    # Drop first so a stale keyspace (e.g. created with a different
+    # replication_factor in a previous run) doesn't linger. CREATE KEYSPACE
+    # IF NOT EXISTS is a no-op when the keyspace already exists, which would
+    # otherwise leave us with an incompatible replication factor.
+    case Xandra.execute(conn, "DROP KEYSPACE IF EXISTS #{@keyspace}") do
+      {:ok, _} -> :ok
+      {:error, reason} -> raise "Failed to drop keyspace: #{inspect(reason)}"
+    end
+
     cql = """
     CREATE KEYSPACE IF NOT EXISTS #{@keyspace}
     WITH REPLICATION = {
@@ -700,7 +709,7 @@ defmodule AshScylla.ClusterIntegrationTest do
         group_by: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
 
       assert cql =~ "SELECT id, name, email FROM #{@keyspace}.users"
       assert cql =~ "WHERE"
@@ -739,7 +748,7 @@ defmodule AshScylla.ClusterIntegrationTest do
         group_by: nil
       }
 
-      {cql, params} = QueryBuilder.build_optimized_query(query)
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(query)
       assert cql =~ "IN"
       assert length(params) == 3
 

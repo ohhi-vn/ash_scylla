@@ -186,7 +186,7 @@ defmodule AshScylla.Test do
         right: %{operator: :gt, left: %{name: "age"}, right: %{value: 18}}
       }
 
-      {cql, params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
+      {cql, params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert String.contains?(cql, "AND")
       assert String.contains?(cql, "IN")
       assert params == ["active", "pending", 18]
@@ -199,7 +199,7 @@ defmodule AshScylla.Test do
         right: %{value: ["A", "B", "C", "D", "E"]}
       }
 
-      {cql, params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter)
+      {cql, params} = AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       assert String.contains?(cql, "IN")
       assert String.contains?(cql, "?, ?, ?, ?, ?")
       assert params == ["A", "B", "C", "D", "E"]
