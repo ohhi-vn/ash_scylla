@@ -61,7 +61,7 @@ defmodule AshScylla.DataLayer.Pagination do
 
   ## Parameters
 
-  - `repo` - The Ecto repo module
+  - `repo` - The AshScylla repo module
   - `table` - The table name
   - `filters` - Filter list for WHERE clause
   - `page_token` - Opaque page token from previous page (nil for first page)

@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `attach_aggregates/5` attaches per-record aggregate values during `run_query/2`
 - Unit tests for aggregate support (48 tests in `test/unit/data_layer/data_layer_aggregate_test.exs`)
 
+## [1.4.1]
+
+### Changed
+- **BREAKING**: Moved DSL from `AshScylla.DataLayer.Dsl` into `AshScylla.DataLayer` — resources still need `import AshScylla.DataLayer.Dsl` (which now re-exports the macro from `AshScylla.DataLayer`)
+
 ## [0.13.1]
 
 ### Added
@@ -206,7 +211,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Multitenancy via keyspace-based tenant isolation
 - Basic CQL query generation from Ash queries
 
-[Unreleased]: https://github.com/ohhi-vn/ash_scylla/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/ohhi-vn/ash_scylla/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/ohhi-vn/ash_scylla/compare/v0.13.1...v1.4.1
 [0.13.1]: https://github.com/ohhi-vn/ash_scylla/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/ohhi-vn/ash_scylla/compare/v0.6.0...v0.13.0
 [0.6.0]: https://github.com/ohhi-vn/ash_scylla/compare/v0.4.0...v0.6.0

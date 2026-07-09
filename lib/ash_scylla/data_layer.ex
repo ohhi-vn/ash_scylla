@@ -64,6 +64,8 @@ defmodule AshScylla.DataLayer do
   - `:transact` - Transaction wrapper
   - `:composite_primary_key` - Composite primary key support
   - `{:aggregate, :count}` / `{:aggregate, :sum}` / `{:aggregate, :avg}` / `{:aggregate, :min}` / `{:aggregate, :max}` - Per-partition aggregate functions
+  - `{:query_aggregate, :count}` / `{:query_aggregate, :sum}` / `{:query_aggregate, :avg}` / `{:query_aggregate, :min}` / `{:query_aggregate, :max}` - Query-level aggregate functions (`Ash.count/2`, `Ash.sum/2`, etc.)
+  - `{:aggregate_relationship, _}` - Relationship aggregates (belongs_to via per-record subqueries)
   - `{:atomic, :update}` - Atomic updates via LWT (IF clauses)
   - `{:atomic, :upsert}` - Atomic upserts via LWT
   - `{:atomic, :create}` - Atomic creates
@@ -75,7 +77,6 @@ defmodule AshScylla.DataLayer do
   - `:expression_calculation_sort` - Not supported
   - `:aggregate_filter` - Aggregate filtering not supported
   - `:aggregate_sort` - Aggregate sorting not supported
-  - `{:query_aggregate, :count}` / `{:query_aggregate, :sum}` / `{:query_aggregate, :avg}` / `{:query_aggregate, :min}` / `{:query_aggregate, :max}` - Query-level aggregate functions (Ash.count!/2, Ash.sum!/2, etc.)
   - `:bulk_create_with_partial_success` - Bulk create is all-or-nothing
   - `:update_many` - Update-many not implemented
   - `:composite_type` - Composite types not supported
@@ -89,9 +90,9 @@ defmodule AshScylla.DataLayer do
   - `{:filter_relationship, _}` - Relationship filtering not supported
   - `{:exists, :unrelated}` - Exists queries not supported
   - `{:aggregate, :unrelated}` - Unrelated aggregates not supported
-  - `{:aggregate_relationship, _}` - Relationship aggregates (belongs_to via per-record subqueries)
   - `{:query_aggregate, :list}` / `{:query_aggregate, :first}` / `{:query_aggregate, :exists}` / `{:query_aggregate, :custom}` - Only COUNT, SUM, AVG, MIN, MAX are supported
   - `{:aggregate, :list}` / `{:aggregate, :first}` / `{:aggregate, :exists}` / `{:aggregate, :custom}` - Only COUNT, SUM, AVG, MIN, MAX are supported
+  - `{:aggregate, :unrelated}` - Unrelated aggregates not supported
 
   ## Ash Query Extensions
 

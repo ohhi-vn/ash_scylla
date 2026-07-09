@@ -23,7 +23,7 @@
 
 AshScylla enables you to use **ScyllaDB** or **Apache Cassandra** as a persistence layer for your [Ash Framework](https://ash-hq.org/) resources. It implements the `Ash.DataLayer` behaviour using [Xandra](https://github.com/whatyouhide/xandra) (a native Elixir CQL driver) to communicate via CQL (Cassandra Query Language).
 
-Current version: **0.13.1**
+Current version: **1.4.1**
 
 ### Key Benefits
 
@@ -38,7 +38,7 @@ Current version: **0.13.1**
 
 ### Prerequisites
 
-- Elixir 1.17+
+- Elixir 1.19+
 - Running ScyllaDB or Cassandra instance
 - Basic knowledge of Ash Framework
 
@@ -49,7 +49,7 @@ Add `ash_scylla` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:ash_scylla, "~> 0.13"}
+    {:ash_scylla, "~> 1.4"}
   ]
 end
 ```

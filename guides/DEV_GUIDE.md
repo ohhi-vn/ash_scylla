@@ -25,7 +25,7 @@ This guide walks through setting up a complete AshScylla development environment
 
 - **VS Code Dev Containers** — reproducible, zero-host-dependency workspace
 - **Podman Compose** — single-node ScyllaDB instance with health checks
-- **Elixir 1.17** — pre-installed in the container image
+- **Elixir 1.19** — pre-installed in the container image
 
 The dev container mounts your local source code, so all edits happen on your host machine while compilation and tests run inside the container.
 
@@ -67,7 +67,7 @@ Open a terminal inside VS Code (`` Ctrl+` ``) and run:
 ```bash
 # Check Elixir version
 elixir --version
-# → Elixir 1.17.x
+# → Elixir 1.19.x
 
 # Verify ScyllaDB is running
 podman ps
@@ -168,7 +168,7 @@ ash_scylla/
 │                                                     │
 │  ┌──────────────┐          ┌────────────────────┐  │
 │  │   scylla     │◄────────►│       app          │  │
-│  │   :9042      │  CQL     │  Elixir 1.17       │  │
+│  │   :9042      │  CQL     │  Elixir 1.19       │  │
 │  │              │          │  + deps compiled    │  │
 │  └──────────────┘          └────────────────────┘  │
 │         ▲                          ▲                │

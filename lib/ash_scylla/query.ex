@@ -31,7 +31,7 @@ defmodule AshScylla.Query do
   ## Fields
 
   - `:resource` — the Ash resource module
-  - `:repo` — the Ecto repo module used to run queries
+  - `:repo` — the AshScylla repo module used to run queries
   - `:table` — the ScyllaDB table name
   - `:filters` — list of filter expressions for the WHERE clause
   - `:sorts` — list of sort expressions for the ORDER BY clause
