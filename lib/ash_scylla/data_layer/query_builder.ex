@@ -892,11 +892,31 @@ defmodule AshScylla.DataLayer.QueryBuilder do
 
               _ ->
                 # Handle operators that need special CQL syntax even when right side
-                # is a raw value (not a %{value: ...} map)
+                # is a raw value (not a %{value: ...} map). For comparison operators
+                # on UUID columns, type the bound value via typed_param so it is
+                # converted to a 16-byte binary tagged as {"uuid", bin} (otherwise
+                # ScyllaDB rejects it with "Validation failed for uuid - got N bytes").
+                # Collection/pattern operators (LIKE, CONTAINS, has, overlaps) keep
+                # their wildcard-wrapped extra_params untouched.
                 {cql_op, cql_val, extra_params} =
                   operator_cql(op, right, right_params)
 
-                {"#{left_cql} #{cql_op} #{cql_val}", left_params ++ extra_params}
+                final_params =
+                  if name in uuid_fields and
+                       op not in [
+                         :starts_with,
+                         :ends_with,
+                         :contains,
+                         :contains_key,
+                         :has,
+                         :overlaps
+                       ] do
+                    [typed_param(name, extract_value(right), uuid_fields, cql_types)]
+                  else
+                    extra_params
+                  end
+
+                {"#{left_cql} #{cql_op} #{cql_val}", left_params ++ final_params}
             end
         end
     end
@@ -1169,6 +1189,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     end
   end
 
+  defp attribute_name(%Ash.Query.Ref{attribute: attribute}), do: attribute_name(attribute)
   defp attribute_name(%{name: name}), do: name
   defp attribute_name(name), do: name
 
@@ -1274,22 +1295,43 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   #    DataLayer.wrap_typed/3 so the read path types parameters identically to
   #    the write path (e.g. float vs double, int vs smallint/tinyint/varint).
   defp typed_param(name, value, uuid_fields, cql_types) do
-    converted = maybe_convert_uuid(name, value, uuid_fields)
-    wrapped = DataLayer.wrap_typed(converted, name, cql_types)
+    # When the column is a declared UUID attribute, the bound value must be
+    # tagged as {"uuid", bin} so Xandra marshals it as a uuid-typed parameter.
+    # A bare 16-byte binary would otherwise be inferred as blob/text and
+    # rejected by ScyllaDB with "Validation failed for uuid - got N bytes".
+    # This takes precedence over the default-inferable allow-list below.
+    #
+    # UUID-ness is determined by either membership in uuid_fields (atom/string
+    # attribute names) OR the resolved CQL type for the column being "uuid"
+    # (covers :uuid, :uuid_v7, Ash.Type.UUID, and custom UUID modules).
+    uuid_column? =
+      name in uuid_fields or
+        Map.get(cql_types, name) == "uuid" or
+        Map.get(cql_types, to_string(name)) == "uuid"
 
-    # Only emit a {type, value} tuple when the declared type is one that
-    # Xandra's prepared-statement path would NOT infer correctly on its own.
-    # For the common default-inferable types (text, bigint, double, boolean)
-    # connection.typed_params already produces the right tag, so we return the
-    # raw value to keep parameter encoding identical to the write path without
-    # changing behaviour for ordinary values. This closes the real gap:
-    # float vs double and int vs smallint/tinyint/varint disambiguation.
-    case wrapped do
-      {type, _} when type in ["text", "bigint", "double", "boolean"] ->
-        converted
+    if uuid_column? and is_binary(value) do
+      case Types.uuid_string_to_binary(value) do
+        {:ok, bin} -> {"uuid", bin}
+        _ -> {"uuid", value}
+      end
+    else
+      converted = maybe_convert_uuid(name, value, uuid_fields)
+      wrapped = DataLayer.wrap_typed(converted, name, cql_types)
 
-      _ ->
-        wrapped
+      # Only emit a {type, value} tuple when the declared type is one that
+      # Xandra's prepared-statement path would NOT infer correctly on its own.
+      # For the common default-inferable types (text, bigint, double, boolean)
+      # connection.typed_params already produces the right tag, so we return the
+      # raw value to keep parameter encoding identical to the write path without
+      # changing behaviour for ordinary values. This closes the real gap:
+      # float vs double and int vs smallint/tinyint/varint disambiguation.
+      case wrapped do
+        {type, _} when type in ["text", "bigint", "double", "boolean"] ->
+          converted
+
+        _ ->
+          wrapped
+      end
     end
   end
 

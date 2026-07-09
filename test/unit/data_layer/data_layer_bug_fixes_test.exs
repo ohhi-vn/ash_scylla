@@ -56,6 +56,9 @@ defmodule AshScylla.DataLayer.BugFixesTest do
         "INSERT INTO test_ks.struct_pk_items" <> _ ->
           {:ok, %Xandra.Page{content: []}}
 
+        "INSERT INTO test_ks.uuid_v7_items" <> _ ->
+          {:ok, %Xandra.Page{content: []}}
+
         # --- updates ---
         "UPDATE test_ks.bug_items SET" <> _ ->
           {:ok, %Xandra.Page{content: []}}
@@ -137,6 +140,32 @@ defmodule AshScylla.DataLayer.BugFixesTest do
            %Xandra.Page{
              content: [[id, "Alice", "game-1"]],
              columns: ["id", "name", "game_id"]
+           }}
+
+        # --- selects on UUID-typed columns (regression for uuid marshaling) ---
+        "SELECT * FROM test_ks.uuid_items WHERE" <> _ ->
+          {:ok,
+           %Xandra.Page{
+             content: [
+               [uuid_bin("550e8400-e29b-41d4-a716-446655440001"),
+                uuid_bin("550e8400-e29b-41d4-a716-446655440099"),
+                uuid_bin("550e8400-e29b-41d4-a716-446655440098"),
+                10.5]
+             ],
+             columns: ["id", "game_id", "user_id", "speed"]
+           }}
+
+        # --- selects on :uuid_v7 columns (regression for uuid_v7 marshaling) ---
+        "SELECT * FROM test_ks.uuid_v7_items WHERE" <> _ ->
+          {:ok,
+           %Xandra.Page{
+             content: [
+               [uuid_bin("550e8400-e29b-41d4-a716-446655440001"),
+                uuid_bin("550e8400-e29b-41d4-a716-446655440099"),
+                uuid_bin("550e8400-e29b-41d4-a716-446655440098"),
+                false]
+             ],
+             columns: ["id", "from_user_id", "to_user_id", "deleted"]
            }}
 
         # --- fallback ---
@@ -230,6 +259,66 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       uuid_primary_key(:id)
       attribute(:name, :string)
       attribute(:game_id, :string, primary_key?: true, allow_nil?: false)
+    end
+
+    actions do
+      defaults([:create, :read, :update, :destroy])
+    end
+  end
+
+  defmodule UuidResource do
+    @moduledoc false
+
+    use Ash.Resource,
+      domain: nil,
+      data_layer: AshScylla.DataLayer
+
+    import AshScylla.DataLayer.Dsl
+
+    scylla do
+      repo(FakeRepo)
+      table("uuid_items")
+      keyspace("test_ks")
+      consistency(:one)
+      secondary_index(:game_id)
+      secondary_index([:game_id, :user_id])
+    end
+
+    attributes do
+      uuid_primary_key(:id)
+      attribute(:game_id, :uuid, allow_nil?: false)
+      attribute(:user_id, :uuid, allow_nil?: false)
+      attribute(:speed, :float, allow_nil?: false)
+    end
+
+    actions do
+      defaults([:create, :read, :update, :destroy])
+    end
+  end
+
+  defmodule UuidV7Resource do
+    @moduledoc false
+
+    use Ash.Resource,
+      domain: nil,
+      data_layer: AshScylla.DataLayer
+
+    import AshScylla.DataLayer.Dsl
+
+    scylla do
+      repo(FakeRepo)
+      table("uuid_v7_items")
+      keyspace("test_ks")
+      consistency(:one)
+      secondary_index(:from_user_id)
+      secondary_index(:to_user_id)
+    end
+
+    attributes do
+      uuid_v7_primary_key(:id)
+      attribute(:from_user_id, :uuid_v7, allow_nil?: false)
+      attribute(:to_user_id, :uuid_v7, allow_nil?: false)
+      attribute(:deleted, :boolean, allow_nil?: false, default: false)
     end
 
     actions do
@@ -687,6 +776,215 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       assert_raise AshScylla.Error, ~r/CQL does not support OR across different fields/, fn ->
         AshScylla.DataLayer.QueryBuilder.filter_to_cql(filter, %MapSet{}, %{})
       end
+    end
+  end
+
+  describe "Bug 10: UUID filter values marshaled as uuid-typed 16-byte binary" do
+    @game_id "550e8400-e29b-41d4-a716-446655440099"
+    @user_id "550e8400-e29b-41d4-a716-446655440098"
+
+    test "build_optimized_query tags a UUID filter param as {\"uuid\", <<_::16-binary>>}" do
+      query = %AshScylla.Query{
+        resource: UuidResource,
+        repo: FakeRepo,
+        table: "test_ks.uuid_items",
+        filters: [
+          %{operator: :eq, left: %{name: :game_id}, right: %{value: @game_id}},
+          %{operator: :eq, left: %{name: :user_id}, right: %{value: @user_id}}
+        ],
+        sorts: [],
+        limit: nil,
+        select: nil,
+        tenant: nil,
+        context: %{}
+      }
+
+      {:ok, {cql, params}} = AshScylla.DataLayer.QueryBuilder.build_optimized_query(query)
+
+      assert cql =~ "WHERE game_id = ?"
+      assert cql =~ "user_id = ?"
+
+      # Each UUID filter value must be tagged as {"uuid", 16-byte binary} so
+      # Xandra marshals it as a uuid-typed parameter. A bare 36-char string or
+      # an untagged 16-byte binary would be rejected by ScyllaDB with
+      # "Validation failed for uuid - got N bytes".
+      assert {"uuid", <<_::16-binary>>} = Enum.at(params, 0)
+      assert {"uuid", <<_::16-binary>>} = Enum.at(params, 1)
+    end
+
+    test "run_query sends uuid-typed params for a UUID secondary-index filter" do
+      query = %AshScylla.Query{
+        resource: UuidResource,
+        repo: FakeRepo,
+        table: "test_ks.uuid_items",
+        filters: [
+          %{operator: :eq, left: %{name: :game_id}, right: %{value: @game_id}}
+        ],
+        sorts: [],
+        limit: nil,
+        select: nil,
+        tenant: nil,
+        context: %{}
+      }
+
+      assert {:ok, _records} = DataLayer.run_query(query, UuidResource)
+
+      assert_receive {:ash_scylla_query, _cql, params, _opts}
+      # FakeRepo unwraps {type, value} tuples, so we assert the value is a
+      # 16-byte binary (the UUID was converted, not passed as a 36-char string).
+      assert [<<_::16-binary>>] = params
+    end
+
+    test "UUID primary key is tagged as {\"uuid\", <<_::16-binary>>} in PK where clause" do
+      uuid_fields = DataLayer.uuid_attribute_names(UuidResource)
+      cql_types = DataLayer.attr_cql_type_map(UuidResource)
+
+      {cql, params} =
+        AshScylla.DataLayer.QueryBuilder.filter_to_cql(
+          %{operator: :eq, left: %{name: :id}, right: %{value: @game_id}},
+          uuid_fields,
+          cql_types
+        )
+
+      assert cql =~ "id = ?"
+      assert {"uuid", <<_::16-binary>>} = List.last(params)
+    end
+
+    test ":uuid_v7 attributes are detected and marshaled as uuid-typed params" do
+      # Regression: uuid_attribute_names previously only recognized :uuid and
+      # Ash.Type.UUID, so :uuid_v7 columns (used by uuid_v7_primary_key) were
+      # missed and their 36-char string values were bound as text, causing
+      # "Validation failed for uuid - got 36 bytes".
+      uuid_fields = DataLayer.uuid_attribute_names(UuidV7Resource)
+      assert :from_user_id in uuid_fields
+      assert :to_user_id in uuid_fields
+      assert :id in uuid_fields
+
+      query = %AshScylla.Query{
+        resource: UuidV7Resource,
+        repo: FakeRepo,
+        table: "test_ks.uuid_v7_items",
+        filters: [
+          %{operator: :eq, left: %{name: :from_user_id}, right: %{value: @game_id}},
+          %{operator: :eq, left: %{name: :to_user_id}, right: %{value: @user_id}},
+          %{operator: :eq, left: %{name: :deleted}, right: %{value: false}}
+        ],
+        sorts: [],
+        limit: nil,
+        select: nil,
+        tenant: nil,
+        context: %{}
+      }
+
+      {:ok, {cql, params}} = AshScylla.DataLayer.QueryBuilder.build_optimized_query(query)
+
+      assert cql =~ "from_user_id = ?"
+      assert cql =~ "to_user_id = ?"
+      assert cql =~ "deleted = ?"
+
+      # The two UUID columns must be tagged as {"uuid", 16-byte binary}; the
+      # boolean must remain a raw boolean (not a string).
+      assert {"uuid", <<_::16-binary>>} = Enum.at(params, 0)
+      assert {"uuid", <<_::16-binary>>} = Enum.at(params, 1)
+      assert false == Enum.at(params, 2)
+    end
+
+    test ":uuid_v7 columns resolve to uuid CQL type so write path tags them correctly" do
+      # Regression: ash_type_to_cql previously had no :uuid_v7 clause, so
+      # attr_cql_type_map mapped :uuid_v7 -> "text". That made wrap_typed tag the
+      # 16-byte UUID binary as {"text", bin} on writes (only working by a
+      # byte-length coincidence) and broke typed_param's cql_types check.
+      cql_types = DataLayer.attr_cql_type_map(UuidV7Resource)
+      assert Map.get(cql_types, :from_user_id) == "uuid"
+      assert Map.get(cql_types, :to_user_id) == "uuid"
+      assert Map.get(cql_types, :id) == "uuid"
+
+      # The create/write path must tag UUID values as {"uuid", 16-byte binary}.
+      id = "019f2660-4930-7ac3-bb36-3f094e43443f"
+      from = "019f2660-492b-72f1-9e16-66573f1e263e"
+      to = "019f2660-492b-72f1-9e16-66573f1e263f"
+
+      cs = changeset(%{id: id, from_user_id: from, to_user_id: to, deleted: false})
+
+      assert {:ok, _record} = DataLayer.create(UuidV7Resource, cs)
+
+      assert_receive {:ash_scylla_query, "INSERT INTO" <> _, params, _opts}
+      # FakeRepo unwraps {type, value} tuples, so we assert the UUID values are
+      # 16-byte binaries (converted from 36-char strings), not raw strings.
+      # Column order in the INSERT is alphabetical (deleted, from_user_id,
+      # id, to_user_id), so the params are: [id, deleted, from_user_id, to_user_id].
+      assert [<<_::16-binary>>, false, <<_::16-binary>>, <<_::16-binary>>] = params
+    end
+
+    test "UUID filter with real Ash.Query.Ref left operand is marshaled as uuid-typed param" do
+      # Regression: in production Ash passes the filter column as an
+      # %Ash.Query.Ref{attribute: %{name: name}} struct, not a bare
+      # %{name: name} map. attribute_name/1 previously returned the struct itself
+      # for an Ash.Query.Ref, so the column name was never resolved, UUID
+      # conversion was skipped, and the 36-char string was bound as text —
+      # causing "Validation failed for uuid - got 36 bytes".
+      uuid_fields = DataLayer.uuid_attribute_names(UuidV7Resource)
+      cql_types = DataLayer.attr_cql_type_map(UuidV7Resource)
+
+      ref = %Ash.Query.Ref{attribute: %{name: :from_user_id}}
+
+      {cql, params} =
+        AshScylla.DataLayer.QueryBuilder.filter_to_cql(
+          %{operator: :eq, left: ref, right: %{value: @game_id}},
+          uuid_fields,
+          cql_types
+        )
+
+      assert cql =~ "from_user_id = ?"
+      assert {"uuid", <<_::16-binary>>} = List.last(params)
+    end
+
+    test "UUID secondary-index filter via Ash.Query.Ref runs end-to-end as uuid-typed param" do
+      # End-to-end regression: a filter built from real Ash.Query.Ref structs
+      # (as Ash produces them) must reach run_query with 16-byte UUID binaries,
+      # not 36-char strings. Mirrors the failing direct_messages query from the
+      # bug report (from_user_id + to_user_id secondary index scan).
+      query = %AshScylla.Query{
+        resource: UuidV7Resource,
+        repo: FakeRepo,
+        table: "test_ks.uuid_v7_items",
+        filters: [
+          %{operator: :eq, left: %Ash.Query.Ref{attribute: %{name: :from_user_id}}, right: %{value: @game_id}},
+          %{operator: :eq, left: %Ash.Query.Ref{attribute: %{name: :to_user_id}}, right: %{value: @user_id}}
+        ],
+        sorts: [],
+        limit: nil,
+        select: nil,
+        tenant: nil,
+        context: %{}
+      }
+
+      assert {:ok, _records} = DataLayer.run_query(query, UuidV7Resource)
+
+      assert_receive {:ash_scylla_query, cql, params, _opts}
+      # FakeRepo unwraps {type, value} tuples.
+      assert cql =~ "ALLOW FILTERING"
+      # The two UUID values must be 16-byte binaries, not 36-char strings.
+      assert [<<_::16-binary>>, <<_::16-binary>>] = params
+    end
+
+    test "non-UUID Ash.Query.Ref filter is left as a raw value (no corruption)" do
+      # A text/boolean column referenced via Ash.Query.Ref must NOT be coerced
+      # into a UUID binary just because the value happens to look like one.
+      uuid_fields = DataLayer.uuid_attribute_names(UuidV7Resource)
+      cql_types = DataLayer.attr_cql_type_map(UuidV7Resource)
+
+      ref = %Ash.Query.Ref{attribute: %{name: :deleted}}
+
+      {cql, params} =
+        AshScylla.DataLayer.QueryBuilder.filter_to_cql(
+          %{operator: :eq, left: ref, right: %{value: false}},
+          uuid_fields,
+          cql_types
+        )
+
+      assert cql =~ "deleted = ?"
+      assert false == List.last(params)
     end
   end
 

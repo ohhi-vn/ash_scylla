@@ -550,9 +550,7 @@ defmodule AshScylla.DataLayer do
   # an `:operator` key) or the original filter when no rewrite applies.
   @doc false
   @spec maybe_rewrite_or_to_in(term()) :: term()
-  def maybe_rewrite_or_to_in(
-        %{op: :or, left: left, right: right} = filter
-      ) do
+  def maybe_rewrite_or_to_in(%{op: :or, left: left, right: right} = filter) do
     case QueryBuilder.rewrite_or_to_in(left, right) do
       {:ok, {field_name, values}} ->
         %{
@@ -830,7 +828,9 @@ defmodule AshScylla.DataLayer do
           {:ok, {clause, params}}
 
         _ ->
-          QueryBuilder.build_where_clause(filters)
+          uuid_fields = uuid_attribute_names(resource)
+          cql_types = attr_cql_type_map(resource)
+          QueryBuilder.build_where_clause(filters, uuid_fields, cql_types)
       end
 
     case where_result do
@@ -877,7 +877,9 @@ defmodule AshScylla.DataLayer do
           {:ok, {clause, params}}
 
         _ ->
-          QueryBuilder.build_where_clause(filters)
+          uuid_fields = uuid_attribute_names(resource)
+          cql_types = attr_cql_type_map(resource)
+          QueryBuilder.build_where_clause(filters, uuid_fields, cql_types)
       end
 
     case where_result do
@@ -1015,7 +1017,9 @@ defmodule AshScylla.DataLayer do
           {:ok, {"", []}}
 
         _ ->
-          QueryBuilder.build_where_clause(filters)
+          uuid_fields = uuid_attribute_names(resource)
+          cql_types = attr_cql_type_map(resource)
+          QueryBuilder.build_where_clause(filters, uuid_fields, cql_types)
       end
 
     case where_result do
@@ -1030,7 +1034,13 @@ defmodule AshScylla.DataLayer do
         # Build aggregate queries for each aggregate
         results =
           Enum.reduce_while(aggregates, %{}, fn aggregate, acc ->
-            case build_aggregate_query(aggregate, sanitized_table, where_clause, resource, filters) do
+            case build_aggregate_query(
+                   aggregate,
+                   sanitized_table,
+                   where_clause,
+                   resource,
+                   filters
+                 ) do
               {:error, reason} ->
                 {:halt, {:error, reason}}
 
@@ -1378,9 +1388,14 @@ defmodule AshScylla.DataLayer do
         typed_value =
           cond do
             field_name in uuid_fields and is_binary(value) ->
-              # UUID PK: pass the string through; connection.ex will encode it as
-              # a uuid-typed param. Gated on the declared attribute type only.
-              value
+              # UUID PK: convert the string to its 16-byte binary and tag it as
+              # {"uuid", bin} so Xandra marshals it as a uuid-typed parameter.
+              # A bare binary would otherwise be inferred as text/blob and
+              # rejected by ScyllaDB with "Validation failed for uuid".
+              case Types.uuid_string_to_binary(value) do
+                {:ok, bin} -> {"uuid", bin}
+                _ -> {"uuid", value}
+              end
 
             field_name in atom_fields and is_atom(value) ->
               Atom.to_string(value)
@@ -2187,16 +2202,59 @@ defmodule AshScylla.DataLayer do
       resource
       |> Info.attributes()
       |> Enum.filter(fn attr ->
-        case attr.type do
-          Ash.Type.UUID -> true
-          :uuid -> true
-          _ -> false
-        end
+        # Detect any UUID-family attribute. We resolve the attribute's declared
+        # type to its short name and check whether it contains "uuid". This
+        # catches :uuid, :uuid_v7 (used by uuid_v7_primary_key), Ash.Type.UUID,
+        # and any custom UUID type module (e.g. MyApp.UUIDv7, whose module name
+        # or storage_type resolves to a uuid-like name). Previously only
+        # Ash.Type.UUID and :uuid were recognized, so attributes declared as
+        # :uuid_v7 were missed and their 36-char string values were bound as
+        # text, causing "Validation failed for uuid - got 36 bytes".
+        #
+        # NOTE: we intentionally do NOT use resolve_attr_cql_type/1 here, because
+        # that maps unknown UUID variants (e.g. :uuid_v7) to "text", which would
+        # defeat detection.
+        type = attr.type
+        short = resolve_type_name(type)
+        # Check both the resolved short name and the raw type's string form so
+        # custom UUID modules (e.g. MyApp.UUIDv7) are also detected.
+        type_str = to_string(short)
+        raw_str = to_string(type)
+
+        (is_atom(short) and (type_str =~ "uuid" or raw_str =~ "uuid")) or
+          (is_binary(short) and short =~ "uuid")
       end)
       |> Enum.flat_map(fn attr -> [attr.name, to_string(attr.name)] end)
       |> MapSet.new()
     else
       %MapSet{}
+    end
+  end
+
+  # Resolves an Ash attribute type to its short name atom (e.g. :uuid_v7,
+  # :uuid, :string). Module types are resolved via storage_type/1 or the Ash
+  # type registry; plain atoms pass through.
+  @doc false
+  @spec resolve_type_name(atom()) :: atom()
+  defp resolve_type_name(type) when is_atom(type) do
+    cond do
+      # Already a plain atom (e.g. :uuid, :uuid_v7, :string) — pass through
+      not match?("Elixir." <> _, Atom.to_string(type)) ->
+        type
+
+      # Ash type module with storage_type/1 (e.g. Ash.Type.UUID -> :uuid)
+      function_exported?(type, :storage_type, 1) ->
+        case type.storage_type([]) do
+          storage_type when is_atom(storage_type) -> storage_type
+          _ -> type
+        end
+
+      # Fallback: try to find in Ash.Type.Registry by module
+      true ->
+        case Ash.Type.Registry.short_names() |> List.keyfind(type, 1) do
+          {short_name, _module} -> short_name
+          nil -> type
+        end
     end
   end
 
@@ -2310,6 +2368,7 @@ defmodule AshScylla.DataLayer do
 
   # Atom-based types
   def ash_type_to_cql(:uuid), do: "uuid"
+  def ash_type_to_cql(:uuid_v7), do: "uuid"
   def ash_type_to_cql(:integer), do: "bigint"
   def ash_type_to_cql(:float), do: "double"
   def ash_type_to_cql(:double), do: "double"

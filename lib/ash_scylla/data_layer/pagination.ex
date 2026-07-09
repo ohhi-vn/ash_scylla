@@ -74,6 +74,19 @@ defmodule AshScylla.DataLayer.Pagination do
   """
   @spec fetch_page(module(), String.t(), list(), page_token(), pos_integer()) :: page_result()
   def fetch_page(repo, table, filters, page_token, page_size \\ @default_page_size) do
+    fetch_page(repo, table, filters, page_token, page_size, %MapSet{}, %{})
+  end
+
+  @spec fetch_page(
+          module(),
+          String.t(),
+          list(),
+          page_token(),
+          pos_integer(),
+          MapSet.t(),
+          map()
+        ) :: page_result()
+  def fetch_page(repo, table, filters, page_token, page_size, uuid_fields, cql_types) do
     page_size = min(page_size, @max_page_size)
 
     Logger.debug(
@@ -81,7 +94,7 @@ defmodule AshScylla.DataLayer.Pagination do
         "has_token=#{not is_nil(page_token)}"
     )
 
-    case build_where_clause(filters) do
+    case build_where_clause(filters, uuid_fields, cql_types) do
       {:error, {:unknown_filter, unknown}} ->
         {:error,
          "Unable to translate filter expression to CQL: #{inspect(unknown)}. " <>
@@ -163,13 +176,22 @@ defmodule AshScylla.DataLayer.Pagination do
 
   When `page_token` is non-nil, adds a `token() > ?` condition to the WHERE clause.
   Returns `{query, params}` suitable for `repo.query/3`.
+
+  `uuid_fields` and `cql_types` are optional and, when provided, ensure UUID
+  filter values are converted to 16-byte binaries tagged as `{"uuid", bin}`
+  (otherwise ScyllaDB rejects them with "Validation failed for uuid - got N bytes").
   """
   @spec build_paginated_query(String.t(), list(), page_token(), pos_integer()) ::
           {:ok, {String.t(), list()}} | {:error, {:unknown_filter, term()}}
   def build_paginated_query(table, filters, page_token, page_size) do
+    build_paginated_query(table, filters, page_token, page_size, %MapSet{}, %{})
+  end
+
+  def build_paginated_query(table, filters, page_token, page_size, uuid_fields, cql_types)
+      when is_map(uuid_fields) or is_struct(uuid_fields, MapSet) do
     page_size = min(page_size, @max_page_size)
 
-    case build_where_clause(filters) do
+    case build_where_clause(filters, uuid_fields, cql_types) do
       {:error, _} = error ->
         error
 
@@ -284,6 +306,10 @@ defmodule AshScylla.DataLayer.Pagination do
   defp build_where_clause([]), do: {:ok, {"", []}}
 
   defp build_where_clause(filters) do
+    build_where_clause(filters, %MapSet{}, %{})
+  end
+
+  defp build_where_clause(filters, uuid_fields, cql_types) do
     filter_structs =
       Enum.map(filters, fn
         %{operator: _, left: _, right: _} = f ->
@@ -296,7 +322,7 @@ defmodule AshScylla.DataLayer.Pagination do
           %{operator: :eq, left: %{name: key}, right: %{value: value}}
       end)
 
-    QueryBuilder.build_where_clause(filter_structs, %MapSet{}, %{})
+    QueryBuilder.build_where_clause(filter_structs, uuid_fields, cql_types)
   end
 
   @spec normalize_record(term()) :: map()
