@@ -355,7 +355,7 @@ defmodule AshScylla.MigrationGenerator do
         |> Enum.map(fn attr ->
           %{
             "name" => attr.name |> to_string(),
-            "type" => attr.type |> to_string(),
+            "type" => inspect(attr.type),
             "source" => (attr.source || attr.name) |> to_string(),
             "primary_key?" => attr.primary_key?,
             "allow_nil?" => attr.allow_nil?
