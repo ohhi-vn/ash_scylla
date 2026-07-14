@@ -222,14 +222,32 @@ defmodule AshScylla.DataLayer.SchemaMigration do
       {:ok, result} ->
         columns =
           result
-          |> Map.get(:rows, [])
+          |> Map.get(:content, [])
           |> Enum.map(fn row ->
+            # Xandra returns rows as lists; map them to column-name-keyed maps
+            # using the result's column metadata.
+            row_map =
+              case Map.get(result, :columns) do
+                nil ->
+                  row
+
+                cols when is_list(cols) ->
+                  cols
+                  |> Enum.map(fn
+                    {_ks, _tbl, name, _type} -> name
+                    {_ks, _tbl, name} -> name
+                    name when is_binary(name) -> name
+                  end)
+                  |> Enum.zip(row)
+                  |> Map.new()
+              end
+
             %{
-              name: row["column_name"],
-              type: row["type"],
-              kind: row["kind"],
-              position: row["position"],
-              clustering_order: row["clustering_order"]
+              name: row_map["column_name"],
+              type: row_map["type"],
+              kind: row_map["kind"],
+              position: row_map["position"],
+              clustering_order: row_map["clustering_order"]
             }
           end)
 
@@ -255,9 +273,26 @@ defmodule AshScylla.DataLayer.SchemaMigration do
 
     case repo.query(query, [keyspace, table_name], consistency: :quorum) do
       {:ok, result} ->
+        cols = Map.get(result, :columns) || []
+
+        col_names =
+          if cols == [] do
+            []
+          else
+            Enum.map(cols, fn
+              {_ks, _tbl, name, _type} -> name
+              {_ks, _tbl, name} -> name
+              name when is_binary(name) -> name
+            end)
+          end
+
         indexes =
           result
-          |> Map.get(:rows, [])
+          |> Map.get(:content, [])
+          |> Enum.map(fn
+            row when is_map(row) -> row
+            row when is_list(row) -> Enum.zip(col_names, row) |> Map.new()
+          end)
           |> Enum.map(fn row ->
             %{
               index_name: row["index_name"],
@@ -292,9 +327,26 @@ defmodule AshScylla.DataLayer.SchemaMigration do
 
     case repo.query(query, [keyspace], consistency: :quorum) do
       {:ok, result} ->
+        cols = Map.get(result, :columns) || []
+
+        col_names =
+          if cols == [] do
+            []
+          else
+            Enum.map(cols, fn
+              {_ks, _tbl, name, _type} -> name
+              {_ks, _tbl, name} -> name
+              name when is_binary(name) -> name
+            end)
+          end
+
         views =
           result
-          |> Map.get(:rows, [])
+          |> Map.get(:content, [])
+          |> Enum.map(fn
+            row when is_map(row) -> row
+            row when is_list(row) -> Enum.zip(col_names, row) |> Map.new()
+          end)
           |> Enum.filter(fn row -> row["base_table_name"] == table_name end)
           |> Enum.map(fn row ->
             %{
@@ -357,13 +409,20 @@ defmodule AshScylla.DataLayer.SchemaMigration do
   @spec generate_add_columns(module(), [atom()]) :: [String.t()]
   def generate_add_columns(resource, columns) do
     table_name = SchemaUtils.get_table_name(resource)
-    ks = AshScylla.Migration.keyspace(resource)
+    keyspace = Migration.keyspace(resource)
 
+    # Qualify the table with the configured keyspace when present so generated
+    # DDL is unambiguous even when the connection's `USE keyspace` context is
+    # lost (e.g. across separate migration statements). Falls back to an
+    # unqualified table name when no keyspace is configured.
     qualified_table_name =
-      if ks,
-        do:
-          "#{AshScylla.Identifier.quote_name(ks)}.#{AshScylla.Identifier.quote_name(table_name)}",
-        else: AshScylla.Identifier.quote_name(table_name)
+      case keyspace do
+        nil ->
+          AshScylla.Identifier.quote_name(table_name)
+
+        ks ->
+          "#{AshScylla.Identifier.quote_name(ks)}.#{AshScylla.Identifier.quote_name(table_name)}"
+      end
 
     attributes =
       resource
@@ -396,7 +455,6 @@ defmodule AshScylla.DataLayer.SchemaMigration do
     table_name = SchemaUtils.get_table_name(resource)
     resource_indexes = Dsl.secondary_indexes(resource)
     unindexable = SchemaUtils.unindexable_columns(resource)
-    ks = AshScylla.Migration.keyspace(resource)
 
     existing_index_names =
       live_indexes
@@ -416,11 +474,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
       # ScyllaDB OSS doesn't support multi-column secondary indexes.
       # Generate a separate single-column index per column.
       # Skip the sole partition key column — already indexed by the partitioner.
-      qualified =
-        if ks,
-          do:
-            "#{AshScylla.Identifier.quote_name(ks)}.#{AshScylla.Identifier.quote_name(table_name)}",
-          else: AshScylla.Identifier.quote_name(table_name)
+      qualified = AshScylla.Identifier.quote_name(table_name)
 
       idx.columns
       |> Enum.reject(fn col -> col in unindexable end)
@@ -437,20 +491,15 @@ defmodule AshScylla.DataLayer.SchemaMigration do
     end)
   end
 
-  @doc """
-  Generates CREATE MATERIALIZED VIEW statements for new views.
-  """
   @spec generate_new_views(module(), [map()]) :: [String.t()]
-  def generate_new_views(resource, live_views) do
+  defp generate_new_views(resource, live_views) do
     table_name = SchemaUtils.get_table_name(resource)
     resource_views = Dsl.materialized_views(resource)
 
     existing_view_names =
       live_views
-      |> Enum.map(fn v -> v.view_name end)
+      |> Enum.map(fn view -> view.view_name end)
       |> MapSet.new()
-
-    ks = AshScylla.Migration.keyspace(resource)
 
     resource_views
     |> Enum.filter(fn view_config ->
@@ -459,8 +508,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
     end)
     |> Enum.map(fn view_config ->
       view_name = view_config[:name]
-      config = Keyword.put(view_config[:config] || [], :keyspace, ks)
-      MaterializedView.create_view_cql(view_name, table_name, config)
+      MaterializedView.create_view_cql(view_name, table_name, view_config[:config] || [])
     end)
   end
 
@@ -472,14 +520,12 @@ defmodule AshScylla.DataLayer.SchemaMigration do
   @spec generate_views(module()) :: [String.t()]
   defp generate_views(resource) do
     table_name = SchemaUtils.get_table_name(resource)
-    ks = AshScylla.Migration.keyspace(resource)
     views = Dsl.materialized_views(resource)
 
     views
     |> Enum.map(fn view_config ->
       view_name = view_config[:name]
-      config = Keyword.put(view_config[:config] || [], :keyspace, ks)
-      MaterializedView.create_view_cql(view_name, table_name, config)
+      MaterializedView.create_view_cql(view_name, table_name, view_config[:config] || [])
     end)
   end
 end

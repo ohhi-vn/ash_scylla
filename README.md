@@ -291,16 +291,24 @@ mix ash_scylla.setup                        # Create keyspace
 mix ash_scylla.migrate                      # Run all migrations
 mix ash_scylla.migrate --schemas-only       # Run only schema files
 mix ash_scylla.migrate --resource MyApp.User # Run migrations for one resource
-mix ash_scylla.gen --dev                    # Generate schema migration from DSL
 
 # ── Schema Generation ────────────────────────────────────────────────────────
 mix ash_scylla.generate_migrations           # Generate CQL from Ash resource DSL
 
 # ── Ash Extension Callbacks ──────────────────────────────────────────────────
-mix ash.install AshScylla --resource MyApp.User  # Install for a resource
-mix ash.reset AshScylla                           # Reset database
-mix ash.rollback AshScylla --version 20240101     # Rollback (logs warning)
-mix ash.tear_down AshScylla                       # Drop keyspace
+# AshScylla.DataLayer doubles as the Ash extension, so the standard Ash tasks
+# discover it automatically (no manual `extensions:` wiring required):
+mix ash.codegen --dev                       # Generate migrations (via AshScylla.DataLayer)
+mix ash.migrate                             # Run migrations
+mix ash.setup                                # Create keyspace + run migrations
+mix ash.reset                                # Reset database
+mix ash.rollback --version 20240101          # Rollback (logs warning)
+mix ash.tear_down                           # Drop keyspace
+
+# If your Ash version does not auto-discover the data layer as an extension,
+# add it manually to your domain:
+#
+#     use Ash.Domain, otp_app: :my_app, extensions: [AshScylla.Extension]
 ```
 
 ---

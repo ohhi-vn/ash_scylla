@@ -7,6 +7,27 @@ defmodule AshScylla.TelemetryTest do
 
   alias AshScylla.Telemetry
 
+  # Module-captured telemetry handlers (avoid the "local function" warning).
+  def handle_start(event, measurements, metadata, _config) do
+    send(self(), {:start_event, event, measurements, metadata})
+  end
+
+  def handle_stop(event, measurements, metadata, _config) do
+    send(self(), {:stop_event, event, measurements, metadata})
+  end
+
+  def handle_exception(event, measurements, metadata, _config) do
+    send(self(), {:exception_event, event, measurements, metadata})
+  end
+
+  def handle_batch_start(event, measurements, metadata, _config) do
+    send(self(), {:batch_start, event, measurements, metadata})
+  end
+
+  def handle_batch_stop(event, measurements, metadata, _config) do
+    send(self(), {:batch_stop, event, measurements, metadata})
+  end
+
   # ---------------------------------------------------------------------------
   # span/4
   # ---------------------------------------------------------------------------
@@ -23,23 +44,17 @@ defmodule AshScylla.TelemetryTest do
     end
 
     test "emits start and stop telemetry events on success" do
-      test_pid = self()
-
       :telemetry.attach(
         "test-span-success",
         [:ash_scylla, :query, :start],
-        fn event, measurements, metadata, _config ->
-          send(test_pid, {:start_event, event, measurements, metadata})
-        end,
+        &__MODULE__.handle_start/4,
         nil
       )
 
       :telemetry.attach(
         "test-span-stop",
         [:ash_scylla, :query, :stop],
-        fn event, measurements, metadata, _config ->
-          send(test_pid, {:stop_event, event, measurements, metadata})
-        end,
+        &__MODULE__.handle_stop/4,
         nil
       )
 
@@ -59,14 +74,10 @@ defmodule AshScylla.TelemetryTest do
     end
 
     test "emits exception event when function raises" do
-      test_pid = self()
-
       :telemetry.attach(
         "test-span-exception",
         [:ash_scylla, :query, :exception],
-        fn event, measurements, metadata, _config ->
-          send(test_pid, {:exception_event, event, measurements, metadata})
-        end,
+        &__MODULE__.handle_exception/4,
         nil
       )
 
@@ -108,23 +119,17 @@ defmodule AshScylla.TelemetryTest do
     end
 
     test "emits batch start and stop telemetry events" do
-      test_pid = self()
-
       :telemetry.attach(
         "test-batch-start",
         [:ash_scylla, :batch, :start],
-        fn event, measurements, metadata, _config ->
-          send(test_pid, {:batch_start, event, measurements, metadata})
-        end,
+        &__MODULE__.handle_batch_start/4,
         nil
       )
 
       :telemetry.attach(
         "test-batch-stop",
         [:ash_scylla, :batch, :stop],
-        fn event, measurements, metadata, _config ->
-          send(test_pid, {:batch_stop, event, measurements, metadata})
-        end,
+        &__MODULE__.handle_batch_stop/4,
         nil
       )
 

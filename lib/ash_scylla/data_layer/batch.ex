@@ -122,6 +122,9 @@ defmodule AshScylla.DataLayer.Batch do
     # Chunk statements into safe batch sizes to avoid exceeding ScyllaDB thresholds
     chunked_statements = Enum.chunk_every(statements, max_per_batch)
 
+    resource = Keyword.get(opts, :resource)
+    pk_columns = partition_key_columns(resource)
+
     # Execute each chunk in parallel, collecting results or stopping on first error
     results =
       chunked_statements
@@ -129,7 +132,7 @@ defmodule AshScylla.DataLayer.Batch do
         fn chunk ->
           grouped =
             Enum.group_by(chunk, fn {_query, params} ->
-              partition_key_hash(params)
+              partition_key_hash(params, pk_columns)
             end)
 
           # Execute each partition group within this chunk, stop on first error
@@ -175,7 +178,7 @@ defmodule AshScylla.DataLayer.Batch do
 
   ## Examples
 
-      statements = [{"INSERT INTO users (id) VALUES (?)", [i}] <- 1..2000]
+      statements = [{"INSERT INTO users (id) VALUES (?)", [i]} | 1..2000]
       chunks = AshScylla.DataLayer.Batch.chunk_batch(statements)
       # => 4 chunks of 500 statements each
   """
@@ -193,11 +196,21 @@ defmodule AshScylla.DataLayer.Batch do
   @spec default_max_statements_per_batch() :: pos_integer()
   def default_max_statements_per_batch, do: @default_max_statements_per_batch
 
-  @doc """
-  Extracts the partition key values from a record for a given resource.
+  # Returns the partition-key column names for a resource, or nil when the
+  # resource is not available (e.g. statements built without a `:resource` opt).
+  # Only the first primary-key attribute is the partition key in AshScylla's
+  # model (subsequent PK attributes are clustering keys).
+  @doc false
+  @spec partition_key_columns(module() | nil) :: [atom()] | nil
+  def partition_key_columns(nil), do: nil
 
-  Returns a map of partition key column names to their values.
-  """
+  def partition_key_columns(resource) do
+    case Info.primary_key(resource) do
+      [] -> nil
+      [first_pk | _] -> [first_pk]
+    end
+  end
+
   @spec partition_key(map(), module()) :: map()
   def partition_key(record, resource) do
     resource
@@ -258,13 +271,27 @@ defmodule AshScylla.DataLayer.Batch do
     end)
   end
 
-  @spec partition_key_hash(list()) :: non_neg_integer()
-  defp partition_key_hash(params) do
-    # Simple hash-based grouping for partition-aware batching
-    # Uses the first parameter (typically the partition key value)
+  @spec partition_key_hash(list(), [atom()] | nil) :: non_neg_integer()
+  def partition_key_hash(params, nil) do
+    # No resource/partition-key info available — fall back to hashing the first
+    # bound parameter (best-effort grouping).
     case params do
       [first | _] -> :erlang.phash2(first)
       [] -> 0
+    end
+  end
+
+  def partition_key_hash(params, pk_columns) when is_list(pk_columns) do
+    # Hash the bound parameters that correspond to the resource's partition key
+    # columns. The insert statement's positional parameters follow the resource
+    # attributes map iteration order (primary key columns first), so the first
+    # `length(pk_columns)` params are the partition key values. We hash the
+    # values themselves (not a list) so the grouping key is stable and matches
+    # the per-partition intent.
+    case Enum.take(params, length(pk_columns)) do
+      [] -> 0
+      [pk] -> :erlang.phash2(pk)
+      pks -> :erlang.phash2(pks)
     end
   end
 end

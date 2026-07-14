@@ -55,11 +55,23 @@ defmodule AshScylla.PagingStateIntegrationTest do
     end
   end
 
+  defp ensure_keyspace(conn) do
+    Xandra.execute!(
+      conn,
+      "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test " <>
+        "WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}"
+    )
+  end
+
   setup do
     if direct_connect?() do
       case connect() do
-        {:ok, conn} -> %{conn: conn}
-        {:error, _} -> %{conn: nil}
+        {:ok, conn} ->
+          ensure_keyspace(conn)
+          %{conn: conn}
+
+        {:error, _} ->
+          %{conn: nil}
       end
     else
       %{conn: nil}

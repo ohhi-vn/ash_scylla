@@ -67,10 +67,14 @@ defmodule AshScylla.Migration do
     table_name = get_table_name(resource)
     keyspace = keyspace(resource)
 
+    # Qualify the table with the configured keyspace when present so generated
+    # DDL is unambiguous even when the connection's `USE keyspace` context is
+    # lost (e.g. across separate migration statements).
     qualified_table_name =
-      if keyspace,
-        do: "#{quote_name(keyspace)}.#{quote_name(table_name)}",
-        else: quote_name(table_name)
+      case keyspace do
+        nil -> quote_name(table_name)
+        ks -> "#{quote_name(ks)}.#{quote_name(table_name)}"
+      end
 
     all_attributes = Ash.Resource.Info.attributes(resource)
 
@@ -191,13 +195,15 @@ defmodule AshScylla.Migration do
         table_name = get_table_name(resource)
         unindexable = unindexable_columns(resource)
 
-        ks = keyspace(resource)
-
         indexes
         |> Enum.flat_map(fn idx ->
           # ScyllaDB OSS doesn't support multi-column secondary indexes.
           # Generate a separate single-column index per column.
           # Skip the sole partition key column — already indexed by the partitioner.
+          # The table reference is unqualified; the keyspace context is applied
+          # by the connection (via `USE keyspace`) at execution time.
+          qualified = quote_name(table_name)
+
           idx.columns
           |> Enum.reject(fn col -> col in unindexable end)
           |> Enum.map(fn col ->
@@ -207,11 +213,6 @@ defmodule AshScylla.Migration do
               else
                 "idx_#{table_name}_#{col}"
               end
-
-            qualified =
-              if ks,
-                do: "#{quote_name(ks)}.#{quote_name(table_name)}",
-                else: quote_name(table_name)
 
             "CREATE INDEX IF NOT EXISTS #{index_name} ON #{qualified} (#{AshScylla.Identifier.quote_name(col)})"
           end)

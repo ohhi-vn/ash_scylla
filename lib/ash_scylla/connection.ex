@@ -161,7 +161,11 @@ defmodule AshScylla.Connection do
         # still attempt the actual statement. Statements like CREATE KEYSPACE
         # don't require keyspace context; if the statement itself needs a
         # keyspace, it will fail with its own descriptive error.
-        case execute_module(cluster?).execute(conn, "USE #{keyspace}", []) do
+        case execute_module(cluster?).execute(
+               conn,
+               "USE #{AshScylla.Identifier.quote_name(keyspace)}",
+               []
+             ) do
           {:ok, _} ->
             execute_module(cluster?).execute(conn, query, typed_params(params), opts)
 
@@ -222,6 +226,7 @@ defmodule AshScylla.Connection do
   def typed_params(params), do: params
 
   defp type_value({type_str, _value} = typed) when is_binary(type_str), do: typed
+  defp type_value(%MapSet{} = value), do: {"set<text>", value}
   defp type_value(%_{} = struct), do: type_struct(struct)
   defp type_value(value) when is_binary(value), do: {"text", value}
 
@@ -230,7 +235,6 @@ defmodule AshScylla.Connection do
   defp type_value(true), do: {"boolean", true}
   defp type_value(false), do: {"boolean", false}
   defp type_value(nil), do: nil
-  defp type_value(%MapSet{} = value), do: {"set<text>", value}
   defp type_value(value) when is_list(value), do: {"list<text>", value}
   defp type_value(value) when is_map(value), do: {"map<text, text>", value}
   defp type_value(value), do: {"text", to_string(value)}
@@ -253,7 +257,11 @@ defmodule AshScylla.Connection do
       {keyspace, opts} ->
         validate_keyspace!(keyspace)
 
-        case execute_module(cluster?).execute(conn, "USE #{keyspace}", []) do
+        case execute_module(cluster?).execute(
+               conn,
+               "USE #{AshScylla.Identifier.quote_name(keyspace)}",
+               []
+             ) do
           {:ok, _} ->
             execute_module(cluster?).execute!(conn, query, typed_params(params), opts)
 
@@ -364,6 +372,29 @@ defmodule AshScylla.Connection do
   @spec set_keyspace(atom(), String.t()) :: {:ok, :set} | {:error, term()}
   def set_keyspace(name, keyspace) when is_atom(name) do
     GenServer.call(name, {:set_keyspace, keyspace}, 5_000)
+  end
+
+  @doc """
+  Releases the keyspace session binding for a named connection.
+
+  Switches the connection's default keyspace to `system` so that the next
+  DROP KEYSPACE is not blocked by an active `USE <keyspace>` session on this
+  connection. ScyllaDB defers/blocks the drop while another connection holds
+  a session on that keyspace. Returns `:ok` if there was no active session
+  or the release succeeded, `{:error, reason}` otherwise.
+  """
+  @spec release_session(atom()) :: :ok | {:error, term()}
+  def release_session(name) when is_atom(name) do
+    case get_conn(name) do
+      nil ->
+        :ok
+
+      %__MODULE__{keyspace_used: false} ->
+        :ok
+
+      %__MODULE__{} ->
+        GenServer.call(name, :release_keyspace, 5_000)
+    end
   end
 
   @doc """
@@ -498,7 +529,11 @@ defmodule AshScylla.Connection do
                 false
             end
 
-            case execute_module(cluster?).execute(conn, "USE #{keyspace}", []) do
+            case execute_module(cluster?).execute(
+                   conn,
+                   "USE #{AshScylla.Identifier.quote_name(keyspace)}",
+                   []
+                 ) do
               {:ok, _} ->
                 Logger.info(
                   "AshScylla: Connected to ScyllaDB at #{inspect(nodes)}, keyspace: #{keyspace}"
@@ -542,6 +577,36 @@ defmodule AshScylla.Connection do
   end
 
   @impl GenServer
+  def handle_call(:release_keyspace, _from, %__MODULE__{keyspace: nil} = state) do
+    {:reply, :ok, state}
+  end
+
+  @impl GenServer
+  def handle_call(
+        :release_keyspace,
+        _from,
+        %__MODULE__{conn: conn, keyspace: keyspace, cluster?: cluster?} = state
+      ) do
+    # Switch to the system keyspace to release the current keyspace binding,
+    # so that a subsequent DROP KEYSPACE is not blocked by this connection's
+    # active USE <keyspace> session.
+    case execute_module(cluster?).execute(
+           conn,
+           "USE system",
+           []
+         ) do
+      {:ok, _} ->
+        Logger.info("AshScylla: Released keyspace '#{keyspace}' (switched to system)")
+        {:reply, :ok, %{state | keyspace_used: false}}
+
+      {:error, reason} ->
+        Logger.warning("AshScylla: Failed to release keyspace '#{keyspace}': #{inspect(reason)}")
+
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  @impl GenServer
   def handle_call(:ensure_keyspace, _from, %__MODULE__{keyspace: nil} = state) do
     {:reply, {:error, :no_keyspace_configured}, state}
   end
@@ -559,7 +624,11 @@ defmodule AshScylla.Connection do
         {:reply, {:error, :invalid_keyspace}, state}
     end
 
-    case execute_module(cluster?).execute(conn, "USE #{keyspace}", []) do
+    case execute_module(cluster?).execute(
+           conn,
+           "USE #{AshScylla.Identifier.quote_name(keyspace)}",
+           []
+         ) do
       {:ok, _} ->
         Logger.info("AshScylla: Keyspace '#{keyspace}' is now active")
         {:reply, {:ok, :set}, %{state | keyspace_used: true}}
@@ -606,6 +675,24 @@ defmodule AshScylla.Connection do
   @doc false
   def stop_module(true), do: Xandra.Cluster
   def stop_module(_), do: Xandra
+
+  @impl GenServer
+  def terminate(_reason, %__MODULE__{conn: conn, cluster?: cluster?}) do
+    # Ensure the underlying Xandra connection is actually closed so any active
+    # `USE <keyspace>` session is released. ScyllaDB defers/blocks DROP KEYSPACE
+    # while another connection holds a session on that keyspace, so leaving the
+    # socket open (e.g. on an async GenServer stop) can prevent a subsequent
+    # drop from taking effect.
+    try do
+      stop_module(cluster?).stop(conn)
+    rescue
+      _ -> :ok
+    catch
+      _, _ -> :ok
+    end
+
+    :ok
+  end
 
   # Parses a node string like "127.0.0.1:9042" or "host:port" into {host, port}.
   # Returns {host, nil} if no port is specified.

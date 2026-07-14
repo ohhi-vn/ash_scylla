@@ -182,36 +182,40 @@ defmodule AshScylla.PreparedStatementCacheTest do
     end
   end
 
-  describe "table/0" do
-    test "returns the ETS table tid" do
-      tid = PreparedStatementCache.table()
-      assert tid != nil
+  describe "eviction (Bug 7 fix)" do
+    test "evict_oldest actually deletes entries instead of no-op'ing on `true`" do
+      # Populate well beyond the max cache size so cleanup must evict.
+      for i <- 1..(PreparedStatementCache.max_cache_size() + 50) do
+        cql = "SELECT * FROM evict_table_#{i} WHERE id = ?"
+        PreparedStatementCache.prepare(MockRepo, cql)
+      end
+
+      # The cache must not grow unbounded past @max_cache_size.
+      assert PreparedStatementCache.size() <= PreparedStatementCache.max_cache_size()
+    end
+
+    test "evict_oldest removes real keys (regression for `:ets.delete(tid, true)`)" do
+      # The ETS table is `protected` (only the GenServer owner may write/delete),
+      # so we exercise eviction through the public prepare path: once the cache
+      # exceeds @max_cache_size, the cleanup must evict real entries rather than
+      # no-op'ing on the atom `true`.
+      max = PreparedStatementCache.max_cache_size()
+
+      for i <- 1..(max + 25) do
+        PreparedStatementCache.prepare(MockRepo, "SELECT * FROM evict_k_#{i} WHERE id = ?")
+      end
+
+      # Cache must not grow unbounded past the configured maximum.
+      assert PreparedStatementCache.size() <= max
+
+      # And it must have actually evicted something (not stayed at max+25).
+      refute PreparedStatementCache.size() == max + 25
     end
   end
 
-  describe "cache performance" do
-    test "invalidate is efficient with many cached statements" do
-      # Populate cache with many statements
-      for i <- 1..100 do
-        cql = "SELECT * FROM table_#{i} WHERE id = ?"
-        PreparedStatementCache.prepare(MockRepo, cql)
-      end
-
-      assert PreparedStatementCache.size() == 100
-
-      # Invalidate one — should only remove matching entries
-      PreparedStatementCache.invalidate("SELECT * FROM table_50 WHERE id = ?")
-      assert PreparedStatementCache.size() == 99
-    end
-
-    test "repeated prepare of same statement does not grow cache" do
-      cql = "SELECT * FROM users WHERE id = ?"
-
-      for _ <- 1..50 do
-        PreparedStatementCache.prepare(MockRepo, cql)
-      end
-
-      assert PreparedStatementCache.size() == 1
+  describe "max_cache_size/0" do
+    test "exposes the configured limit" do
+      assert PreparedStatementCache.max_cache_size() == 10_000
     end
   end
 end

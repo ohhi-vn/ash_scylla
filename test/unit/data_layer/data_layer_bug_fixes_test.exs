@@ -147,10 +147,12 @@ defmodule AshScylla.DataLayer.BugFixesTest do
           {:ok,
            %Xandra.Page{
              content: [
-               [uuid_bin("550e8400-e29b-41d4-a716-446655440001"),
-                uuid_bin("550e8400-e29b-41d4-a716-446655440099"),
-                uuid_bin("550e8400-e29b-41d4-a716-446655440098"),
-                10.5]
+               [
+                 uuid_bin("550e8400-e29b-41d4-a716-446655440001"),
+                 uuid_bin("550e8400-e29b-41d4-a716-446655440099"),
+                 uuid_bin("550e8400-e29b-41d4-a716-446655440098"),
+                 10.5
+               ]
              ],
              columns: ["id", "game_id", "user_id", "speed"]
            }}
@@ -160,10 +162,12 @@ defmodule AshScylla.DataLayer.BugFixesTest do
           {:ok,
            %Xandra.Page{
              content: [
-               [uuid_bin("550e8400-e29b-41d4-a716-446655440001"),
-                uuid_bin("550e8400-e29b-41d4-a716-446655440099"),
-                uuid_bin("550e8400-e29b-41d4-a716-446655440098"),
-                false]
+               [
+                 uuid_bin("550e8400-e29b-41d4-a716-446655440001"),
+                 uuid_bin("550e8400-e29b-41d4-a716-446655440099"),
+                 uuid_bin("550e8400-e29b-41d4-a716-446655440098"),
+                 false
+               ]
              ],
              columns: ["id", "from_user_id", "to_user_id", "deleted"]
            }}
@@ -911,8 +915,9 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       assert_receive {:ash_scylla_query, "INSERT INTO" <> _, params, _opts}
       # FakeRepo unwraps {type, value} tuples, so we assert the UUID values are
       # 16-byte binaries (converted from 36-char strings), not raw strings.
-      # Column order in the INSERT is alphabetical (deleted, from_user_id,
-      # id, to_user_id), so the params are: [id, deleted, from_user_id, to_user_id].
+      # Column order in the INSERT follows the changeset attribute order
+      # (id, deleted, from_user_id, to_user_id), so the params are:
+      # [id, deleted, from_user_id, to_user_id].
       assert [<<_::16-binary>>, false, <<_::16-binary>>, <<_::16-binary>>] = params
     end
 
@@ -949,8 +954,16 @@ defmodule AshScylla.DataLayer.BugFixesTest do
         repo: FakeRepo,
         table: "test_ks.uuid_v7_items",
         filters: [
-          %{operator: :eq, left: %Ash.Query.Ref{attribute: %{name: :from_user_id}}, right: %{value: @game_id}},
-          %{operator: :eq, left: %Ash.Query.Ref{attribute: %{name: :to_user_id}}, right: %{value: @user_id}}
+          %{
+            operator: :eq,
+            left: %Ash.Query.Ref{attribute: %{name: :from_user_id}},
+            right: %{value: @game_id}
+          },
+          %{
+            operator: :eq,
+            left: %Ash.Query.Ref{attribute: %{name: :to_user_id}},
+            right: %{value: @user_id}
+          }
         ],
         sorts: [],
         limit: nil,

@@ -301,14 +301,6 @@ defmodule AshScylla.DataLayer.Pagination do
   @spec max_page_size() :: pos_integer()
   def max_page_size, do: @max_page_size
 
-  @spec build_where_clause(list()) ::
-          {:ok, {String.t(), list()}} | {:error, {:unknown_filter, term()}}
-  defp build_where_clause([]), do: {:ok, {"", []}}
-
-  defp build_where_clause(filters) do
-    build_where_clause(filters, %MapSet{}, %{})
-  end
-
   defp build_where_clause(filters, uuid_fields, cql_types) do
     filter_structs =
       Enum.map(filters, fn

@@ -3,9 +3,14 @@ import Config
 # This file contains configuration examples for AshScylla with connection pool tuning.
 # Copy the appropriate configuration to your app's config/config.exs
 
-# Register AshScylla as an Ash extension so that
-# `mix ash.codegen` and `mix ash.migrate` discover it.
-config :ash, extensions: [AshScylla.Extension]
+# AshScylla.DataLayer doubles as the Ash extension, so `mix ash.codegen` and
+# `mix ash.migrate` discover it automatically. If your Ash version does not
+# auto-discover the data layer as an extension, register it explicitly here:
+#
+#     config :ash, extensions: [AshScylla.Extension]
+
+# (No explicit registration is required for current Ash versions — the data
+# layer module is discovered via the Spark.Dsl.Extension behaviour.)
 
 # ============================================
 # Basic Development Configuration

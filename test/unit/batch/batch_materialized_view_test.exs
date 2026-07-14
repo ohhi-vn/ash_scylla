@@ -151,7 +151,7 @@ defmodule AshScylla.DataLayer.MaterializedViewTest do
           include_columns: [:name, :age]
         )
 
-      assert String.contains?(cql, "CREATE MATERIALIZED VIEW IF NOT EXISTS users_by_email")
+      assert String.contains?(cql, "CREATE MATERIALIZED VIEW IF NOT EXISTS \"users_by_email\"")
       assert String.contains?(cql, "AS SELECT \"email\", \"id\", \"name\", \"age\"")
       assert String.contains?(cql, "FROM \"users\"")
       assert String.contains?(cql, "WHERE \"email\" IS NOT NULL AND \"id\" IS NOT NULL")

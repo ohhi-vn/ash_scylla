@@ -28,6 +28,25 @@ defmodule AshScylla.WorkloadTest do
   alias AshScylla.PreparedStatementCache
   alias AshScylla.Telemetry
 
+  # Module-captured telemetry handlers (avoid the "local function" warning).
+  # The handler runs in the process that emits the event (the Task process),
+  # so we route messages back to the attaching process via the `config` arg.
+  def handle_stop(_event, measurements, metadata, dest) do
+    send(dest || self(), {:telemetry_stop, measurements, metadata})
+  end
+
+  def handle_batch_stop(_event, measurements, metadata, dest) do
+    send(dest || self(), {:batch_stop, measurements, metadata})
+  end
+
+  def handle_exception(_event, measurements, metadata, dest) do
+    send(dest || self(), {:exception_event, measurements, metadata})
+  end
+
+  def handle_e2e(_event, _measurements, metadata, dest) do
+    send(dest || self(), {:e2e_telemetry, metadata})
+  end
+
   # ---------------------------------------------------------------------------
   # Shared test fixtures
   # ---------------------------------------------------------------------------
@@ -373,15 +392,11 @@ defmodule AshScylla.WorkloadTest do
 
   describe "telemetry under concurrent spans" do
     test "emits correct events for 50 concurrent spans" do
-      test_pid = self()
-
       :telemetry.attach(
         "workload-test-stop",
         [:ash_scylla, :query, :stop],
-        fn _event, measurements, metadata, _config ->
-          send(test_pid, {:telemetry_stop, measurements, metadata})
-        end,
-        nil
+        &__MODULE__.handle_stop/4,
+        self()
       )
 
       tasks =
@@ -418,15 +433,11 @@ defmodule AshScylla.WorkloadTest do
     end
 
     test "concurrent batch spans emit correct events" do
-      test_pid = self()
-
       :telemetry.attach(
         "workload-batch-stop",
         [:ash_scylla, :batch, :stop],
-        fn _event, measurements, metadata, _config ->
-          send(test_pid, {:batch_stop, measurements, metadata})
-        end,
-        nil
+        &__MODULE__.handle_batch_stop/4,
+        self()
       )
 
       tasks =
@@ -455,15 +466,11 @@ defmodule AshScylla.WorkloadTest do
     end
 
     test "concurrent exception spans emit exception events" do
-      test_pid = self()
-
       :telemetry.attach(
         "workload-exception",
         [:ash_scylla, :query, :exception],
-        fn _event, measurements, metadata, _config ->
-          send(test_pid, {:exception_event, measurements, metadata})
-        end,
-        nil
+        &__MODULE__.handle_exception/4,
+        self()
       )
 
       tasks =
@@ -883,15 +890,11 @@ defmodule AshScylla.WorkloadTest do
 
   describe "end-to-end feature interaction" do
     test "full pipeline: validate -> build query -> emit telemetry" do
-      test_pid = self()
-
       :telemetry.attach(
         "e2e-stop",
         [:ash_scylla, :query, :stop],
-        fn _event, _measurements, metadata, _config ->
-          send(test_pid, {:e2e_telemetry, metadata})
-        end,
-        nil
+        &__MODULE__.handle_e2e/4,
+        self()
       )
 
       tasks =

@@ -101,13 +101,38 @@ defmodule AshScylla.MigrationGenerator do
                 diff: all_files
 
             opts.dry_run ->
-              Mix.shell().info(
-                all_files
-                |> Enum.sort_by(&elem(&1, 0))
-                |> Enum.map_join("\n\n", fn {file, contents} ->
-                  "#{file}\n#{contents}"
+              migration_files =
+                Enum.filter(all_files, fn {file, _contents} ->
+                  String.ends_with?(file, ".exs")
                 end)
-              )
+
+              snapshot_files =
+                Enum.filter(all_files, fn {file, _contents} ->
+                  String.ends_with?(file, ".json")
+                end)
+
+              if migration_files != [] do
+                Mix.shell().info(
+                  "Migrations generated for #{length(migration_files)} resource(s):"
+                )
+
+                Enum.each(migration_files, fn {file, contents} ->
+                  Mix.shell().info("""
+                  --- #{Path.basename(file)} ---
+                  #{String.replace(contents, "\n", "\n  ")}
+                  """)
+                end)
+              end
+
+              if snapshot_files != [] do
+                Mix.shell().info(
+                  "Resource snapshots generated for #{length(snapshot_files)} resource(s)."
+                )
+
+                Enum.each(snapshot_files, fn {file, _contents} ->
+                  Mix.shell().info("  Snapshot: #{file}")
+                end)
+              end
 
             true ->
               Enum.each(all_files, fn {file, contents} ->
@@ -180,6 +205,18 @@ defmodule AshScylla.MigrationGenerator do
     {managed_resources, _unmanaged_resources} =
       Enum.split_with(resources, &AshScylla.DataLayer.Dsl.migrate?/1)
 
+    # Warn when multiple resources resolve to the same table name, which would
+    # cause conflicting DDL (two CREATE TABLE statements for a single table).
+    managed_resources
+    |> Enum.group_by(&SchemaUtils.get_table_name/1)
+    |> Enum.filter(fn {_table, rs} -> length(rs) > 1 end)
+    |> Enum.each(fn {table, rs} ->
+      Mix.shell().info(
+        "Warning: multiple resources map to table #{table}: " <>
+          Enum.map_join(rs, ", ", &inspect/1)
+      )
+    end)
+
     # Get existing snapshots from disk
     existing_snapshots = load_existing_snapshots(snapshot_path, repo_name)
 
@@ -189,17 +226,13 @@ defmodule AshScylla.MigrationGenerator do
       |> Enum.reduce({[], []}, fn resource, {mig_acc, snap_acc} ->
         {operations, new_snapshot} = diff_resource(resource, existing_snapshots, repo)
 
-        resource_name =
-          resource
-          |> Module.split()
-          |> List.last()
-          |> Macro.underscore()
+        resource_key = resource_snapshot_key(resource)
 
         # Only write a new snapshot if there are actual changes or no previous snapshot existed.
         # This prevents re-generating snapshot files on every run when schema hasn't changed.
         snapshot_file =
-          if operations != [] || !Map.has_key?(existing_snapshots, new_snapshot["table"]) do
-            write_snapshot(snapshot_path, repo_name, resource_name, new_snapshot, opts)
+          if operations != [] || !Map.has_key?(existing_snapshots, resource_key) do
+            write_snapshot(snapshot_path, repo_name, resource_key, new_snapshot, opts)
           else
             # No changes - skip writing a new snapshot file
             nil
@@ -222,6 +255,15 @@ defmodule AshScylla.MigrationGenerator do
 
   # ── Snapshot Management ──────────────────────────────────────────────────
 
+  # Returns a unique key for a resource used to name and look up its snapshot
+  # file. Uses the full module path (e.g. "my_app.domain_a.user") so that two
+  # resources with the same short name in different domains do not collide.
+  defp resource_snapshot_key(resource) do
+    resource
+    |> Module.split()
+    |> Enum.map_join(".", &Macro.underscore/1)
+  end
+
   defp load_existing_snapshots(snapshot_path, repo_name) do
     snapshot_dir = Path.join(snapshot_path, repo_name)
 
@@ -233,7 +275,11 @@ defmodule AshScylla.MigrationGenerator do
         path = Path.join(snapshot_dir, file)
         json = File.read!(path)
         data = Jason.decode!(json)
-        {data["table"], data}
+
+        # Key by the full resource module path when present (unique across
+        # domains); fall back to the table name for snapshots written by older
+        # versions of this generator.
+        {data["resource"] || data["table"], data}
       end)
       |> Map.new()
     else
@@ -243,7 +289,10 @@ defmodule AshScylla.MigrationGenerator do
 
   defp write_snapshot(snapshot_path, repo_name, resource_name, snapshot_data, opts) do
     snapshot_dir = Path.join(snapshot_path, repo_name)
-    File.mkdir_p!(snapshot_dir)
+
+    if !opts.dry_run && !opts.check do
+      File.mkdir_p!(snapshot_dir)
+    end
 
     dev_suffix = if opts.dev, do: "_dev", else: ""
 
@@ -265,12 +314,24 @@ defmodule AshScylla.MigrationGenerator do
 
   defp diff_resource(resource, existing_snapshots, repo) do
     table_name = SchemaUtils.get_table_name(resource)
+    resource_key = resource_snapshot_key(resource)
     current_attrs = Ash.Resource.Info.attributes(resource)
     current_indexes = Dsl.secondary_indexes(resource)
 
-    # Find existing snapshot for this resource
+    # Find existing snapshot for this resource. Keyed by the full resource
+    # module path (unique across domains); fall back to the table name for
+    # snapshots written by older versions of this generator.
     existing =
-      case Map.get(existing_snapshots, table_name) do
+      case Map.get(existing_snapshots, resource_key) do
+        nil ->
+          Map.get(existing_snapshots, table_name)
+
+        snapshot ->
+          snapshot
+      end
+
+    existing =
+      case existing do
         nil ->
           nil
 
@@ -286,6 +347,7 @@ defmodule AshScylla.MigrationGenerator do
     operations = compute_operations(resource, existing, current_attrs, current_indexes, repo)
 
     new_snapshot = %{
+      "resource" => resource_key,
       "table" => table_name,
       "attributes" =>
         current_attrs
@@ -451,20 +513,51 @@ defmodule AshScylla.MigrationGenerator do
 
   defp generate_migration(resource, operations, migration_path, opts) do
     table_name = SchemaUtils.get_table_name(resource)
+    resource_key = resource_snapshot_key(resource)
 
     require_name!(opts)
 
     {migration_name, last_part} =
       if opts.name do
-        {"#{timestamp()}_#{opts.name}", opts.name}
+        # A fixed `--name` (e.g. `mix ash_scylla.generate_migrations new`) must
+        # still be made unique per resource, otherwise every generated file
+        # would share the same module name (AshScylla.Migrations.New) and
+        # collide at load time. Append the resource key and a per-run counter.
+        run_count =
+          Process.get(:ash_scylla_migration_run_count, 0)
+
+        Process.put(:ash_scylla_migration_run_count, run_count + 1)
+
+        safe_key = String.replace(resource_key, ".", "_")
+
+        {
+          "#{timestamp()}_#{opts.name}_#{safe_key}_#{run_count + 1}",
+          "#{Macro.camelize(opts.name)}_#{safe_key}_#{run_count + 1}"
+        }
       else
+        # Count existing migration files on disk, plus any generated earlier in
+        # this run (tracked in the process dictionary) so that multiple
+        # resources processed in a single invocation each get a distinct name.
         count =
           migration_path
           |> Path.join("*_migrate_*")
           |> Path.wildcard()
           |> length()
 
-        {"#{timestamp()}_migrate_resources#{count + 1}", "migrate_resources#{count + 1}"}
+        run_count =
+          Process.get(:ash_scylla_migration_run_count, 0)
+
+        Process.put(:ash_scylla_migration_run_count, run_count + 1)
+
+        # Sanitize the resource key (which may contain dots) into a single
+        # underscore-delimited token so the migration module name and file
+        # name stay valid and collision-free across domains.
+        safe_key = String.replace(resource_key, ".", "_")
+
+        {
+          "#{timestamp()}_migrate_#{safe_key}_#{count + run_count + 1}",
+          "migrate_#{safe_key}_#{count + run_count + 1}"
+        }
       end
 
     migration_file =
@@ -711,7 +804,7 @@ defmodule AshScylla.MigrationGenerator do
   # ── Formatting ───────────────────────────────────────────────────────────
 
   defp format(path, string, opts) do
-    if opts.format do
+    if opts.format && !opts.dry_run && !opts.check do
       {func, _} = Mix.Tasks.Format.formatter_for_file(path)
       func.(string)
     else

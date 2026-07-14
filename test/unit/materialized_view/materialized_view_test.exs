@@ -7,7 +7,7 @@ defmodule AshScylla.MaterializedViewTest do
     test "creates materialized view with simple primary key" do
       cql = MaterializedView.create_view_cql(:users_by_email, "users", primary_key: [:email])
 
-      assert cql =~ "CREATE MATERIALIZED VIEW IF NOT EXISTS users_by_email"
+      assert cql =~ ~s(CREATE MATERIALIZED VIEW IF NOT EXISTS "users_by_email")
       assert cql =~ ~s(AS SELECT "email")
       assert cql =~ ~s(FROM "users")
       assert cql =~ ~s(WHERE "email" IS NOT NULL)
@@ -18,7 +18,7 @@ defmodule AshScylla.MaterializedViewTest do
       cql =
         MaterializedView.create_view_cql(:users_by_email_id, "users", primary_key: [:email, :id])
 
-      assert cql =~ "CREATE MATERIALIZED VIEW IF NOT EXISTS users_by_email_id"
+      assert cql =~ ~s(CREATE MATERIALIZED VIEW IF NOT EXISTS "users_by_email_id")
       assert cql =~ "PRIMARY KEY ((\"email\"), \"id\")"
     end
 

@@ -163,5 +163,82 @@ defmodule AshScylla.SchemaLoaderTest do
 
       File.rm_rf!(tmp_dir)
     end
+
+    test "loads the same file repeatedly (multiple Ash extensions in one process)" do
+      # Regression: `mix ash.migrate` runs both AshScylla.DataLayer and
+      # AshScylla.Extension in the same process, so the same migration files
+      # are loaded twice. The loader must reuse the already-loaded module
+      # (read from the file's `defmodule`) instead of re-evaluating, which
+      # would emit "redefining module" warnings and fail to match the result.
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "ash_scylla_test_#{:erlang.unique_integer([:positive])}")
+
+      tmp_file = Path.join(tmp_dir, "reload_schema.ex")
+
+      File.mkdir_p!(tmp_dir)
+
+      File.write!(tmp_file, """
+      defmodule AshScylla.Migrations.ReloadSchema do
+        use AshScylla.Schema
+
+        @impl AshScylla.Schema
+        def change do
+          ["CREATE TABLE IF NOT EXISTS reload_test (id UUID PRIMARY KEY)"]
+        end
+      end
+      """)
+
+      assert {:ok, _} = AshScylla.SchemaLoader.load(tmp_file)
+      assert {:ok, _} = AshScylla.SchemaLoader.load(tmp_file)
+      assert {:ok, statements} = AshScylla.SchemaLoader.load(tmp_file)
+      assert hd(statements) =~ "reload_test"
+
+      File.rm_rf!(tmp_dir)
+    end
+
+    test "loads a file whose name differs from its module name (timestamp prefix)" do
+      # Regression: migration filenames carry a timestamp prefix that the
+      # module name does not (e.g. `20260714..._new_name_games_info_1.exs`
+      # defines `AshScylla.Migrations.NewNameGamesInfo1`). The loader must read
+      # the module from the source, not reconstruct it from the filename.
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "ash_scylla_test_#{:erlang.unique_integer([:positive])}")
+
+      tmp_file = Path.join(tmp_dir, "20260714141054_new_name_games_info_1.exs")
+
+      File.mkdir_p!(tmp_dir)
+
+      File.write!(tmp_file, """
+      defmodule AshScylla.Migrations.NewNameGamesInfo1 do
+        use AshScylla.Schema
+
+        @impl AshScylla.Schema
+        def change do
+          ["CREATE TABLE IF NOT EXISTS games_info (id UUID PRIMARY KEY)"]
+        end
+      end
+      """)
+
+      assert {:ok, statements} = AshScylla.SchemaLoader.load(tmp_file)
+      assert hd(statements) =~ "games_info"
+
+      File.rm_rf!(tmp_dir)
+    end
+
+    test "returns error when file has no defmodule" do
+      # The loader extracts the module name from `defmodule X do`; a file
+      # without one cannot be loaded.
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "ash_scylla_test_#{:erlang.unique_integer([:positive])}")
+
+      tmp_file = Path.join(tmp_dir, "no_module.exs")
+
+      File.mkdir_p!(tmp_dir)
+      File.write!(tmp_file, "[\"CREATE TABLE\"]")
+
+      assert {:error, :no_module_found} = AshScylla.SchemaLoader.load(tmp_file)
+
+      File.rm_rf!(tmp_dir)
+    end
   end
 end

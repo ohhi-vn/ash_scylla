@@ -59,8 +59,19 @@ defmodule AshScylla.TtlExpirationIntegrationTest do
   setup do
     if direct_connect?() do
       case connect() do
-        {:ok, conn} -> %{conn: conn}
-        {:error, _} -> %{conn: nil}
+        {:ok, conn} ->
+          # Ensure the users table exists for the TTL tests.
+          Xandra.execute(conn, """
+            CREATE TABLE IF NOT EXISTS ash_scylla_test.users (
+              id UUID PRIMARY KEY,
+              name TEXT
+            )
+          """)
+
+          %{conn: conn}
+
+        {:error, _} ->
+          %{conn: nil}
       end
     else
       %{conn: nil}

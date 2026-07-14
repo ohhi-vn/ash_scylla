@@ -646,11 +646,15 @@ defmodule AshScylla.DataLayer.IntegrationTest do
 
       # Build IN filter via QueryBuilder and execute the generated CQL
       {cql, _params} =
-        QueryBuilder.filter_to_cql(%{
-          operator: :in,
-          left: %{name: :status},
-          right: %{value: ["active", "pending"]}
-        }, %MapSet{}, %{})
+        QueryBuilder.filter_to_cql(
+          %{
+            operator: :in,
+            left: %{name: :status},
+            right: %{value: ["active", "pending"]}
+          },
+          %MapSet{},
+          %{}
+        )
 
       full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
       result = xq(conn, full_cql, ["active", "pending"])
@@ -667,11 +671,15 @@ defmodule AshScylla.DataLayer.IntegrationTest do
       # OR across different columns: status = active OR value = 10
       # CQL does not support OR — this must raise
       assert_raise AshScylla.Error, ~r/CQL does not support OR/, fn ->
-        QueryBuilder.filter_to_cql(%{
-          op: :or,
-          left: %{operator: :eq, left: %{name: :status}, right: %{value: "active"}},
-          right: %{operator: :eq, left: %{name: :value}, right: %{value: 10}}
-        }, %MapSet{}, %{})
+        QueryBuilder.filter_to_cql(
+          %{
+            op: :or,
+            left: %{operator: :eq, left: %{name: :status}, right: %{value: "active"}},
+            right: %{operator: :eq, left: %{name: :value}, right: %{value: 10}}
+          },
+          %MapSet{},
+          %{}
+        )
       end
     end
 
@@ -953,11 +961,15 @@ defmodule AshScylla.DataLayer.IntegrationTest do
 
       # Build CONTAINS filter via QueryBuilder
       {cql, params} =
-        QueryBuilder.filter_to_cql(%{
-          operator: :has,
-          left: %{name: :tags},
-          right: %{value: "elixir"}
-        }, %MapSet{}, %{})
+        QueryBuilder.filter_to_cql(
+          %{
+            operator: :has,
+            left: %{name: :tags},
+            right: %{value: "elixir"}
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql == "tags CONTAINS ?"
       assert params == ["elixir"]
@@ -980,11 +992,15 @@ defmodule AshScylla.DataLayer.IntegrationTest do
       ])
 
       {cql, params} =
-        QueryBuilder.filter_to_cql(%{
-          operator: :has,
-          left: %{name: :tags},
-          right: %{value: "ruby"}
-        }, %MapSet{}, %{})
+        QueryBuilder.filter_to_cql(
+          %{
+            operator: :has,
+            left: %{name: :tags},
+            right: %{value: "ruby"}
+          },
+          %MapSet{},
+          %{}
+        )
 
       full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
       result = xq(conn, full_cql, ["ruby"])
@@ -1002,10 +1018,14 @@ defmodule AshScylla.DataLayer.IntegrationTest do
       ])
 
       {cql, params} =
-        QueryBuilder.filter_to_cql(%Ash.Query.Operator.Has{
-          left: %{name: :tags},
-          right: "rust"
-        }, %MapSet{}, %{})
+        QueryBuilder.filter_to_cql(
+          %Ash.Query.Operator.Has{
+            left: %{name: :tags},
+            right: "rust"
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql == "tags CONTAINS ?"
       full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
@@ -1026,10 +1046,14 @@ defmodule AshScylla.DataLayer.IntegrationTest do
       ])
 
       {cql, params} =
-        QueryBuilder.filter_to_cql(%Ash.Query.Operator.Overlaps{
-          left: %{name: :tags},
-          right: ["elixir"]
-        }, %MapSet{}, %{})
+        QueryBuilder.filter_to_cql(
+          %Ash.Query.Operator.Overlaps{
+            left: %{name: :tags},
+            right: ["elixir"]
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql == "tags CONTAINS ?"
       full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
@@ -1041,10 +1065,14 @@ defmodule AshScylla.DataLayer.IntegrationTest do
       if is_nil(conn), do: :ok
 
       assert_raise AshScylla.Error, ~r/CQL does not support OR/, fn ->
-        QueryBuilder.filter_to_cql(%Ash.Query.Operator.Overlaps{
-          left: %{name: :tags},
-          right: ["elixir", "rust"]
-        }, %MapSet{}, %{})
+        QueryBuilder.filter_to_cql(
+          %Ash.Query.Operator.Overlaps{
+            left: %{name: :tags},
+            right: ["elixir", "rust"]
+          },
+          %MapSet{},
+          %{}
+        )
       end
     end
 
@@ -1059,11 +1087,15 @@ defmodule AshScylla.DataLayer.IntegrationTest do
       ])
 
       # Single-value overlaps → CONTAINS
-      {cql, params} =
-        QueryBuilder.filter_to_cql(%Ash.Query.Operator.Overlaps{
-          left: %{name: :tags},
-          right: ["ruby"]
-        }, %MapSet{}, %{})
+      {cql, _params} =
+        QueryBuilder.filter_to_cql(
+          %Ash.Query.Operator.Overlaps{
+            left: %{name: :tags},
+            right: ["ruby"]
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql == "tags CONTAINS ?"
       full_cql = "SELECT * FROM ash_scylla_dl_test.items WHERE #{cql} ALLOW FILTERING"
@@ -1085,14 +1117,18 @@ defmodule AshScylla.DataLayer.IntegrationTest do
 
       # Simulate fragment("status = ?", "active") from Ash
       {cql, params} =
-        QueryBuilder.filter_to_cql(%{
-          __function__?: true,
-          name: :fragment,
-          arguments: [
-            {:raw, "status = "},
-            {:expr, "active"}
-          ]
-        }, %MapSet{}, %{})
+        QueryBuilder.filter_to_cql(
+          %{
+            __function__?: true,
+            name: :fragment,
+            arguments: [
+              {:raw, "status = "},
+              {:expr, "active"}
+            ]
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql == "status = ?"
       assert params == ["active"]
@@ -1108,24 +1144,32 @@ defmodule AshScylla.DataLayer.IntegrationTest do
       if is_nil(conn), do: :ok
       id = uid()
 
-      xq(conn, "INSERT INTO ash_scylla_dl_test.items (id, name, status, value) VALUES (?, ?, ?, ?)", [
-        id,
-        "Multi Fragment",
-        "active",
-        42
-      ])
+      xq(
+        conn,
+        "INSERT INTO ash_scylla_dl_test.items (id, name, status, value) VALUES (?, ?, ?, ?)",
+        [
+          id,
+          "Multi Fragment",
+          "active",
+          42
+        ]
+      )
 
       {cql, params} =
-        QueryBuilder.filter_to_cql(%{
-          __function__?: true,
-          name: :fragment,
-          arguments: [
-            {:raw, "status = "},
-            {:expr, "active"},
-            {:raw, " AND value = "},
-            {:expr, 42}
-          ]
-        }, %MapSet{}, %{})
+        QueryBuilder.filter_to_cql(
+          %{
+            __function__?: true,
+            name: :fragment,
+            arguments: [
+              {:raw, "status = "},
+              {:expr, "active"},
+              {:raw, " AND value = "},
+              {:expr, 42}
+            ]
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql == "status = ? AND value = ?"
       assert params == ["active", 42]

@@ -284,8 +284,11 @@ end
 ### 5. Generate Schema and Migrate
 
 ```bash
-# Generate schema migration from Ash DSL
-mix ash_scylla.gen --dev
+# Generate migration files from your Ash resources (writes .exs files)
+mix ash_scylla.generate_migrations --dev
+
+# Or use the standard Ash task (AshScylla.DataLayer is auto-discovered):
+mix ash.codegen --dev
 
 # Create the keyspace
 mix ash_scylla.setup

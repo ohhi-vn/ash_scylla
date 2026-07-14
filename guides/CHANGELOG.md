@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.5.0]
 
 ### Changed
 - **BREAKING**: Renamed DSL section from `ash_scylla do` to `scylla do` — matches other Ash data layers' naming convention
@@ -38,6 +38,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `run_aggregate_query/3` handles all five kinds with field support and `default_value` fallback
   - `attach_aggregates/5` attaches per-record aggregate values during `run_query/2`
 - Unit tests for aggregate support (48 tests in `test/unit/data_layer/data_layer_aggregate_test.exs`)
+
+### Fixed
+- **Schema migrations never saw the live schema** — `SchemaMigration.fetch_table_schema/2`,
+  `fetch_indexes/2`, and `fetch_materialized_views/2` now read `Xandra.Page.content`
+  instead of the non-existent `:rows` key, so `diff/2` correctly emits `ALTER TABLE ADD`
+  for new attributes on existing tables (previously it silently re-issued a no-op
+  `CREATE TABLE IF NOT EXISTS`).
+- **`qualified_table/1` crashed for reserved-word table names** (e.g. `order`, `set`,
+  `index`) — it now derives the raw, validated table name and quotes only CQL reserved
+  words via `QueryBuilder.cql_identifier/1`, matching `source/1`. Write paths no longer
+  raise `ArgumentError` for such resources.
+- **Writing a `MapSet`/`set<>` attribute crashed** — `Connection.type_value/1` now matches
+  `%MapSet{}` before the catch-all `%_{}` struct clause, so SET values are tagged as
+  `set<text>` instead of raising `Protocol.UndefinedError`.
+- **`Compression.table_compression_cql/2` crashed when options were passed** — dropped the
+  redundant second `Enum.map_join` that destructured already-rendered strings; `compression_clause/2`
+  inherits the fix.
+- **`materialized_view` DSL macro didn't match its documented two-argument form**
+  (`materialized_view :name, primary_key: [...], include_columns: [...]`) — added the
+  missing clause so the documented syntax compiles.
+- **Boolean `false` became `nil` after create/upsert/bulk_create** — `to_ash_record/3` now uses
+  `Map.fetch/2` instead of `||` so `false` is preserved.
+- **PreparedStatementCache eviction was a no-op** — the ETS match-spec now binds and returns
+  the real key (`:"$1"`) instead of the literal `true`, so `evict_oldest/2` actually deletes
+  entries and the cache no longer grows unbounded past `@max_cache_size`.
+- **`attach_aggregates/5` crashed on timed-out tasks** — now handles `{:exit, reason}` from
+  `Task.async_stream` (with `on_timeout: :kill_task`) and tolerates failures by falling back to
+  each aggregate's `default_value` instead of failing the whole read.
+- **`Batch.batch_insert_async/3` wasn't reliably partition-aware** — grouping now uses the
+  resource's real partition-key columns (via `partition_key_columns/1`) instead of assuming the
+  first bound parameter is the partition key.
+- **In-memory sort fallback sorted by the wrong key** — `maybe_apply_in_memory_sort/3` now
+  extracts the field from `{field, direction}` tuples (and `%{field: field}`), matching
+  `QueryBuilder.build_order_by/1`'s format, so the secondary-index-scan fallback sort works.
+- **Empty `IN ()` lists produced opaque ScyllaDB syntax errors** — `validate_filters/2` now calls
+  the previously-dead `validate_in_filters/2`, raising a clear error for empty IN lists (and IN
+  on non-queryable columns) before CQL generation.
+- **`Connection.query/4` interpolated keyspace without quoting** — `USE <keyspace>` now uses
+  `Identifier.quote_name/1` for consistency with other identifier handling.
+- **`Codegen.merge_codegen_meta/3` was O(n²)** — precomputes a `MapSet` of current keys instead
+  of calling `Map.keys/1` per element inside `Enum.reject/1`.
+- Added regression tests covering the above fixes in `test/unit/data_layer/data_layer_bug_fixes_2_test.exs`
+  and `test/unit/connection/prepared_statement_cache_test.exs`.
 
 ## [1.4.1]
 

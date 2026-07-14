@@ -190,6 +190,23 @@ defmodule AshScylla.MixHelpers do
   end
 
   @doc """
+  Returns the glob pattern used to discover generated migration files.
+
+  Migration files are written as `.exs` (matching Ecto's convention for
+  non-compiled migration files). Keeping this in one place means the writer
+  (`AshScylla.MigrationGenerator`) and every reader (`AshScylla.SchemaLoader`,
+  `Mix.Tasks.AshScylla.Migrate`, ...) agree on the extension.
+
+  ## Examples
+
+      iex> AshScylla.MixHelpers.migration_glob("priv/repo/migrations")
+      "priv/repo/migrations/**/*.exs"
+
+  """
+  @spec migration_glob(String.t()) :: String.t()
+  def migration_glob(base_path), do: Path.join(base_path, "**/*.exs")
+
+  @doc """
   Returns the list of lib/ directories to scan (current app + umbrella children).
   """
   @spec project_lib_paths() :: [String.t()]

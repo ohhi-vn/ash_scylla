@@ -33,12 +33,12 @@ defmodule AshScylla.SchemaLoader do
   @type loaded :: {:ok, module()} | {:error, term()}
 
   @doc """
-  Discovers all `.ex` files under `priv/<repo>/migrations` for the current project.
+  Discovers all `.exs` files under `priv/<repo>/migrations` for the current project.
   """
   @spec discover() :: [String.t()]
   def discover do
     apps = Mix.Project.apps_paths() || %{}
-    migrations_glob = Path.join("priv/repo/migrations", "**/*.ex")
+    migrations_glob = AshScylla.MixHelpers.migration_glob("priv/repo/migrations")
 
     for {_app, path} <- apps,
         file <- Path.wildcard(Path.join(path, migrations_glob)),
@@ -56,21 +56,63 @@ defmodule AshScylla.SchemaLoader do
   """
   @spec load(String.t()) :: {:ok, [String.t()]} | {:error, term()}
   def load(path) when is_binary(path) do
-    case Code.require_file(path) do
-      [{module, _}] when is_atom(module) ->
+    # The migration module name is embedded in the file as `defmodule X do`.
+    # Extract it from the source rather than reconstructing it from the filename
+    # (the filename carries a timestamp prefix that the module name does not),
+    # so we always target the module the file actually defines.
+    case module_from_source(path) do
+      {:ok, module} ->
+        load_module(module, path)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp load_module(module, path) do
+    case Code.ensure_loaded(module) do
+      {:module, ^module} ->
         if function_exported?(module, :change, 0) do
           {:ok, module.change() |> AshScylla.Schema.flatten()}
         else
           {:error, :no_change_function}
         end
 
-      [] ->
-        {:error, :no_module_loaded}
+      {:error, :nofile} ->
+        # Not yet loaded: require the file (defines the module once).
+        case Code.require_file(path) do
+          [{^module, _}] ->
+            if function_exported?(module, :change, 0) do
+              {:ok, module.change() |> AshScylla.Schema.flatten()}
+            else
+              {:error, :no_change_function}
+            end
 
-      other ->
-        {:error, other}
+          [] ->
+            {:error, :no_module_loaded}
+
+          other ->
+            {:error, other}
+        end
     end
   rescue
     error -> {:error, error}
+  end
+
+  # Extracts the `defmodule X do` name from a migration file's source.
+  defp module_from_source(path) do
+    case File.read(path) do
+      {:ok, source} ->
+        case Regex.run(~r/defmodule\s+([\w.]+)\s+do/, source) do
+          [_, mod_str] ->
+            {:ok, Module.concat(String.split(mod_str, "."))}
+
+          nil ->
+            {:error, :no_module_found}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 end

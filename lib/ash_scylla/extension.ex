@@ -14,123 +14,51 @@ defmodule AshScylla.Extension do
 
   @impl Ash.Extension
   def codegen(argv) do
-    {name, argv} =
-      case argv do
-        ["--dev" | rest] ->
-          {nil, ["--dev" | rest]}
+    AshScylla.MigrationGenerator.generate(parse_codegen_argv(argv))
+  end
 
-        [first | rest] ->
-          {first, rest}
+  @doc """
+  Translates the `mix ash.codegen` argv into options for
+  `AshScylla.MigrationGenerator.generate/1`.
 
-        [] ->
-          {nil, []}
-      end
+  Handles both a leading positional migration name and an explicit `--name`
+  flag (Ash injects `--name <name>` for the positional argument), plus the
+  shared `--dev` / `--dry-run` / `--check` / `--force` flags.
+  """
+  @spec parse_codegen_argv(Ash.Extension.argv()) :: keyword()
+  def parse_codegen_argv(argv) do
+    {positional, rest} = take_leading_positional(argv)
 
-    dry_run? = "--dry-run" in argv
-    dev? = "--dev" in argv
-    force? = "--force" in argv
+    name = positional || extract_name_flag(rest)
 
-    resources = AshScylla.MixHelpers.find_all_resources()
+    []
+    |> maybe_put(:name, name)
+    |> maybe_put(:dev, "--dev" in rest)
+    |> maybe_put(:dry_run, "--dry-run" in rest)
+    |> maybe_put(:check, "--check" in rest)
+    |> maybe_put(:force, "--force" in rest)
+  end
 
-    resources =
-      if resources == [] do
-        # Ensure the application is started so config is loaded
-        Application.ensure_all_started(:ash_scylla)
-
-        # Fallback: get resources directly from configured domains
-        domains = Application.get_env(:ash_scylla, :ash_domains, [])
-
-        if domains != [] do
-          domains
-          |> Enum.flat_map(fn domain ->
-            try do
-              domain
-              |> Ash.Domain.Info.resources()
-              |> Enum.filter(&AshScylla.MixHelpers.ash_scylla_resource?/1)
-            rescue
-              _ -> []
-            end
-          end)
-          |> Enum.uniq()
-        else
-          resources
-        end
-      else
-        resources
-      end
-
-    if resources == [] do
-      Mix.shell().info("No AshScylla resources found for codegen.")
+  defp take_leading_positional([first | rest]) do
+    if is_binary(first) and not String.starts_with?(first, "-") do
+      {first, rest}
     else
-      {_repo_name, migrations_path} =
-        try do
-          repo = AshScylla.MixHelpers.find_default_repo()
-          repo_name = repo |> Module.split() |> List.last() |> Macro.underscore()
-          {repo_name, Path.join([File.cwd!(), "priv", repo_name, "migrations"])}
-        rescue
-          _ -> {"repo", Path.join(File.cwd!(), "priv/repo/migrations")}
-        end
-
-      # Load previous meta to detect changes
-      # Uses the same `.schema_meta` file as `mix ash_scylla.gen` so both commands
-      # share change detection state.
-      meta_file = Path.join(migrations_path, ".schema_meta")
-      previous_meta = AshScylla.DataLayer.Codegen.load_codegen_meta(meta_file)
-
-      changed_resources =
-        if force? do
-          resources
-        else
-          AshScylla.DataLayer.Codegen.filter_changed_resources(resources, previous_meta)
-        end
-
-      if changed_resources == [] do
-        Mix.shell().info("Schema is up to date. No changes detected.")
-      else
-        Mix.shell().info("Generating migrations for #{length(changed_resources)} resource(s)...")
-
-        generated_files =
-          Enum.flat_map(changed_resources, fn resource ->
-            statements = generate_resource_cql(resource)
-
-            if statements != [""] do
-              migration_name = generate_migration_name(resource, name, dev?)
-              file_path = Path.join(migrations_path, migration_name <> ".ex")
-              content = render_migration_file(resource, statements)
-
-              if dry_run? do
-                Mix.shell().info("  [DRY RUN] Would generate #{file_path}")
-              else
-                File.mkdir_p!(migrations_path)
-                File.write!(file_path, content)
-                Mix.shell().info("  Generated #{file_path}")
-              end
-
-              [file_path]
-            else
-              []
-            end
-          end)
-
-        if !dry_run? do
-          current_meta = AshScylla.DataLayer.Codegen.compute_codegen_meta(resources)
-
-          AshScylla.DataLayer.Codegen.save_codegen_meta(
-            meta_file,
-            AshScylla.DataLayer.Codegen.merge_codegen_meta(
-              previous_meta,
-              changed_resources,
-              current_meta
-            )
-          )
-        end
-
-        if generated_files == [] do
-          Mix.shell().info("No migrations generated.")
-        end
-      end
+      {nil, [first | rest]}
     end
   end
+
+  defp take_leading_positional(argv), do: {nil, argv}
+
+  defp extract_name_flag(rest) do
+    case Enum.split_while(rest, &(&1 != "--name")) do
+      {_, ["--name", name | _]} -> name
+      _ -> nil
+    end
+  end
+
+  defp maybe_put(opts, _key, nil), do: opts
+  defp maybe_put(opts, _key, false), do: opts
+  defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
 
   @impl Ash.Extension
   def setup(argv) do
@@ -202,7 +130,7 @@ defmodule AshScylla.Extension do
 
     migration_files =
       migrations_path
-      |> Path.join("**/*.ex")
+      |> AshScylla.MixHelpers.migration_glob()
       |> Path.wildcard()
       |> Enum.sort()
 
@@ -376,85 +304,6 @@ defmodule AshScylla.Extension do
         Logger.warning("Failed to load migration #{file}: #{inspect(reason)}")
         []
     end
-  end
-
-  # Generates CQL CREATE TABLE and CREATE INDEX statements for a resource.
-  defp generate_resource_cql(resource) do
-    table_name = AshScylla.DataLayer.SchemaUtils.get_table_name(resource)
-    keyspace = AshScylla.DataLayer.Dsl.keyspace(resource)
-
-    qualified_table_name =
-      if keyspace, do: "#{keyspace}.#{table_name}", else: table_name
-
-    indexes = AshScylla.DataLayer.Dsl.secondary_indexes(resource)
-
-    table_cql = AshScylla.Migration.create_table_cql(resource)
-
-    index_cqls =
-      indexes
-      |> Enum.flat_map(fn idx ->
-        idx.columns
-        |> Enum.map(fn col ->
-          index_name = idx.name || "idx_#{table_name}_#{col}"
-          "CREATE INDEX IF NOT EXISTS #{index_name} ON #{qualified_table_name} (#{col})"
-        end)
-      end)
-
-    [table_cql | index_cqls]
-  end
-
-  # Generates a migration file name based on the resource and options.
-  defp generate_migration_name(resource, name, dev?) do
-    resource_name = resource |> Module.split() |> List.last() |> Macro.underscore()
-
-    case name do
-      nil ->
-        timestamp = DateTime.utc_now() |> Calendar.strftime("%Y%m%d%H%M%S")
-
-        if dev? do
-          "#{timestamp}_#{resource_name}_dev"
-        else
-          "#{timestamp}_#{resource_name}"
-        end
-
-      name ->
-        name
-    end
-  end
-
-  # Renders the migration file content.
-  defp render_migration_file(resource, statements) do
-    resource_name = resource |> Module.split() |> List.last()
-    app = AshScylla.MixHelpers.app_name()
-    app_module = app |> Atom.to_string() |> Macro.camelize() |> String.to_atom()
-    module_name = Module.concat([app_module, :Migrations, Macro.camelize(resource_name)])
-
-    statements_literal =
-      statements
-      |> Enum.map_join(",\n", &"  \"#{escape_cql(&1)}\"")
-
-    """
-    defmodule #{module_name} do
-      @moduledoc \"\"\"
-      Migration for #{resource_name}.
-
-      This file was autogenerated with `mix ash.codegen`
-      \"\"\"
-
-      use AshScylla.Schema
-
-      @impl AshScylla.Schema
-      def change do
-    [
-    #{statements_literal}
-    ]
-      end
-    end
-    """
-  end
-
-  defp escape_cql(s) do
-    s |> String.replace("\\", "\\\\") |> String.replace("\"", "\\\"")
   end
 
   # ── Codegen Meta Change Detection ─────────────────────────────────────────

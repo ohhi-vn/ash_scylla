@@ -117,11 +117,15 @@ end
 **7. Create Keyspace and Tables:**
 
 ```bash
-# Generate schema migration from Ash DSL
-mix ash_scylla.gen --dev
+# Generate migrations from your Ash resources (writes .exs files to priv/<repo>/migrations)
+mix ash_scylla.generate_migrations --dev
 
-# Run migrations (includes schema files from priv/migrations)
+# Or use the standard Ash tasks (AshScylla.DataLayer is auto-discovered as the extension):
+mix ash.codegen --dev
+
+# Run migrations (includes migration files from priv/<repo>/migrations)
 mix ash_scylla.migrate
+# or: mix ash.migrate
 ```
 
 **8. Start Using It:**
@@ -640,24 +644,29 @@ WITH CLUSTERING ORDER BY (id DESC)
 
 ### Creating Tables
 
-Use `mix ash_scylla.gen` to generate schema migrations from your Ash DSL:
+Use `mix ash_scylla.generate_migrations` (or the standard `mix ash.codegen`) to
+generate migration files from your Ash DSL. AshScylla's data layer is
+discovered automatically as an Ash extension, so `mix ash.codegen` routes to it:
 
 ```bash
-# Auto-generate with timestamp-based name
-mix ash_scylla.gen --dev
+# Auto-generate with timestamp-based name (writes .exs files)
+mix ash_scylla.generate_migrations --dev
 
-# With specific module name
-mix ash_scylla.gen AddUserTable
+# Or via the standard Ash task:
+mix ash.codegen --dev
 
-# For a specific resource
-mix ash_scylla.gen --resource MyApp.User
+# With specific migration name
+mix ash_scylla.generate_migrations add_user_table
+
+# For a specific domain
+mix ash_scylla.generate_migrations --domains MyApp.Domain
 ```
 
-This creates files in `priv/migrations/`:
+This creates `.exs` files in `priv/<repo>/migrations/`:
 
 ```elixir
-# priv/migrations/20260615155440_schema.ex
-defmodule MyApp.Migrations.Schema20260615155440 do
+# priv/<repo>/migrations/20260615155440_migrate_resources1.exs
+defmodule MyApp.Migrations.MigrateResources1 do
   use AshScylla.Schema
 
   def change do

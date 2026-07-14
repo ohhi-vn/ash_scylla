@@ -247,13 +247,17 @@ defmodule AshScylla.PreparedStatementCache do
     end
   end
 
-  @doc false
+  @doc """
+  Evicts the oldest `count` entries from the cache.
+
+  Exposed for testing the eviction logic.
+  """
   @spec evict_oldest(:ets.tid(), non_neg_integer()) :: :ok
-  defp evict_oldest(tid, count) when count > 0 do
+  def evict_oldest(tid, count) when count > 0 do
     # Delete the first N entries (oldest insertion order in ETS set type)
     # ETS set type doesn't guarantee insertion order, but this is best-effort
     # eviction to prevent unbounded growth
-    first_n = :ets.select(tid, [{{:_, :_}, [], [true]}], count)
+    first_n = :ets.select(tid, [{{:"$1", :_}, [], [:"$1"]}], count)
 
     case first_n do
       {entries, _continuation} ->
@@ -268,7 +272,7 @@ defmodule AshScylla.PreparedStatementCache do
     _ -> :ok
   end
 
-  defp evict_oldest(_tid, _count), do: :ok
+  def evict_oldest(_tid, _count), do: :ok
 
   defp do_prepare(repo, cql, opts) do
     if function_exported?(repo, :prepare, 2) do
@@ -296,4 +300,12 @@ defmodule AshScylla.PreparedStatementCache do
       nil
     end
   end
+
+  @doc """
+  Returns the configured maximum cache size.
+
+  Exposed for testing.
+  """
+  @spec max_cache_size() :: non_neg_integer()
+  def max_cache_size, do: @max_cache_size
 end

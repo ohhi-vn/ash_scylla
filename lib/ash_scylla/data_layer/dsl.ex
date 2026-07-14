@@ -317,6 +317,18 @@ defmodule AshScylla.DataLayer.Dsl do
             [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__add_materialized_view__]},
            meta, [{:__MODULE__, [], nil}, view_map]}
 
+        {:materialized_view, meta, [view_name, view_config]}
+        when is_atom(view_name) and is_list(view_config) ->
+          view_map =
+            quote do: %{
+                    name: unquote(view_name),
+                    config: unquote(view_config)
+                  }
+
+          {{:., meta,
+            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__add_materialized_view__]},
+           meta, [{:__MODULE__, [], nil}, view_map]}
+
         {:materialized_view, _meta, [view_config]} when is_list(view_config) ->
           raise "materialized_view requires a name, e.g. materialized_view :view_name, primary_key: [...]"
 

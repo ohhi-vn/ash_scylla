@@ -376,7 +376,7 @@ defmodule Mix.Tasks.AshScylla.Migrate do
 
     schema_files =
       migrations_dir
-      |> Path.join("**/*.ex")
+      |> AshScylla.MixHelpers.migration_glob()
       |> Path.wildcard()
       |> Enum.sort()
 
@@ -387,7 +387,11 @@ defmodule Mix.Tasks.AshScylla.Migrate do
 
         apps ->
           for {_app, path} <- apps,
-              file <- Path.wildcard(Path.join(path, "priv/repo/migrations/**/*.ex")),
+              file <-
+                Path.wildcard(
+                  AshScylla.MixHelpers.migration_glob("priv/repo/migrations")
+                  |> then(&Path.join(path, &1))
+                ),
               do: file
       end
 
@@ -407,9 +411,9 @@ defmodule Mix.Tasks.AshScylla.Migrate do
     root = Path.rootname(base)
 
     # Extract the migration version from the filename. Supports:
-    # - pure numeric: "20260629124004.ex" -> 20260629124004
-    # - numeric + suffix: "20260629122559_activity_message_dev.ex" -> 20260629122559
-    # - schema-prefixed: "schema20260629124004.ex" -> 20260629124004
+    # - pure numeric: "20260629124004.exs" -> 20260629124004
+    # - numeric + suffix: "20260629122559_activity_message_dev.exs" -> 20260629122559
+    # - schema-prefixed: "schema20260629124004.exs" -> 20260629124004
     cond do
       # Pure numeric or numeric-with-suffix (original behavior)
       match?({_, _}, Integer.parse(root)) ->
@@ -530,13 +534,22 @@ defmodule Mix.Tasks.AshScylla.Migrate do
     else
       # Only start a real connection if not in dry-run mode
       if !dry_run do
-        {:ok, _} =
-          AshScylla.Connection.start_link(
-            name: repo,
-            nodes: repo.nodes(),
-            keyspace: repo.keyspace(),
-            connect_timeout: 10_000
-          )
+        # The repo may already be connected (e.g. after a reset). If so,
+        # reuse the existing connection rather than crashing on
+        # {:error, {:already_started, _}}.
+        case AshScylla.Connection.get_conn(repo) do
+          nil ->
+            {:ok, _} =
+              AshScylla.Connection.start_link(
+                name: repo,
+                nodes: repo.nodes(),
+                keyspace: repo.keyspace(),
+                connect_timeout: 10_000
+              )
+
+          %AshScylla.Connection{} ->
+            :ok
+        end
 
         results =
           Enum.map(resources, fn resource ->

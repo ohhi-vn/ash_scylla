@@ -131,6 +131,14 @@ defmodule AshScylla.DataLayer do
   """
 
   @behaviour Ash.DataLayer
+  @behaviour Ash.Extension
+
+  # Ash discovers extensions for `mix ash.codegen` / `mix ash.migrate` / etc. by
+  # scanning all modules that implement the `Spark.Dsl.Extension` behaviour.
+  # The data layer module doubles as the extension (per Ash's own data layers),
+  # so we declare it as a (section-less) Spark DSL extension here. The actual
+  # callback logic lives in `AshScylla.Extension`, which this module forwards to.
+  use Spark.Dsl.Extension, sections: []
 
   require Logger
 
@@ -524,8 +532,15 @@ defmodule AshScylla.DataLayer do
   # When ORDER BY is dropped due to secondary index scan, apply sorting in-memory
   # to compensate. This is not ideal for large result sets but ensures correctness.
   defp maybe_apply_in_memory_sort(records, sorts, true) do
+    sort_keys =
+      Enum.map(sorts, fn
+        {field, _direction} when is_atom(field) -> field
+        field when is_atom(field) -> field
+        %{field: field} -> field
+      end)
+
     Enum.sort_by(records, fn record ->
-      Enum.map(sorts, fn sort_field ->
+      Enum.map(sort_keys, fn sort_field ->
         value = Map.get(record, sort_field)
         # Ensure nil values sort last
         {value == nil, value}
@@ -1226,7 +1241,7 @@ defmodule AshScylla.DataLayer do
     # with Task.async_stream (bounded concurrency) to avoid the N+1 latency.
     max_concurrency = System.schedulers_online()
 
-    {records, []} =
+    {records, _errors} =
       records
       |> Task.async_stream(
         fn record ->
@@ -1253,6 +1268,12 @@ defmodule AshScylla.DataLayer do
         {:ok, {record, agg_values}}, {acc_records, acc_errors} ->
           updated = Map.update!(record, :aggregates, &Map.merge(&1, agg_values))
           {[updated | acc_records], acc_errors}
+
+        {:exit, reason}, {acc_records, acc_errors} ->
+          # A timed-out/aborted task (on_timeout: :kill_task) surfaces as {:exit, reason}.
+          # Fall back to default aggregate values for the affected record rather than
+          # failing the entire read.
+          {acc_records, [reason | acc_errors]}
 
         {:error, reason}, {acc_records, acc_errors} ->
           {acc_records, [reason | acc_errors]}
@@ -2011,7 +2032,10 @@ defmodule AshScylla.DataLayer do
       |> Info.attributes()
       |> Enum.reduce(%{}, fn attr, acc ->
         value =
-          Map.get(record, attr.name) || Map.get(record, to_string(attr.name))
+          case Map.fetch(record, attr.name) do
+            {:ok, v} -> v
+            :error -> Map.get(record, to_string(attr.name))
+          end
 
         decoded_value =
           cond do
@@ -2032,6 +2056,16 @@ defmodule AshScylla.DataLayer do
       end)
 
     struct(resource, attrs)
+  end
+
+  # Public test helper that exercises the private `to_ash_record/3` map branch.
+  @doc false
+  def to_ash_record_public(record, resource), do: to_ash_record(record, resource, nil)
+
+  # Public test helper that exercises the in-memory sort fallback.
+  @doc false
+  def maybe_apply_in_memory_sort_public(records, sorts, dropped?) do
+    maybe_apply_in_memory_sort(records, sorts, dropped?)
   end
 
   # Build repo query options from resource configuration (consistency only).
@@ -2073,11 +2107,61 @@ defmodule AshScylla.DataLayer do
   """
   @spec qualified_table(module()) :: String.t()
   def qualified_table(resource) do
-    table = sanitize_identifier(source(resource))
+    # Use the same quoting rule as `source/1` (QueryBuilder.cql_identifier/1):
+    # quote only CQL reserved words, leaving ordinary identifiers bare. This
+    # keeps `qualified_table/1` consistent with the table name used in reads
+    # while still producing valid CQL for reserved-word table names such as
+    # "order".
+    table = QueryBuilder.cql_identifier(raw_table_name(resource))
 
     case Dsl.keyspace(resource) do
       nil -> table
       ks -> "#{sanitize_keyspace(ks)}.#{table}"
+    end
+  end
+
+  # Returns the unquoted, validated table name for a resource. Unlike `source/1`,
+  # this does NOT run the name through `QueryBuilder.cql_identifier/1`, so it
+  # never returns a double-quoted CQL display form. This is what `qualified_table/1`
+  # needs so that reserved-word table names (e.g. "order") are sanitized correctly
+  # rather than being re-validated against an already-quoted string.
+  @doc false
+  @spec raw_table_name(module()) :: String.t()
+  defp raw_table_name(resource) do
+    case Dsl.table(resource) do
+      nil ->
+        segments = Module.split(resource)
+
+        name =
+          if Ash.Resource.Info.domain(resource) do
+            segments
+            |> Enum.take(-2)
+            |> Enum.map(&Macro.underscore/1)
+            |> Enum.join("_")
+          else
+            segments
+            |> List.last()
+            |> Macro.underscore()
+          end
+
+        # Fall back to a direct @table module attribute (used by some resources
+        # that set the table without the `scylla` DSL block).
+        table_attr =
+          try do
+            Module.get_attribute(resource, :table)
+          rescue
+            ArgumentError -> nil
+          end
+
+        case table_attr do
+          nil -> name
+          "" -> name
+          table -> to_string(table)
+        end
+        |> Identifier.sanitize!()
+
+      dsl_table ->
+        dsl_table |> to_string() |> Identifier.sanitize!()
     end
   end
 
@@ -2218,9 +2302,11 @@ defmodule AshScylla.DataLayer do
         type = attr.type
         short = resolve_type_name(type)
         # Check both the resolved short name and the raw type's string form so
-        # custom UUID modules (e.g. MyApp.UUIDv7) are also detected.
-        type_str = to_string(short)
-        raw_str = to_string(type)
+        # custom UUID modules (e.g. MyApp.UUIDv7) are also detected. Tuple types
+        # (e.g. {:array, :string}) can't be stringified directly, so guard the
+        # conversion.
+        type_str = if is_atom(short), do: Atom.to_string(short), else: inspect(short)
+        raw_str = if is_atom(type), do: Atom.to_string(type), else: inspect(type)
 
         (is_atom(short) and (type_str =~ "uuid" or raw_str =~ "uuid")) or
           (is_binary(short) and short =~ "uuid")
@@ -2236,7 +2322,7 @@ defmodule AshScylla.DataLayer do
   # :uuid, :string). Module types are resolved via storage_type/1 or the Ash
   # type registry; plain atoms pass through.
   @doc false
-  @spec resolve_type_name(atom()) :: atom()
+  @spec resolve_type_name(atom() | tuple()) :: atom() | tuple()
   defp resolve_type_name(type) when is_atom(type) do
     cond do
       # Already a plain atom (e.g. :uuid, :uuid_v7, :string) — pass through
@@ -2258,6 +2344,13 @@ defmodule AshScylla.DataLayer do
         end
     end
   end
+
+  # Collection types arrive as {:array, inner_type}; resolve the inner type.
+  defp resolve_type_name({:array, inner_type}) when is_atom(inner_type) do
+    {:array, resolve_type_name(inner_type)}
+  end
+
+  defp resolve_type_name(other), do: other
 
   # Returns a MapSet of attribute names (atoms) that are typed as Atom.
   # These attributes need string-to-atom conversion when read from ScyllaDB.
@@ -2519,12 +2612,34 @@ defmodule AshScylla.DataLayer do
   def wrap_typed(value, _key, _cql_types), do: value
 
   # ============================================================================
-  # Codegen delegation
+  # Ash.Extension callbacks
   # ============================================================================
-  # Codegen tooling (CQL generation, migration rendering, schema-hash change
-  # detection) lives in AshScylla.DataLayer.Codegen to keep this runtime
-  # behaviour implementation focused. This callback delegates to it.
+  # Ash's generic mix tasks (codegen/migrate/setup/reset/rollback/tear_down/
+  # install) dispatch to these. The data layer module is what gets discovered
+  # as an extension, so the callbacks live here; the real implementation is
+  # kept in `AshScylla.Extension` and forwarded to below.
 
-  @spec codegen(atom(), keyword()) :: {:ok, term()} | {:error, term()}
-  def codegen(action, opts), do: AshScylla.DataLayer.Codegen.codegen(action, opts)
+  @impl Ash.Extension
+  def codegen(argv) do
+    AshScylla.MigrationGenerator.generate(AshScylla.Extension.parse_codegen_argv(argv))
+  end
+
+  @impl Ash.Extension
+  def setup(argv), do: AshScylla.Extension.setup(argv)
+
+  @impl Ash.Extension
+  def migrate(argv), do: AshScylla.Extension.migrate(argv)
+
+  @impl Ash.Extension
+  def install(igniter, module, type, location, argv),
+    do: AshScylla.Extension.install(igniter, module, type, location, argv)
+
+  @impl Ash.Extension
+  def reset(argv), do: AshScylla.Extension.reset(argv)
+
+  @impl Ash.Extension
+  def rollback(argv), do: AshScylla.Extension.rollback(argv)
+
+  @impl Ash.Extension
+  def tear_down(argv), do: AshScylla.Extension.tear_down(argv)
 end

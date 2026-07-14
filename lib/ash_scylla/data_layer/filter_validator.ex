@@ -62,6 +62,10 @@ defmodule AshScylla.DataLayer.FilterValidator do
   """
   @spec validate_filters(module(), list()) :: :ok | no_return()
   def validate_filters(resource, filters) do
+    # Catch empty IN lists (which produce invalid CQL `col IN ()`) and IN filters
+    # on non-queryable columns before they reach CQL generation.
+    validate_in_filters(resource, filters)
+
     pk_columns = get_primary_key_columns(resource)
     indexed_columns = get_indexed_columns(resource)
     allowed_columns = MapSet.new(pk_columns ++ indexed_columns)

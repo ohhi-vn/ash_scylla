@@ -173,9 +173,7 @@ defmodule AshScylla.DataLayer.Compression do
           raise ArgumentError,
                 "Unknown compression option: #{inspect(key)} with value #{inspect(val)}"
       end)
-      |> Enum.map_join(", ", fn {key, val} ->
-        "'#{key}': #{val}"
-      end)
+      |> Enum.join(", ")
 
     inner =
       if extras != "" do
