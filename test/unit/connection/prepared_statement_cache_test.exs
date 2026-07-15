@@ -31,8 +31,16 @@ defmodule AshScylla.PreparedStatementCacheTest do
       {:error, {:already_started, _pid}} -> :ok
     end
 
-    # Clear the cache before each test for isolation.
-    PreparedStatementCache.clear()
+    # Clear the cache before each test for isolation. Tolerate a not-yet/
+    # no-longer-alive cache process so a single test can't cascade failures.
+    if Process.whereis(PreparedStatementCache) do
+      try do
+        PreparedStatementCache.clear()
+      catch
+        :exit, _ -> :ok
+      end
+    end
+
     :ok
   end
 
@@ -45,6 +53,43 @@ defmodule AshScylla.PreparedStatementCacheTest do
     test "creates an ETS table" do
       tid = PreparedStatementCache.table()
       assert tid != nil
+    end
+
+    test "defaults to a LOCAL registration (per-node), not global" do
+      # The default instance started in setup must be registered locally...
+      assert is_pid(Process.whereis(PreparedStatementCache))
+      # ...and must NOT be registered globally, so it does not collide across
+      # clustered nodes.
+      assert :global.whereis_name(PreparedStatementCache) == :undefined
+    end
+
+    test "name: :undefined also registers locally" do
+      # Stop the default instance so we can start a fresh one under the same
+      # local name (`:undefined` resolves to the default local name).
+      if default = Process.whereis(PreparedStatementCache) do
+        GenServer.stop(default)
+      end
+
+      {:ok, pid} = PreparedStatementCache.start_link(name: :undefined)
+      assert Process.whereis(PreparedStatementCache) == pid
+      assert :global.whereis_name(PreparedStatementCache) == :undefined
+      GenServer.stop(pid)
+
+      # Restore the default instance for the remaining tests.
+      PreparedStatementCache.start_link([])
+    end
+
+    test "explicit local name registers locally under that name" do
+      {:ok, pid} = PreparedStatementCache.start_link(name: :psc_local_test)
+      assert Process.whereis(:psc_local_test) == pid
+      assert :global.whereis_name(:psc_local_test) == :undefined
+      GenServer.stop(pid)
+    end
+
+    test "explicit {:global, name} registers globally when requested" do
+      {:ok, pid} = PreparedStatementCache.start_link(name: {:global, :psc_global_test})
+      assert :global.whereis_name(:psc_global_test) == pid
+      GenServer.stop(pid)
     end
   end
 

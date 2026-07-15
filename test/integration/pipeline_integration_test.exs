@@ -172,6 +172,14 @@ defmodule AshScylla.DataLayer.PipelineTest do
         port = direct_port()
         conn = connect_with_retry(host, port, 30)
 
+        # Drop the keyspace first so a stale schema from a previous run
+        # (e.g. a `users` table without the `email` column) doesn't linger.
+        # CREATE KEYSPACE/TABLE IF NOT EXISTS are no-ops when the objects
+        # already exist, which would otherwise leave us with an incompatible
+        # schema and cause `CREATE INDEX` to fail with
+        # "No column definition found for column email".
+        Xandra.execute!(conn, "DROP KEYSPACE IF EXISTS ash_scylla_test")
+
         Xandra.execute!(
           conn,
           "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}"
@@ -431,11 +439,15 @@ defmodule AshScylla.DataLayer.PipelineTest do
   describe "DataLayer → QueryBuilder: filter_to_cql" do
     test "converts equality filter" do
       {cql, [value]} =
-        QueryBuilder.filter_to_cql!(%{
-          operator: :eq,
-          left: %{name: :status},
-          right: %{value: "active"}
-        }, %MapSet{}, %{})
+        QueryBuilder.filter_to_cql!(
+          %{
+            operator: :eq,
+            left: %{name: :status},
+            right: %{value: "active"}
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql == "status = ?"
       assert value == "active"
@@ -443,11 +455,15 @@ defmodule AshScylla.DataLayer.PipelineTest do
 
     test "converts IN filter" do
       {cql, values} =
-        QueryBuilder.filter_to_cql!(%{
-          operator: :in,
-          left: %{name: :id},
-          right: %{value: ["a", "b", "c"]}
-        }, %MapSet{}, %{})
+        QueryBuilder.filter_to_cql!(
+          %{
+            operator: :in,
+            left: %{name: :id},
+            right: %{value: ["a", "b", "c"]}
+          },
+          %MapSet{},
+          %{}
+        )
 
       assert cql =~ "IN (?, ?, ?)"
       assert values == ["a", "b", "c"]

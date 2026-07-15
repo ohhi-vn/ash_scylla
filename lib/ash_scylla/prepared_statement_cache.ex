@@ -45,7 +45,7 @@ defmodule AshScylla.PreparedStatementCache do
 
   - Max cache size: 10,000 entries
   - Cleanup interval: 5 minutes
-  - Registered globally as `{:global, __MODULE__}` by default
+  - Registered locally as `__MODULE__` by default
   """
 
   use GenServer
@@ -58,16 +58,21 @@ defmodule AshScylla.PreparedStatementCache do
   @doc """
   Starts the prepared statement cache.
 
-  When no `:name` option is given, the GenServer is registered globally
-  as `{:global, __MODULE__}` so that all processes share a single cache.
-  Pass `name: :undefined` or a custom name to register locally instead.
+  When no `:name` option is given, the GenServer is registered locally
+  as `__MODULE__` so that each node runs its own per-node cache. This is
+  required in a clustered deployment (libcluster + K8s/gossip), where a
+  global name would be contested by every node and cause repeated
+  `:reached_max_restart_intensity` crashes.
+
+  Pass a `{:global, name}` tuple to register globally, or a custom local
+  name to register under a different local name.
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
     name =
       case Keyword.get(opts, :name) do
-        nil -> {:global, __MODULE__}
-        :undefined -> {:global, __MODULE__}
+        nil -> __MODULE__
+        :undefined -> __MODULE__
         other -> other
       end
 
@@ -82,10 +87,10 @@ defmodule AshScylla.PreparedStatementCache do
   """
   @spec table() :: :ets.tid() | nil
   def table do
-    case :global.whereis_name(__MODULE__) do
-      :undefined ->
-        case Process.whereis(__MODULE__) do
-          nil -> nil
+    case Process.whereis(__MODULE__) do
+      nil ->
+        case :global.whereis_name(__MODULE__) do
+          :undefined -> nil
           pid -> get_table_from_pid(pid)
         end
 
@@ -143,12 +148,12 @@ defmodule AshScylla.PreparedStatementCache do
   end
 
   # Returns the name to use for GenServer calls.
-  # Uses the globally registered name if available, otherwise falls back
-  # to the default local name.
+  # Uses the locally registered name if available, otherwise falls back
+  # to the global name.
   defp server_name do
-    case :global.whereis_name(__MODULE__) do
-      :undefined -> __MODULE__
-      _pid -> {:global, __MODULE__}
+    case Process.whereis(__MODULE__) do
+      nil -> {:global, __MODULE__}
+      _pid -> __MODULE__
     end
   end
 

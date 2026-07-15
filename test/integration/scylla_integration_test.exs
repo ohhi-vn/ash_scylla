@@ -301,6 +301,14 @@ defmodule AshScylla.ScyllaIntegrationTest do
   defp schema(conn) do
     case wait_for_cql(conn, 60) do
       :ok ->
+        # Drop the keyspace first so a stale schema from a previous run
+        # (e.g. a `users` table without the `email` column) doesn't linger.
+        # CREATE KEYSPACE/TABLE IF NOT EXISTS are no-ops when the objects
+        # already exist, which would otherwise leave us with an incompatible
+        # schema and cause `CREATE INDEX` to fail with
+        # "No column definition found for column email".
+        {:ok, _} = Xandra.execute(conn, "DROP KEYSPACE IF EXISTS ash_scylla_test")
+
         Enum.each(
           [
             "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}",
