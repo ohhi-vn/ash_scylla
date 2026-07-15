@@ -6,7 +6,7 @@ defmodule AshScylla.EdgeCasesTest do
   use ExUnit.Case, async: false
 
   alias AshScylla.DataLayer
-  alias AshScylla.DataLayer.{QueryBuilder, Batch, MaterializedView, Pagination}
+  alias AshScylla.DataLayer.{Batch, MaterializedView, Pagination, QueryBuilder}
   alias AshScylla.Migration
 
   describe "filter_to_cql/1 edge cases" do

@@ -21,8 +21,8 @@ defmodule AshScylla.DataLayer.PipelineTest do
 
   alias AshScylla.DataLayer
   alias AshScylla.DataLayer.QueryBuilder
-  alias AshScylla.TestRepo
   alias AshScylla.ScyllaContainer, warn: false
+  alias AshScylla.TestRepo
 
   @moduletag :integration
 

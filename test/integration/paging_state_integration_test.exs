@@ -7,6 +7,8 @@ defmodule AshScylla.PagingStateIntegrationTest do
   """
   use ExUnit.Case, async: false
 
+  require Logger
+
   @moduletag :integration
 
   defp direct_connect?, do: System.get_env("SCYLLA_DIRECT") not in [nil, ""]
@@ -80,85 +82,91 @@ defmodule AshScylla.PagingStateIntegrationTest do
 
   describe "paging_state continuity" do
     test "paging_state returns consistent pages without duplicates", %{conn: conn} do
-      if is_nil(conn), do: :ok
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        # Create a dedicated table for this test to avoid pollution from other tests
+        table = "paging_test_#{:erlang.unique_integer([:positive])}"
 
-      # Create a dedicated table for this test to avoid pollution from other tests
-      table = "paging_test_#{:erlang.unique_integer([:positive])}"
+        Xandra.execute!(
+          conn,
+          "CREATE TABLE IF NOT EXISTS ash_scylla_test.#{table} (id UUID PRIMARY KEY, seq INT)"
+        )
 
-      Xandra.execute!(
-        conn,
-        "CREATE TABLE IF NOT EXISTS ash_scylla_test.#{table} (id UUID PRIMARY KEY, seq INT)"
-      )
+        # Insert 25 records
+        ids = for _i <- 1..25, do: uid()
 
-      # Insert 25 records
-      ids = for _i <- 1..25, do: uid()
+        for {id, i} <- Enum.with_index(ids, 1) do
+          Xandra.execute!(conn, "INSERT INTO ash_scylla_test.#{table} (id, seq) VALUES (?, ?)", [
+            encode_param(id),
+            encode_param(i)
+          ])
+        end
 
-      for {id, i} <- Enum.with_index(ids, 1) do
-        Xandra.execute!(conn, "INSERT INTO ash_scylla_test.#{table} (id, seq) VALUES (?, ?)", [
-          encode_param(id),
-          encode_param(i)
-        ])
+        # Fetch all pages with page_size=10
+        {all_fetched_ids, page_count} = fetch_all_pages(conn, table, 10)
+
+        # Normalize UUIDs to string format for comparison (ScyllaDB returns UUIDs as strings)
+        inserted_strings = Enum.map(ids, &uuid_to_string/1)
+
+        # Should have fetched all 25 records
+        assert MapSet.new(inserted_strings) |> MapSet.equal?(MapSet.new(all_fetched_ids))
+        # Should have taken 3 pages
+        assert page_count == 3
+
+        # Cleanup
+        Xandra.execute!(conn, "DROP TABLE IF EXISTS ash_scylla_test.#{table}")
       end
-
-      # Fetch all pages with page_size=10
-      {all_fetched_ids, page_count} = fetch_all_pages(conn, table, 10)
-
-      # Normalize UUIDs to string format for comparison (ScyllaDB returns UUIDs as strings)
-      inserted_strings = Enum.map(ids, &uuid_to_string/1)
-
-      # Should have fetched all 25 records
-      assert MapSet.new(inserted_strings) |> MapSet.equal?(MapSet.new(all_fetched_ids))
-      # Should have taken 3 pages
-      assert page_count == 3
-
-      # Cleanup
-      Xandra.execute!(conn, "DROP TABLE IF EXISTS ash_scylla_test.#{table}")
     end
 
     test "single page when results fit in one page", %{conn: conn} do
-      if is_nil(conn), do: :ok
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        table = "paging_single_#{:erlang.unique_integer([:positive])}"
 
-      table = "paging_single_#{:erlang.unique_integer([:positive])}"
+        Xandra.execute!(
+          conn,
+          "CREATE TABLE IF NOT EXISTS ash_scylla_test.#{table} (id UUID PRIMARY KEY, seq INT)"
+        )
 
-      Xandra.execute!(
-        conn,
-        "CREATE TABLE IF NOT EXISTS ash_scylla_test.#{table} (id UUID PRIMARY KEY, seq INT)"
-      )
+        ids = for _i <- 1..5, do: uid()
 
-      ids = for _i <- 1..5, do: uid()
+        for {id, i} <- Enum.with_index(ids, 1) do
+          Xandra.execute!(conn, "INSERT INTO ash_scylla_test.#{table} (id, seq) VALUES (?, ?)", [
+            encode_param(id),
+            encode_param(i)
+          ])
+        end
 
-      for {id, i} <- Enum.with_index(ids, 1) do
-        Xandra.execute!(conn, "INSERT INTO ash_scylla_test.#{table} (id, seq) VALUES (?, ?)", [
-          encode_param(id),
-          encode_param(i)
-        ])
+        {all_fetched_ids, page_count} = fetch_all_pages(conn, table, 50)
+
+        # Normalize UUIDs to string format for comparison
+        inserted_strings = Enum.map(ids, &uuid_to_string/1)
+
+        assert length(all_fetched_ids) == 5
+        assert MapSet.new(inserted_strings) |> MapSet.equal?(MapSet.new(all_fetched_ids))
+        assert page_count == 1
+
+        # Cleanup
+        Xandra.execute!(conn, "DROP TABLE IF EXISTS ash_scylla_test.#{table}")
       end
-
-      {all_fetched_ids, page_count} = fetch_all_pages(conn, table, 50)
-
-      # Normalize UUIDs to string format for comparison
-      inserted_strings = Enum.map(ids, &uuid_to_string/1)
-
-      assert length(all_fetched_ids) == 5
-      assert MapSet.new(inserted_strings) |> MapSet.equal?(MapSet.new(all_fetched_ids))
-      assert page_count == 1
-
-      # Cleanup
-      Xandra.execute!(conn, "DROP TABLE IF EXISTS ash_scylla_test.#{table}")
     end
 
     test "paging_state cursor encoding round-trips correctly", %{conn: conn} do
-      if is_nil(conn), do: :ok
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        alias AshScylla.DataLayer.Pagination
 
-      alias AshScylla.DataLayer.Pagination
+        # Test encode/decode round-trip
+        binary = :crypto.strong_rand_bytes(32)
+        encoded = Pagination.encode_cursor(binary)
+        assert {:ok, ^binary} = Pagination.decode_cursor(encoded)
 
-      # Test encode/decode round-trip
-      binary = :crypto.strong_rand_bytes(32)
-      encoded = Pagination.encode_cursor(binary)
-      assert {:ok, ^binary} = Pagination.decode_cursor(encoded)
-
-      # Invalid cursor returns error
-      assert {:error, :invalid_cursor} = Pagination.decode_cursor("!!!invalid!!!")
+        # Invalid cursor returns error
+        assert {:error, :invalid_cursor} = Pagination.decode_cursor("!!!invalid!!!")
+      end
     end
   end
 

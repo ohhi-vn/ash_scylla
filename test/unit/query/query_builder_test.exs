@@ -7,8 +7,8 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
   use ExUnit.Case, async: true
 
   alias AshScylla.DataLayer
-  alias AshScylla.DataLayer.QueryBuilder
   alias AshScylla.DataLayer.Pagination
+  alias AshScylla.DataLayer.QueryBuilder
 
   # ============================================================================
   # build_optimized_query/1
@@ -1199,7 +1199,6 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
       assert DataLayer.can?(AshScylla.TestResource, :expression_calculation) == true
     end
   end
-
 
   describe "build_paginated_query/4" do
     test "no filters, no token produces simple LIMIT query" do

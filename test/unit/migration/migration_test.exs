@@ -198,8 +198,10 @@ defmodule AshScylla.MigrationTest do
     # "No keyspace has been specified" failures when USE context was lost.
     test "qualifies the table with the configured keyspace" do
       statements =
-        AshScylla.DataLayer.SchemaMigration
-        |> apply(:generate_add_columns, [AshScylla.TestResource, [:age]])
+        AshScylla.DataLayer.SchemaMigration.generate_add_columns(
+          AshScylla.TestResource,
+          [:age]
+        )
 
       assert [stmt] = statements
       assert stmt =~ ~s/ALTER TABLE "ash_scylla_test"."test_resource" ADD "age"/
@@ -207,8 +209,10 @@ defmodule AshScylla.MigrationTest do
 
     test "qualifies the table even when multiple columns are added" do
       statements =
-        AshScylla.DataLayer.SchemaMigration
-        |> apply(:generate_add_columns, [AshScylla.TestResource, [:age, :email]])
+        AshScylla.DataLayer.SchemaMigration.generate_add_columns(
+          AshScylla.TestResource,
+          [:age, :email]
+        )
 
       assert length(statements) == 2
       assert Enum.all?(statements, &(&1 =~ ~s/ALTER TABLE "ash_scylla_test"."test_resource"/))
@@ -216,8 +220,10 @@ defmodule AshScylla.MigrationTest do
 
     test "falls back to unqualified table name when no keyspace is configured" do
       statements =
-        AshScylla.DataLayer.SchemaMigration
-        |> apply(:generate_add_columns, [AshScylla.TestResourceNoKeyspace, [:age]])
+        AshScylla.DataLayer.SchemaMigration.generate_add_columns(
+          AshScylla.TestResourceNoKeyspace,
+          [:age]
+        )
 
       assert [stmt] = statements
       refute stmt =~ ~s/"ash_scylla_test"\./

@@ -114,9 +114,9 @@ defmodule AshScylla.SchemaMigration.RegressionTest do
                keyspace: "ash_scylla_dl_test",
                connect_timeout: 15_000
              ) do
-               {:ok, _} -> :ok
-               {:error, {:already_started, _}} -> :ok
-             end
+          {:ok, _} -> :ok
+          {:error, {:already_started, _}} -> :ok
+        end
 
         %{conn: conn}
       else
@@ -233,8 +233,10 @@ defmodule AshScylla.SchemaMigration.RegressionTest do
         ks = "ash_scylla_dl_test"
         table = "regression_migrate"
 
-        Xandra.execute( conn,
-          "CREATE TABLE IF NOT EXISTS #{ks}.#{table} (id UUID PRIMARY KEY, name TEXT)" )
+        Xandra.execute(
+          conn,
+          "CREATE TABLE IF NOT EXISTS #{ks}.#{table} (id UUID PRIMARY KEY, name TEXT)"
+        )
 
         resource = build_temp_resource(table, ks, [:id, :name, :extra])
 

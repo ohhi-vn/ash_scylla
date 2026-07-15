@@ -46,8 +46,8 @@ defmodule AshScylla.DataLayer.QueryOptimizer do
 
   require Logger
 
-  alias AshScylla.Query
   alias AshScylla.Identifier
+  alias AshScylla.Query
 
   @default_page_size 50
   @max_page_size 1000

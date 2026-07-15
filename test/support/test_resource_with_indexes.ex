@@ -6,7 +6,6 @@ defmodule AshScylla.TestResourceWithIndexes do
 
   import AshScylla.DataLayer.Dsl
 
-
   scylla do
     repo(AshScylla.TestRepo)
     table("test_users")

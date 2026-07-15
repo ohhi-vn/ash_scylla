@@ -25,7 +25,21 @@ defmodule AshScylla.PreparedStatementCacheTest do
   end
 
   setup do
-    # Ensure the global cache GenServer is running.
+    # Ensure a fresh LOCAL cache GenServer is running (per-node registration).
+    # Stop any existing instance first so a stale globally-registered process
+    # from a previous run can't shadow the local one (which would make
+    # `Process.whereis/1` return nil while `table/0` still resolves via the
+    # global fallback). Tolerate already-dead processes.
+    case Process.whereis(PreparedStatementCache) do
+      nil -> :ok
+      pid -> if Process.alive?(pid), do: GenServer.stop(pid), else: :ok
+    end
+
+    case :global.whereis_name(PreparedStatementCache) do
+      :undefined -> :ok
+      pid -> if Process.alive?(pid), do: GenServer.stop(pid), else: :ok
+    end
+
     case PreparedStatementCache.start_link([]) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok

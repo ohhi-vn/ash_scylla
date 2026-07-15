@@ -152,11 +152,10 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
 
         indexes ->
           indexes
-          |> Enum.map(fn
+          |> Enum.map_join("\n        ", fn
             {nil, col} -> ~s[secondary_index(#{inspect(col)})]
             {name, col} -> ~s[secondary_index(#{inspect(col)}, name: #{inspect(name)})]
           end)
-          |> Enum.join("\n        ")
       end
 
     scylla_body =
@@ -273,7 +272,7 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
             ~s[SELECT * FROM #{ks}."#{table}" WHERE name = 'test' ALLOW FILTERING]
           )
 
-        assert length(page.content || []) > 0
+        assert (page.content || []) != []
       end
     end
 
@@ -336,14 +335,17 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
             [
               {:id, :uuid, [primary_key?: true]},
               {:name, :string}
-            ], indexes: [{nil, :name}])
+            ],
+            indexes: [{nil, :name}]
+          )
 
         statements = AshScylla.DataLayer.SchemaMigration.generate(resource)
 
         create_stmt = Enum.find(statements, &String.starts_with?(&1, "CREATE TABLE"))
         assert create_stmt
 
-        assert create_stmt =~ ~s[CREATE TABLE IF NOT EXISTS "#{test_keyspace()}"."flow_render_test"]
+        assert create_stmt =~
+                 ~s[CREATE TABLE IF NOT EXISTS "#{test_keyspace()}"."flow_render_test"]
 
         index_stmt = Enum.find(statements, &String.starts_with?(&1, "CREATE INDEX"))
         assert index_stmt
@@ -390,7 +392,7 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
           )
 
         rows = page.content || []
-        assert length(rows) > 0
+        assert rows != []
       end
     end
 
@@ -498,7 +500,9 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
               {:name, :string},
               {:email, :string},
               {:status, :string}
-            ], indexes: [{nil, :email}, {"idx_custom_status", :status}])
+            ],
+            indexes: [{nil, :email}, {"idx_custom_status", :status}]
+          )
 
         statements = AshScylla.DataLayer.SchemaMigration.diff(resource, AshScylla.TestRepo)
 
@@ -555,7 +559,7 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
         {:ok, plan_statements} =
           AshScylla.DataLayer.SchemaMigration.plan(resource, AshScylla.TestRepo)
 
-        assert length(plan_statements) > 0
+        assert plan_statements != []
         assert Enum.any?(plan_statements, &String.contains?(&1, ~s[ADD "email"]))
 
         assert {:ok, _} =

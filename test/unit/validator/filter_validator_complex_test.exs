@@ -19,8 +19,7 @@ defmodule AshScylla.FilterValidatorComplexTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       table("users")
@@ -51,8 +50,7 @@ defmodule AshScylla.FilterValidatorComplexTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       table("authors")
@@ -77,8 +75,7 @@ defmodule AshScylla.FilterValidatorComplexTest do
       domain: nil,
       data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+    import AshScylla.DataLayer.Dsl
 
     scylla do
       table("strict_resource")

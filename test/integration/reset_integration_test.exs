@@ -117,7 +117,7 @@ defmodule AshScylla.ResetIntegrationTest do
       )
 
     case result do
-      {:ok, %Xandra.Page{content: rows}} -> length(rows || []) >= 1
+      {:ok, %Xandra.Page{content: rows}} -> (rows || []) != []
       _ -> false
     end
   end
@@ -231,8 +231,10 @@ defmodule AshScylla.ResetIntegrationTest do
 
   describe "mix ash_scylla.reset" do
     @tag :integration
-    test "drops keyspace and data, then recreates it", %{conn: conn, host: host, port: port} do
+    test "drops keyspace and data, then recreates it", %{conn: conn} do
       with_scylla(conn, fn conn ->
+        host = direct_host()
+        port = direct_port()
         keyspace = "ash_scylla_test"
 
         # Sanity: data exists before reset.
@@ -258,7 +260,6 @@ defmodule AshScylla.ResetIntegrationTest do
           # the keyspace is recreated, so poll for the table to actually be
           # gone instead of asserting immediately.
           refute table_gone?(verify_conn, keyspace, "reset_seed")
-
         after
           Xandra.stop(verify_conn)
         end

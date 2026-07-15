@@ -1,7 +1,7 @@
 defmodule AshScylla.SchemaTest do
   use ExUnit.Case, async: true
 
-  alias AshScylla.SchemaFixtures.{SampleSchema, EmptySchema}
+  alias AshScylla.SchemaFixtures.{EmptySchema, SampleSchema}
 
   describe "behaviour" do
     test "defines change/0 callback" do

@@ -437,12 +437,10 @@ defmodule AshScylla.DataLayer do
     # ScyllaDB doesn't support multi-statement transactions.
     # We execute the function directly and wrap errors.
     # For LWT operations, individual statements are already atomic.
-    try do
-      result = func.()
-      {:ok, result}
-    rescue
-      e -> {:error, Ash.Error.to_ash_error(e, __STACKTRACE__)}
-    end
+    result = func.()
+    {:ok, result}
+  rescue
+    e -> {:error, Ash.Error.to_ash_error(e, __STACKTRACE__)}
   end
 
   @impl Ash.DataLayer
@@ -791,8 +789,7 @@ defmodule AshScylla.DataLayer do
             # e.g. Games.Stats -> "games_stats", OfflineGame.Stats -> "offline_game_stats"
             segments
             |> Enum.take(-2)
-            |> Enum.map(&Macro.underscore/1)
-            |> Enum.join("_")
+            |> Enum.map_join("_", &Macro.underscore/1)
           else
             # No domain (test resources, etc.) — use just the last segment
             segments
@@ -2136,8 +2133,7 @@ defmodule AshScylla.DataLayer do
           if Ash.Resource.Info.domain(resource) do
             segments
             |> Enum.take(-2)
-            |> Enum.map(&Macro.underscore/1)
-            |> Enum.join("_")
+            |> Enum.map_join("_", &Macro.underscore/1)
           else
             segments
             |> List.last()
@@ -2502,7 +2498,7 @@ defmodule AshScylla.DataLayer do
   end
 
   def ash_type_to_cql({:tuple, element_types}) when is_list(element_types) do
-    inner = element_types |> Enum.map(&ash_type_to_cql/1) |> Enum.join(", ")
+    inner = Enum.map_join(element_types, ", ", &ash_type_to_cql/1)
     "tuple<#{inner}>"
   end
 

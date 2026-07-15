@@ -7,6 +7,8 @@ defmodule AshScylla.TtlExpirationIntegrationTest do
   """
   use ExUnit.Case, async: false
 
+  require Logger
+
   @moduletag :integration
 
   defp direct_connect?, do: System.get_env("SCYLLA_DIRECT") not in [nil, ""]
@@ -101,83 +103,99 @@ defmodule AshScylla.TtlExpirationIntegrationTest do
 
   describe "TTL expiration" do
     test "record with short TTL expires after timeout", %{conn: conn} do
-      if is_nil(conn), do: :ok
-      id = uid()
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        if is_nil(conn), do: :ok
+        id = uid()
 
-      # Insert with 2-second TTL
-      xq(conn, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?) USING TTL 2", [
-        id,
-        "Temporary"
-      ])
+        # Insert with 2-second TTL
+        xq(conn, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?) USING TTL 2", [
+          id,
+          "Temporary"
+        ])
 
-      # Record should exist immediately
-      result = xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id])
-      assert result.num_rows == 1
+        # Record should exist immediately
+        result = xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id])
+        assert result.num_rows == 1
 
-      # Wait for expiration
-      Process.sleep(3_000)
+        # Wait for expiration
+        Process.sleep(3_000)
 
-      # Record should be gone
-      result = xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id])
-      assert result.num_rows == 0
+        # Record should be gone
+        result = xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id])
+        assert result.num_rows == 0
+      end
     end
 
     test "record with long TTL persists", %{conn: conn} do
-      if is_nil(conn), do: :ok
-      id = uid()
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        if is_nil(conn), do: :ok
+        id = uid()
 
-      # Insert with 1-hour TTL
-      xq(conn, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?) USING TTL 3600", [
-        id,
-        "Persistent"
-      ])
+        # Insert with 1-hour TTL
+        xq(conn, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?) USING TTL 3600", [
+          id,
+          "Persistent"
+        ])
 
-      result = xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id])
-      assert result.num_rows == 1
+        result = xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id])
+        assert result.num_rows == 1
+      end
     end
 
     test "TTL column value decreases over time", %{conn: conn} do
-      if is_nil(conn), do: :ok
-      id = uid()
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        if is_nil(conn), do: :ok
+        id = uid()
 
-      xq(conn, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?) USING TTL 10", [
-        id,
-        "TTL Check"
-      ])
+        xq(conn, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?) USING TTL 10", [
+          id,
+          "TTL Check"
+        ])
 
-      # Check TTL value immediately — should be close to 10
-      result = xq(conn, "SELECT TTL(name) FROM ash_scylla_test.users WHERE id = ?", [id])
-      assert result.num_rows == 1
+        # Check TTL value immediately — should be close to 10
+        result = xq(conn, "SELECT TTL(name) FROM ash_scylla_test.users WHERE id = ?", [id])
+        assert result.num_rows == 1
 
-      # Wait a bit and check TTL decreased
-      Process.sleep(2_000)
+        # Wait a bit and check TTL decreased
+        Process.sleep(2_000)
 
-      result = xq(conn, "SELECT TTL(name) FROM ash_scylla_test.users WHERE id = ?", [id])
-      assert result.num_rows == 1
+        result = xq(conn, "SELECT TTL(name) FROM ash_scylla_test.users WHERE id = ?", [id])
+        assert result.num_rows == 1
+      end
     end
 
     test "updated record can have new TTL", %{conn: conn} do
-      if is_nil(conn), do: :ok
-      id = uid()
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        if is_nil(conn), do: :ok
+        id = uid()
 
-      # Insert with short TTL
-      xq(conn, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?) USING TTL 2", [
-        id,
-        "Short"
-      ])
+        # Insert with short TTL
+        xq(conn, "INSERT INTO ash_scylla_test.users (id, name) VALUES (?, ?) USING TTL 2", [
+          id,
+          "Short"
+        ])
 
-      # Update with longer TTL before expiration
-      xq(conn, "UPDATE ash_scylla_test.users USING TTL 3600 SET name = ? WHERE id = ?", [
-        "Extended",
-        id
-      ])
+        # Update with longer TTL before expiration
+        xq(conn, "UPDATE ash_scylla_test.users USING TTL 3600 SET name = ? WHERE id = ?", [
+          "Extended",
+          id
+        ])
 
-      # Wait past original TTL
-      Process.sleep(3_000)
+        # Wait past original TTL
+        Process.sleep(3_000)
 
-      # Record should still exist because of the updated TTL
-      result = xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id])
-      assert result.num_rows == 1
+        # Record should still exist because of the updated TTL
+        result = xq(conn, "SELECT * FROM ash_scylla_test.users WHERE id = ?", [id])
+        assert result.num_rows == 1
+      end
     end
   end
 end

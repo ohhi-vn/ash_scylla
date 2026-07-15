@@ -156,9 +156,11 @@ defmodule AshScylla.MigrationGeneratorTest do
 
       # Each file's module name embeds the resource key, so they differ.
       contents = Enum.map(files, &File.read!(Path.join(tmp, &1)))
-      modules = Enum.map(contents, fn c ->
-        Regex.run(~r/defmodule (\S+) do/, c) |> Enum.at(1)
-      end)
+
+      modules =
+        Enum.map(contents, fn c ->
+          Regex.run(~r/defmodule (\S+) do/, c) |> Enum.at(1)
+        end)
 
       assert length(Enum.uniq(modules)) == 2
       assert Enum.all?(modules, &String.contains?(&1, "New"))
@@ -195,13 +197,13 @@ defmodule AshScylla.MigrationGeneratorTest do
       tmp = briefly_make_dir()
 
       assert ExUnit.CaptureIO.capture_io(fn ->
-        AshScylla.MigrationGenerator.generate(
-          domains: [DomainA, DomainB],
-          migration_path: tmp,
-          snapshot_path: tmp,
-          dev: true
-        )
-      end) =~ "multiple resources map to table users"
+               AshScylla.MigrationGenerator.generate(
+                 domains: [DomainA, DomainB],
+                 migration_path: tmp,
+                 snapshot_path: tmp,
+                 dev: true
+               )
+             end) =~ "multiple resources map to table users"
 
       files = tmp |> File.ls!() |> Enum.filter(&String.ends_with?(&1, ".exs"))
       assert length(files) == 2

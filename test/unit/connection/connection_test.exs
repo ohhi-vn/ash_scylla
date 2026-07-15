@@ -27,6 +27,54 @@ defmodule AshScylla.ConnectionTest do
     name
   end
 
+  # ── build_xandra_opts / keyspace + pool forwarding ───────────────────────
+
+  describe "build_xandra_opts/2 (keyspace + pool forwarding)" do
+    test "forwards :keyspace to Xandra so it is applied to every pooled connection" do
+      opts = [
+        nodes: ["127.0.0.1:9042"],
+        keyspace: "my_keyspace",
+        connect_timeout: 1234,
+        authentication: {:plain, "u", "p"}
+      ]
+
+      xandra_opts = Connection.build_xandra_opts(opts, ["127.0.0.1:9042"])
+
+      # The keyspace must reach Xandra so that a Xandra.Cluster pool applies
+      # `USE keyspace` to *all* connections in the pool (not just one), which is
+      # what prevents the "No keyspace has been specified" error on reads.
+      assert Keyword.get(xandra_opts, :keyspace) == "my_keyspace"
+      assert Keyword.get(xandra_opts, :nodes) == ["127.0.0.1:9042"]
+      assert Keyword.get(xandra_opts, :connect_timeout) == 1234
+      assert Keyword.get(xandra_opts, :authentication) == {:plain, "u", "p"}
+    end
+
+    test "forwards :pool_size so the connection pool can be sized" do
+      opts = [nodes: ["127.0.0.1:9042"], keyspace: "ks", pool_size: 8]
+      xandra_opts = Connection.build_xandra_opts(opts, ["127.0.0.1:9042"])
+      assert Keyword.get(xandra_opts, :pool_size) == 8
+    end
+
+    test "omits :keyspace when not configured" do
+      opts = [nodes: ["127.0.0.1:9042"]]
+      xandra_opts = Connection.build_xandra_opts(opts, ["127.0.0.1:9042"])
+      refute Keyword.has_key?(xandra_opts, :keyspace)
+    end
+
+    test "omits :pool_size when not configured" do
+      opts = [nodes: ["127.0.0.1:9042"], keyspace: "ks"]
+      xandra_opts = Connection.build_xandra_opts(opts, ["127.0.0.1:9042"])
+      refute Keyword.has_key?(xandra_opts, :pool_size)
+    end
+
+    test "does not leak unknown options into Xandra opts" do
+      opts = [nodes: ["127.0.0.1:9042"], keyspace: "ks", name: MyTestConn, foo: :bar]
+      xandra_opts = Connection.build_xandra_opts(opts, ["127.0.0.1:9042"])
+      refute Keyword.has_key?(xandra_opts, :name)
+      refute Keyword.has_key?(xandra_opts, :foo)
+    end
+  end
+
   # ── start_link / child_spec ────────────────────────────────────────────────
 
   describe "start_link/1" do

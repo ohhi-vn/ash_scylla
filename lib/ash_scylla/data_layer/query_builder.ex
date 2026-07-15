@@ -40,11 +40,11 @@ defmodule AshScylla.DataLayer.QueryBuilder do
 
   require Logger
 
-  alias AshScylla.Query
   alias AshScylla.DataLayer
   alias AshScylla.DataLayer.Dsl
   alias AshScylla.DataLayer.Types
   alias AshScylla.Identifier
+  alias AshScylla.Query
 
   @doc """
   Builds an optimized CQL query from the data layer query struct.

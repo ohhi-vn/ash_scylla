@@ -9,8 +9,8 @@ defmodule AshScylla.MigrationSecurityTest do
 
   use ExUnit.Case, async: true
 
-  alias AshScylla.Migration
   alias AshScylla.Identifier
+  alias AshScylla.Migration
 
   # ---------------------------------------------------------------------------
   # CQL identifier quoting prevents injection

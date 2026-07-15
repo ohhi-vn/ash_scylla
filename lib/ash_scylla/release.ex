@@ -114,6 +114,13 @@ defmodule AshScylla.Release do
 
     resources = find_resources(all_repos, opts)
 
+    # In a release `eval` context the repo GenServer is not part of any
+    # supervision tree, so queries through `NotificationService.Repo` would
+    # fail with `:not_connected`. Start a temporary connection (the keyspace
+    # was just created above, so this connects successfully) so that
+    # `plan/2`/`migrate/2` can diff and apply schema against it.
+    ensure_repo_started(repo)
+
     dry_run = Keyword.get(opts, :dry_run, false)
 
     if dry_run do
@@ -210,11 +217,14 @@ defmodule AshScylla.Release do
 
   @doc false
   defp auto_discover_resources do
-    apps = Application.started_applications()
+    # In a release `eval` context the project app is *loaded* (via
+    # `Application.load/1`) but not *started*, so `started_applications/0`
+    # would miss it and yield zero resources. Scan loaded apps instead.
+    apps = Application.loaded_applications()
 
     for {app, _, _} <- apps,
-        modules <- get_app_modules(app),
-        module <- modules,
+        module <- get_app_modules(app),
+        Code.ensure_compiled(module) == {:module, module},
         function_exported?(module, :__ash_scylla__, 1),
         do: module
   rescue
@@ -223,8 +233,27 @@ defmodule AshScylla.Release do
 
   defp get_app_modules(app) do
     case :application.get_key(app, :modules) do
-      {:ok, modules} when is_list(modules) -> [modules]
+      {:ok, modules} when is_list(modules) -> modules
       :undefined -> []
+    end
+  end
+
+  @doc false
+  defp ensure_repo_started(repo) do
+    conn_opts = [name: repo] ++ AshScylla.Repo.config_to_conn_opts(repo)
+
+    case AshScylla.Connection.start_link(conn_opts) do
+      {:ok, _pid} ->
+        :ok
+
+      {:error, {:already_started, _pid}} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "AshScylla.Release: could not start repo connection #{inspect(repo)}: " <>
+            "#{inspect(reason)}. Migrations that query the cluster may fail."
+        )
     end
   end
 

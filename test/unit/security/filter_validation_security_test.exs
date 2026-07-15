@@ -7,8 +7,8 @@ defmodule AshScylla.FilterValidationSecurityTest do
 
   use ExUnit.Case, async: true
 
-  alias AshScylla.DataLayer.FilterValidator
   alias AshScylla.DataLayer.Dsl
+  alias AshScylla.DataLayer.FilterValidator
 
   # ---------------------------------------------------------------------------
   # Filter on unindexed columns must be rejected

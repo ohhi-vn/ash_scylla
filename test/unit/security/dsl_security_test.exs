@@ -77,7 +77,7 @@ defmodule AshScylla.DslSecurityTest do
       for idx <- indexes do
         # Each index should have a columns list
         assert is_list(idx.columns)
-        assert length(idx.columns) > 0
+        assert idx.columns != []
         # Columns should be atoms
         for col <- idx.columns do
           assert is_atom(col)

@@ -880,9 +880,7 @@ defmodule AshScylla.DataLayer.AggregateTest do
     end
 
     relationships do
-      has_many(:redeems, RedeemResource,
-        destination_attribute: :user_id
-      )
+      has_many(:redeems, RedeemResource, destination_attribute: :user_id)
     end
   end
 

@@ -170,23 +170,21 @@ defmodule AshScylla.DataLayer.BugFixes2Test do
         @moduledoc false
 
         def query(query, _params, _opts \\ []) do
-          cond do
-            query =~ "system_schema.columns" ->
-              {:ok,
-               %Xandra.Page{
-                 content: [
-                   %{
-                     "column_name" => "id",
-                     "type" => "uuid",
-                     "kind" => "partition_key",
-                     "position" => 0,
-                     "clustering_order" => "none"
-                   }
-                 ]
-               }}
-
-            true ->
-              {:ok, %Xandra.Page{content: []}}
+          if query =~ "system_schema.columns" do
+            {:ok,
+             %Xandra.Page{
+               content: [
+                 %{
+                   "column_name" => "id",
+                   "type" => "uuid",
+                   "kind" => "partition_key",
+                   "position" => 0,
+                   "clustering_order" => "none"
+                 }
+               ]
+             }}
+          else
+            {:ok, %Xandra.Page{content: []}}
           end
         end
       end

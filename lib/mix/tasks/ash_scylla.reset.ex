@@ -130,7 +130,7 @@ defmodule Mix.Tasks.AshScylla.Reset do
         AshScylla.Connection.stop(temp_name)
 
         case result do
-          {:ok, %Xandra.Page{content: rows}} when is_list(rows) -> length(rows) > 0
+          {:ok, %Xandra.Page{content: rows}} when is_list(rows) -> rows != []
           {:ok, %Xandra.Page{content: nil}} -> false
           _ -> true
         end
@@ -179,8 +179,11 @@ defmodule Mix.Tasks.AshScylla.Reset do
         nodes = repo.nodes()
 
         case AshScylla.Connection.start_link(name: repo, nodes: nodes, keyspace: keyspace) do
-          {:ok, _} -> :ok
-          {:error, reason} -> Mix.raise("Failed to reconnect repo after reset: #{inspect(reason)}")
+          {:ok, _} ->
+            :ok
+
+          {:error, reason} ->
+            Mix.raise("Failed to reconnect repo after reset: #{inspect(reason)}")
         end
     end
   rescue
@@ -318,7 +321,7 @@ defmodule Mix.Tasks.AshScylla.Reset do
         AshScylla.Connection.stop(temp_name)
 
         case result do
-          {:ok, %Xandra.Page{content: rows}} -> length(rows || []) > 0
+          {:ok, %Xandra.Page{content: rows}} -> (rows || []) != []
           _ -> true
         end
 

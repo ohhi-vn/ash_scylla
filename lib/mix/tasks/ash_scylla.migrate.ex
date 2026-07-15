@@ -533,7 +533,14 @@ defmodule Mix.Tasks.AshScylla.Migrate do
       {0, 0}
     else
       # Only start a real connection if not in dry-run mode
-      if !dry_run do
+      if dry_run do
+        # In dry run mode, just report what would be done
+        Enum.each(resources, fn resource ->
+          Mix.shell().info("  #{inspect(resource)}: would auto-migrate")
+        end)
+
+        {0, 0}
+      else
         # The repo may already be connected (e.g. after a reset). If so,
         # reuse the existing connection rather than crashing on
         # {:error, {:already_started, _}}.
@@ -561,13 +568,6 @@ defmodule Mix.Tasks.AshScylla.Migrate do
         count = Enum.count(results, &(&1 == :ok))
         errors = Enum.count(results, &(&1 == :error))
         {count, errors}
-      else
-        # In dry run mode, just report what would be done
-        Enum.each(resources, fn resource ->
-          Mix.shell().info("  #{inspect(resource)}: would auto-migrate")
-        end)
-
-        {0, 0}
       end
     end
   end

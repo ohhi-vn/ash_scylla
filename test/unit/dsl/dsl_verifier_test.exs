@@ -25,8 +25,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("valid_table")
@@ -50,8 +49,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("full_config_table")
@@ -81,8 +79,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("indexed_table")
@@ -111,8 +108,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("mv_table")
@@ -138,8 +134,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("consistency_table")
@@ -170,7 +165,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
+          import AshScylla.DataLayer.Dsl
 
           attributes do
             uuid_primary_key(:id)
@@ -197,8 +192,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("mt_table")
@@ -230,8 +224,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("identity_table")
@@ -263,8 +256,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("agg_table")
@@ -295,8 +287,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("bf_table")
@@ -328,8 +319,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("prep_table")
@@ -360,8 +350,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("val_table")
@@ -392,8 +381,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("chg_table")
@@ -424,8 +412,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("ci_table")
@@ -456,8 +443,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("ac_table")
@@ -488,8 +474,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("dc_table")
@@ -520,8 +505,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("desc_table")
@@ -552,8 +536,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("pipe_table")
@@ -584,8 +567,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
           end
@@ -614,8 +596,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("multi_a_table")
@@ -635,8 +616,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("multi_b_table")
@@ -668,8 +648,7 @@ defmodule AshScylla.DslVerifierTest do
             domain: nil,
             data_layer: AshScylla.DataLayer
 
-  import AshScylla.DataLayer.Dsl
-
+          import AshScylla.DataLayer.Dsl
 
           scylla do
             table("all_opts_table")

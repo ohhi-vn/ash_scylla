@@ -81,20 +81,18 @@ defmodule AshScylla.DataLayer.SchemaUtils do
   """
   @spec unindexable_columns(module()) :: [atom()]
   def unindexable_columns(resource) do
-    try do
-      pk_attrs =
-        resource
-        |> Ash.Resource.Info.attributes()
-        |> Enum.filter(& &1.primary_key?)
+    pk_attrs =
+      resource
+      |> Ash.Resource.Info.attributes()
+      |> Enum.filter(& &1.primary_key?)
 
-      case pk_attrs do
-        [sole_partition_key] -> [sole_partition_key.name]
-        _ -> []
-      end
-    rescue
-      # Plain test modules (not Ash resources) have no primary key metadata
+    case pk_attrs do
+      [sole_partition_key] -> [sole_partition_key.name]
       _ -> []
     end
+  rescue
+    # Plain test modules (not Ash resources) have no primary key metadata
+    _ -> []
   end
 
   @doc """

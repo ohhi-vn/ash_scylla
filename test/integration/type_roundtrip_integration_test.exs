@@ -13,6 +13,8 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
 
   use ExUnit.Case, async: false
 
+  require Logger
+
   # Enable source annotations for debugging (see https://spark.hexdocs.pm/use-source-annotations.html)
   setup do
     debug_info? = Code.get_compiler_option(:debug_info)
@@ -227,428 +229,498 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
 
   describe "Type round-trip through real ScyllaDB" do
     test "string type: Ash :string → ScyllaDB TEXT → Ash :string", %{conn: conn} do
-      if is_nil(conn), do: :ok
-      id = uid()
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        id = uid()
 
-      # Write directly to ScyllaDB
-      execute_cql(
-        conn,
-        "INSERT INTO ash_scylla_type_test.roundtrip (id, str_val) VALUES (?, ?)",
-        [id, "Hello ScyllaDB"]
-      )
+        # Write directly to ScyllaDB
+        execute_cql(
+          conn,
+          "INSERT INTO ash_scylla_type_test.roundtrip (id, str_val) VALUES (?, ?)",
+          [id, "Hello ScyllaDB"]
+        )
 
-      # Read back via DataLayer
-      query = %AshScylla.Query{
-        resource: nil,
-        repo: nil,
-        table: "ash_scylla_type_test.roundtrip",
-        select: [:id, :str_val],
-        filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
-        limit: 1
-      }
+        # Read back via DataLayer
+        query = %AshScylla.Query{
+          resource: nil,
+          repo: nil,
+          table: "ash_scylla_type_test.roundtrip",
+          select: [:id, :str_val],
+          filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
+          limit: 1
+        }
 
-      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
-      encoded = Enum.map(params, &encode_param/1)
-      {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
+        {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
+        encoded = Enum.map(params, &encode_param/1)
 
-      [_read_id, read_str] = row
-      assert read_str == "Hello ScyllaDB"
-      assert is_binary(read_str)
+        {:ok, %Xandra.Page{content: [row]}} =
+          Xandra.execute(conn, cql, encoded, consistency: :one)
+
+        [_read_id, read_str] = row
+        assert read_str == "Hello ScyllaDB"
+        assert is_binary(read_str)
+      end
     end
 
     test "integer type: Ash :integer → ScyllaDB BIGINT → Ash :integer", %{conn: conn} do
-      if is_nil(conn), do: :ok
-      id = uid()
-      large_int = 9_223_372_036_854_775_807
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        id = uid()
+        large_int = 9_223_372_036_854_775_807
 
-      execute_cql(
-        conn,
-        "INSERT INTO ash_scylla_type_test.roundtrip (id, int_val) VALUES (?, ?)",
-        [id, large_int]
-      )
+        execute_cql(
+          conn,
+          "INSERT INTO ash_scylla_type_test.roundtrip (id, int_val) VALUES (?, ?)",
+          [id, large_int]
+        )
 
-      query = %AshScylla.Query{
-        resource: nil,
-        repo: nil,
-        table: "ash_scylla_type_test.roundtrip",
-        select: [:id, :int_val],
-        filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
-        limit: 1
-      }
+        query = %AshScylla.Query{
+          resource: nil,
+          repo: nil,
+          table: "ash_scylla_type_test.roundtrip",
+          select: [:id, :int_val],
+          filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
+          limit: 1
+        }
 
-      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
-      encoded = Enum.map(params, &encode_param/1)
-      {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
+        {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
+        encoded = Enum.map(params, &encode_param/1)
 
-      [_read_id, read_int] = row
-      assert read_int == large_int
-      assert is_integer(read_int)
+        {:ok, %Xandra.Page{content: [row]}} =
+          Xandra.execute(conn, cql, encoded, consistency: :one)
+
+        [_read_id, read_int] = row
+        assert read_int == large_int
+        assert is_integer(read_int)
+      end
     end
 
     test "float type: Ash :float → ScyllaDB DOUBLE → Ash :float", %{conn: conn} do
-      if is_nil(conn), do: :ok
-      id = uid()
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        id = uid()
 
-      execute_cql(
-        conn,
-        "INSERT INTO ash_scylla_type_test.roundtrip (id, float_val) VALUES (?, ?)",
-        [id, 3.14]
-      )
+        execute_cql(
+          conn,
+          "INSERT INTO ash_scylla_type_test.roundtrip (id, float_val) VALUES (?, ?)",
+          [id, 3.14]
+        )
 
-      query = %AshScylla.Query{
-        resource: nil,
-        repo: nil,
-        table: "ash_scylla_type_test.roundtrip",
-        select: [:id, :float_val],
-        filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
-        limit: 1
-      }
+        query = %AshScylla.Query{
+          resource: nil,
+          repo: nil,
+          table: "ash_scylla_type_test.roundtrip",
+          select: [:id, :float_val],
+          filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
+          limit: 1
+        }
 
-      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
-      encoded = Enum.map(params, &encode_param/1)
-      {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
+        {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
+        encoded = Enum.map(params, &encode_param/1)
 
-      [_read_id, read_float] = row
-      assert is_float(read_float)
-      # DOUBLE is 64-bit, so precision is preserved
-      assert_in_delta(read_float, 3.14, 0.0001)
+        {:ok, %Xandra.Page{content: [row]}} =
+          Xandra.execute(conn, cql, encoded, consistency: :one)
+
+        [_read_id, read_float] = row
+        assert is_float(read_float)
+        # DOUBLE is 64-bit, so precision is preserved
+        assert_in_delta(read_float, 3.14, 0.0001)
+      end
     end
 
     test "boolean type: Ash :boolean → ScyllaDB BOOLEAN → Ash :boolean", %{conn: conn} do
-      if is_nil(conn), do: :ok
-      id = uid()
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        id = uid()
 
-      execute_cql(
-        conn,
-        "INSERT INTO ash_scylla_type_test.roundtrip (id, bool_val) VALUES (?, ?)",
-        [id, true]
-      )
+        execute_cql(
+          conn,
+          "INSERT INTO ash_scylla_type_test.roundtrip (id, bool_val) VALUES (?, ?)",
+          [id, true]
+        )
 
-      query = %AshScylla.Query{
-        resource: nil,
-        repo: nil,
-        table: "ash_scylla_type_test.roundtrip",
-        select: [:id, :bool_val],
-        filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
-        limit: 1
-      }
+        query = %AshScylla.Query{
+          resource: nil,
+          repo: nil,
+          table: "ash_scylla_type_test.roundtrip",
+          select: [:id, :bool_val],
+          filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
+          limit: 1
+        }
 
-      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
-      encoded = Enum.map(params, &encode_param/1)
-      {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
+        {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
+        encoded = Enum.map(params, &encode_param/1)
 
-      [_read_id, read_bool] = row
-      assert read_bool == true
-      assert is_boolean(read_bool)
+        {:ok, %Xandra.Page{content: [row]}} =
+          Xandra.execute(conn, cql, encoded, consistency: :one)
+
+        [_read_id, read_bool] = row
+        assert read_bool == true
+        assert is_boolean(read_bool)
+      end
     end
 
     test "timestamp type: Ash :utc_datetime → ScyllaDB TIMESTAMP → Ash :utc_datetime", %{
       conn: conn
     } do
-      if is_nil(conn), do: :ok
-      id = uid()
-      now = DateTime.utc_now() |> DateTime.truncate(:millisecond)
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        id = uid()
+        now = DateTime.utc_now() |> DateTime.truncate(:millisecond)
 
-      execute_cql(
-        conn,
-        "INSERT INTO ash_scylla_type_test.roundtrip (id, timestamp_val) VALUES (?, ?)",
-        [id, now]
-      )
+        execute_cql(
+          conn,
+          "INSERT INTO ash_scylla_type_test.roundtrip (id, timestamp_val) VALUES (?, ?)",
+          [id, now]
+        )
 
-      query = %AshScylla.Query{
-        resource: nil,
-        repo: nil,
-        table: "ash_scylla_type_test.roundtrip",
-        select: [:id, :timestamp_val],
-        filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
-        limit: 1
-      }
+        query = %AshScylla.Query{
+          resource: nil,
+          repo: nil,
+          table: "ash_scylla_type_test.roundtrip",
+          select: [:id, :timestamp_val],
+          filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
+          limit: 1
+        }
 
-      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
-      encoded = Enum.map(params, &encode_param/1)
-      {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
+        {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
+        encoded = Enum.map(params, &encode_param/1)
 
-      [_read_id, read_ts] = row
-      assert %DateTime{} = read_ts
-      # Timestamps should be equal (truncated to millisecond)
-      assert DateTime.compare(read_ts, now) == :eq
+        {:ok, %Xandra.Page{content: [row]}} =
+          Xandra.execute(conn, cql, encoded, consistency: :one)
+
+        [_read_id, read_ts] = row
+        assert %DateTime{} = read_ts
+        # Timestamps should be equal (truncated to millisecond)
+        assert DateTime.compare(read_ts, now) == :eq
+      end
     end
 
     test "date type: Ash :date → ScyllaDB DATE → Ash :date", %{conn: conn} do
-      if is_nil(conn), do: :ok
-      id = uid()
-      today = ~D[2024-06-15]
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        id = uid()
+        today = ~D[2024-06-15]
 
-      execute_cql(
-        conn,
-        "INSERT INTO ash_scylla_type_test.roundtrip (id, date_val) VALUES (?, ?)",
-        [id, today]
-      )
+        execute_cql(
+          conn,
+          "INSERT INTO ash_scylla_type_test.roundtrip (id, date_val) VALUES (?, ?)",
+          [id, today]
+        )
 
-      query = %AshScylla.Query{
-        resource: nil,
-        repo: nil,
-        table: "ash_scylla_type_test.roundtrip",
-        select: [:id, :date_val],
-        filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
-        limit: 1
-      }
+        query = %AshScylla.Query{
+          resource: nil,
+          repo: nil,
+          table: "ash_scylla_type_test.roundtrip",
+          select: [:id, :date_val],
+          filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
+          limit: 1
+        }
 
-      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
-      encoded = Enum.map(params, &encode_param/1)
-      {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
+        {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
+        encoded = Enum.map(params, &encode_param/1)
 
-      [_read_id, read_date] = row
-      assert %Date{} = read_date
-      assert read_date == today
+        {:ok, %Xandra.Page{content: [row]}} =
+          Xandra.execute(conn, cql, encoded, consistency: :one)
+
+        [_read_id, read_date] = row
+        assert %Date{} = read_date
+        assert read_date == today
+      end
     end
 
     test "time type: Ash :time → ScyllaDB TIME → Ash :time", %{conn: conn} do
-      if is_nil(conn), do: :ok
-      id = uid()
-      now_time = ~T[14:30:00]
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        id = uid()
+        now_time = ~T[14:30:00]
 
-      execute_cql(
-        conn,
-        "INSERT INTO ash_scylla_type_test.roundtrip (id, time_val) VALUES (?, ?)",
-        [id, now_time]
-      )
+        execute_cql(
+          conn,
+          "INSERT INTO ash_scylla_type_test.roundtrip (id, time_val) VALUES (?, ?)",
+          [id, now_time]
+        )
 
-      query = %AshScylla.Query{
-        resource: nil,
-        repo: nil,
-        table: "ash_scylla_type_test.roundtrip",
-        select: [:id, :time_val],
-        filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
-        limit: 1
-      }
+        query = %AshScylla.Query{
+          resource: nil,
+          repo: nil,
+          table: "ash_scylla_type_test.roundtrip",
+          select: [:id, :time_val],
+          filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
+          limit: 1
+        }
 
-      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
-      encoded = Enum.map(params, &encode_param/1)
-      {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
+        {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
+        encoded = Enum.map(params, &encode_param/1)
 
-      [_read_id, read_time] = row
-      assert %Time{} = read_time
+        {:ok, %Xandra.Page{content: [row]}} =
+          Xandra.execute(conn, cql, encoded, consistency: :one)
+
+        [_read_id, read_time] = row
+        assert %Time{} = read_time
+      end
     end
 
     test "list type: Ash {:array, :string} → ScyllaDB LIST<TEXT> → Ash list", %{conn: conn} do
-      if is_nil(conn), do: :ok
-      id = uid()
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        id = uid()
 
-      execute_cql(
-        conn,
-        "INSERT INTO ash_scylla_type_test.roundtrip (id, list_val) VALUES (?, ?)",
-        [id, ["elixir", "phoenix", "scylla"]]
-      )
+        execute_cql(
+          conn,
+          "INSERT INTO ash_scylla_type_test.roundtrip (id, list_val) VALUES (?, ?)",
+          [id, ["elixir", "phoenix", "scylla"]]
+        )
 
-      query = %AshScylla.Query{
-        resource: nil,
-        repo: nil,
-        table: "ash_scylla_type_test.roundtrip",
-        select: [:id, :list_val],
-        filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
-        limit: 1
-      }
+        query = %AshScylla.Query{
+          resource: nil,
+          repo: nil,
+          table: "ash_scylla_type_test.roundtrip",
+          select: [:id, :list_val],
+          filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
+          limit: 1
+        }
 
-      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
-      encoded = Enum.map(params, &encode_param/1)
-      {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
+        {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
+        encoded = Enum.map(params, &encode_param/1)
 
-      [_read_id, read_list] = row
-      assert is_list(read_list)
-      assert length(read_list) == 3
+        {:ok, %Xandra.Page{content: [row]}} =
+          Xandra.execute(conn, cql, encoded, consistency: :one)
+
+        [_read_id, read_list] = row
+        assert is_list(read_list)
+        assert length(read_list) == 3
+      end
     end
 
     test "set type: ScyllaDB SET<INT> round-trip", %{conn: conn} do
-      if is_nil(conn), do: :ok
-      id = uid()
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        id = uid()
 
-      execute_cql(
-        conn,
-        "INSERT INTO ash_scylla_type_test.roundtrip (id, set_val) VALUES (?, ?)",
-        [id, MapSet.new([1, 2, 3])]
-      )
+        execute_cql(
+          conn,
+          "INSERT INTO ash_scylla_type_test.roundtrip (id, set_val) VALUES (?, ?)",
+          [id, MapSet.new([1, 2, 3])]
+        )
 
-      query = %AshScylla.Query{
-        resource: nil,
-        repo: nil,
-        table: "ash_scylla_type_test.roundtrip",
-        select: [:id, :set_val],
-        filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
-        limit: 1
-      }
+        query = %AshScylla.Query{
+          resource: nil,
+          repo: nil,
+          table: "ash_scylla_type_test.roundtrip",
+          select: [:id, :set_val],
+          filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
+          limit: 1
+        }
 
-      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
-      encoded = Enum.map(params, &encode_param/1)
-      {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
+        {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
+        encoded = Enum.map(params, &encode_param/1)
 
-      [_read_id, read_set] = row
-      assert %MapSet{} = read_set
-      assert MapSet.size(read_set) == 3
+        {:ok, %Xandra.Page{content: [row]}} =
+          Xandra.execute(conn, cql, encoded, consistency: :one)
+
+        [_read_id, read_set] = row
+        assert %MapSet{} = read_set
+        assert MapSet.size(read_set) == 3
+      end
     end
 
     test "map type: ScyllaDB MAP<TEXT, TEXT> round-trip", %{conn: conn} do
-      if is_nil(conn), do: :ok
-      id = uid()
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        id = uid()
 
-      execute_cql(
-        conn,
-        "INSERT INTO ash_scylla_type_test.roundtrip (id, map_val) VALUES (?, ?)",
-        [id, %{"key1" => "value1", "key2" => "value2"}]
-      )
+        execute_cql(
+          conn,
+          "INSERT INTO ash_scylla_type_test.roundtrip (id, map_val) VALUES (?, ?)",
+          [id, %{"key1" => "value1", "key2" => "value2"}]
+        )
 
-      query = %AshScylla.Query{
-        resource: nil,
-        repo: nil,
-        table: "ash_scylla_type_test.roundtrip",
-        select: [:id, :map_val],
-        filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
-        limit: 1
-      }
+        query = %AshScylla.Query{
+          resource: nil,
+          repo: nil,
+          table: "ash_scylla_type_test.roundtrip",
+          select: [:id, :map_val],
+          filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
+          limit: 1
+        }
 
-      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
-      encoded = Enum.map(params, &encode_param/1)
-      {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
+        {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
+        encoded = Enum.map(params, &encode_param/1)
 
-      [_read_id, read_map] = row
-      assert is_map(read_map)
-      assert map_size(read_map) == 2
+        {:ok, %Xandra.Page{content: [row]}} =
+          Xandra.execute(conn, cql, encoded, consistency: :one)
+
+        [_read_id, read_map] = row
+        assert is_map(read_map)
+        assert map_size(read_map) == 2
+      end
     end
 
     test "blob type: ScyllaDB BLOB round-trip", %{conn: conn} do
-      if is_nil(conn), do: :ok
-      id = uid()
-      binary_data = <<0, 1, 2, 255, 128, 64>>
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        id = uid()
+        binary_data = <<0, 1, 2, 255, 128, 64>>
 
-      execute_cql(
-        conn,
-        "INSERT INTO ash_scylla_type_test.roundtrip (id, blob_val) VALUES (?, ?)",
-        [id, binary_data]
-      )
+        execute_cql(
+          conn,
+          "INSERT INTO ash_scylla_type_test.roundtrip (id, blob_val) VALUES (?, ?)",
+          [id, binary_data]
+        )
 
-      query = %AshScylla.Query{
-        resource: nil,
-        repo: nil,
-        table: "ash_scylla_type_test.roundtrip",
-        select: [:id, :blob_val],
-        filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
-        limit: 1
-      }
+        query = %AshScylla.Query{
+          resource: nil,
+          repo: nil,
+          table: "ash_scylla_type_test.roundtrip",
+          select: [:id, :blob_val],
+          filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
+          limit: 1
+        }
 
-      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
-      encoded = Enum.map(params, &encode_param/1)
-      {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
+        {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
+        encoded = Enum.map(params, &encode_param/1)
 
-      [_read_id, read_blob] = row
-      assert is_binary(read_blob)
-      assert byte_size(read_blob) == 6
+        {:ok, %Xandra.Page{content: [row]}} =
+          Xandra.execute(conn, cql, encoded, consistency: :one)
+
+        [_read_id, read_blob] = row
+        assert is_binary(read_blob)
+        assert byte_size(read_blob) == 6
+      end
     end
 
     test "atom type: Ash :atom → ScyllaDB TEXT → Ash :atom", %{conn: conn} do
-      if is_nil(conn), do: :ok
-      id = uid()
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        id = uid()
 
-      # Write atom value as text
-      execute_cql(
-        conn,
-        "INSERT INTO ash_scylla_type_test.roundtrip (id, atom_val) VALUES (?, ?)",
-        [id, "active"]
-      )
+        # Write atom value as text
+        execute_cql(
+          conn,
+          "INSERT INTO ash_scylla_type_test.roundtrip (id, atom_val) VALUES (?, ?)",
+          [id, "active"]
+        )
 
-      # Read back - the value should be a string from ScyllaDB
-      query = %AshScylla.Query{
-        resource: nil,
-        repo: nil,
-        table: "ash_scylla_type_test.roundtrip",
-        select: [:id, :atom_val],
-        filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
-        limit: 1
-      }
+        # Read back - the value should be a string from ScyllaDB
+        query = %AshScylla.Query{
+          resource: nil,
+          repo: nil,
+          table: "ash_scylla_type_test.roundtrip",
+          select: [:id, :atom_val],
+          filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
+          limit: 1
+        }
 
-      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
-      encoded = Enum.map(params, &encode_param/1)
-      {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
+        {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
+        encoded = Enum.map(params, &encode_param/1)
 
-      [_read_id, read_atom] = row
-      assert read_atom == "active"
-      assert is_binary(read_atom)
+        {:ok, %Xandra.Page{content: [row]}} =
+          Xandra.execute(conn, cql, encoded, consistency: :one)
+
+        [_read_id, read_atom] = row
+        assert read_atom == "active"
+        assert is_binary(read_atom)
+      end
     end
 
     test "LIMIT parameter uses int32-compatible encoding", %{conn: conn} do
-      if is_nil(conn), do: :ok
-      id = uid()
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        id = uid()
 
-      execute_cql(
-        conn,
-        "INSERT INTO ash_scylla_type_test.roundtrip (id, str_val) VALUES (?, ?)",
-        [id, "limit test"]
-      )
+        execute_cql(
+          conn,
+          "INSERT INTO ash_scylla_type_test.roundtrip (id, str_val) VALUES (?, ?)",
+          [id, "limit test"]
+        )
 
-      query = %AshScylla.Query{
-        resource: nil,
-        repo: nil,
-        table: "ash_scylla_type_test.roundtrip",
-        select: [:id, :str_val],
-        filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
-        limit: 250
-      }
+        query = %AshScylla.Query{
+          resource: nil,
+          repo: nil,
+          table: "ash_scylla_type_test.roundtrip",
+          select: [:id, :str_val],
+          filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
+          limit: 250
+        }
 
-      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
+        {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
 
-      # The limit param is tagged as {"int", value} for ScyllaDB INT type compatibility
-      assert cql =~ "LIMIT ?"
-      assert {"int", 250} in params
+        # The limit param is tagged as {"int", value} for ScyllaDB INT type compatibility
+        assert cql =~ "LIMIT ?"
+        assert {"int", 250} in params
 
-      # Execute the query to verify it works with ScyllaDB
-      encoded = Enum.map(params, &encode_param/1)
-      {:ok, %Xandra.Page{content: [_row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
+        # Execute the query to verify it works with ScyllaDB
+        encoded = Enum.map(params, &encode_param/1)
+
+        {:ok, %Xandra.Page{content: [_row]}} =
+          Xandra.execute(conn, cql, encoded, consistency: :one)
+      end
     end
 
     test "multiple types in single row round-trip", %{conn: conn} do
-      if is_nil(conn), do: :ok
-      id = uid()
+      if is_nil(conn) do
+        Logger.warning("No ScyllaDB connection available — skipping test")
+      else
+        id = uid()
 
-      execute_cql(
-        conn,
-        """
-        INSERT INTO ash_scylla_type_test.roundtrip
-          (id, str_val, int_val, float_val, bool_val, timestamp_val, date_val, time_val)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        [id, "test", 42, 3.14, true, ~U[2024-06-15 10:30:00Z], ~D[2024-06-15], ~T[10:30:00]]
-      )
+        execute_cql(
+          conn,
+          """
+          INSERT INTO ash_scylla_type_test.roundtrip
+            (id, str_val, int_val, float_val, bool_val, timestamp_val, date_val, time_val)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          """,
+          [id, "test", 42, 3.14, true, ~U[2024-06-15 10:30:00Z], ~D[2024-06-15], ~T[10:30:00]]
+        )
 
-      query = %AshScylla.Query{
-        resource: nil,
-        repo: nil,
-        table: "ash_scylla_type_test.roundtrip",
-        select: [
-          :id,
-          :str_val,
-          :int_val,
-          :float_val,
-          :bool_val,
-          :timestamp_val,
-          :date_val,
-          :time_val
-        ],
-        filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
-        limit: 1
-      }
+        query = %AshScylla.Query{
+          resource: nil,
+          repo: nil,
+          table: "ash_scylla_type_test.roundtrip",
+          select: [
+            :id,
+            :str_val,
+            :int_val,
+            :float_val,
+            :bool_val,
+            :timestamp_val,
+            :date_val,
+            :time_val
+          ],
+          filters: [%{operator: :eq, left: %{name: :id}, right: %{value: id}}],
+          limit: 1
+        }
 
-      {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
-      encoded = Enum.map(params, &encode_param/1)
-      {:ok, %Xandra.Page{content: [row]}} = Xandra.execute(conn, cql, encoded, consistency: :one)
+        {:ok, {cql, params}} = DataLayer.QueryBuilder.build_optimized_query(query)
+        encoded = Enum.map(params, &encode_param/1)
 
-      [_read_id, read_str, read_int, read_float, read_bool, read_ts, read_date, read_time] = row
+        {:ok, %Xandra.Page{content: [row]}} =
+          Xandra.execute(conn, cql, encoded, consistency: :one)
 
-      assert read_str == "test"
-      assert read_int == 42
-      assert is_float(read_float)
-      assert read_bool == true
-      assert %DateTime{} = read_ts
-      assert %Date{} = read_date
-      assert %Time{} = read_time
+        [_read_id, read_str, read_int, read_float, read_bool, read_ts, read_date, read_time] = row
+
+        assert read_str == "test"
+        assert read_int == 42
+        assert is_float(read_float)
+        assert read_bool == true
+        assert %DateTime{} = read_ts
+        assert %Date{} = read_date
+        assert %Time{} = read_time
+      end
     end
   end
 end

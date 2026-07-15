@@ -88,14 +88,8 @@ defmodule AshScylla.PreparedStatementCache do
   @spec table() :: :ets.tid() | nil
   def table do
     case Process.whereis(__MODULE__) do
-      nil ->
-        case :global.whereis_name(__MODULE__) do
-          :undefined -> nil
-          pid -> get_table_from_pid(pid)
-        end
-
-      pid ->
-        get_table_from_pid(pid)
+      nil -> nil
+      pid -> get_table_from_pid(pid)
     end
   end
 
@@ -148,8 +142,9 @@ defmodule AshScylla.PreparedStatementCache do
   end
 
   # Returns the name to use for GenServer calls.
-  # Uses the locally registered name if available, otherwise falls back
-  # to the global name.
+  # The cache is registered locally by default (per-node), so we always call
+  # the locally registered process. A global instance is only used when one
+  # was explicitly started with a `{:global, name}` tuple.
   defp server_name do
     case Process.whereis(__MODULE__) do
       nil -> {:global, __MODULE__}

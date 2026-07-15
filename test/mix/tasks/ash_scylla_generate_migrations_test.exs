@@ -116,7 +116,7 @@ defmodule Mix.Tasks.AshScylla.GenerateMigrationsTest do
       lines = String.split(output, "\n")
 
       migration_headers = Enum.filter(lines, &String.starts_with?(&1, "---"))
-      assert length(migration_headers) > 0
+      assert migration_headers != []
 
       Enum.each(migration_headers, fn header ->
         assert String.ends_with?(String.trim(header), ".exs ---")
@@ -193,7 +193,7 @@ defmodule Mix.Tasks.AshScylla.GenerateMigrationsTest do
 
       snapshot_dir = Path.join(@test_tmp_dir, "snapshots/test_repo")
       snapshot_files_after_first_run = list_snapshot_files(snapshot_dir)
-      assert length(snapshot_files_after_first_run) > 0
+      assert snapshot_files_after_first_run != []
 
       capture_io(fn ->
         MigrationGenerator.generate(
@@ -246,7 +246,7 @@ defmodule Mix.Tasks.AshScylla.GenerateMigrationsTest do
 
       snapshot_dir = Path.join(@test_tmp_dir, "snapshots/test_repo")
       snapshot_files = list_snapshot_files(snapshot_dir)
-      assert length(snapshot_files) > 0
+      assert snapshot_files != []
     end
   end
 

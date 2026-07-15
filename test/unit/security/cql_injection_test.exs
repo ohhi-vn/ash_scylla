@@ -132,7 +132,9 @@ defmodule AshScylla.CqlInjectionTest do
         %{operator: :eq, left: %{name: :id}, right: %{value: "abc-123"}}
       ]
 
-      {:ok, {where_clause, _params}} = AshScylla.DataLayer.QueryBuilder.build_where_clause(filters, %MapSet{}, %{})
+      {:ok, {where_clause, _params}} =
+        AshScylla.DataLayer.QueryBuilder.build_where_clause(filters, %MapSet{}, %{})
+
       assert where_clause =~ "id = ?"
     end
   end

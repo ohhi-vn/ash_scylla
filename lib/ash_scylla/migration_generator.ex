@@ -154,7 +154,7 @@ defmodule AshScylla.MigrationGenerator do
 
   # ── Resource Discovery ───────────────────────────────────────────────────
 
-  defp find_resources(%{domains: domains}) when is_list(domains) and length(domains) > 0 do
+  defp find_resources(%{domains: domains}) when is_list(domains) and domains != [] do
     domains
     |> Enum.flat_map(&Ash.Domain.Info.resources/1)
     |> Enum.filter(&ash_scylla_resource?/1)
@@ -594,9 +594,7 @@ defmodule AshScylla.MigrationGenerator do
   end
 
   defp render_cql_statements(statements) do
-    statements
-    |> Enum.map(fn stmt -> "    \"#{escape_cql(stmt)}\"" end)
-    |> Enum.join(",\n")
+    Enum.map_join(statements, ",\n", fn stmt -> "    \"#{escape_cql(stmt)}\"" end)
   end
 
   defp escape_cql(cql) do

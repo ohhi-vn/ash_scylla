@@ -108,28 +108,26 @@ defmodule AshScylla.Connection do
   @doc "Returns the connection struct by name (local or global)."
   @spec get_conn(module() | atom()) :: t() | nil
   def get_conn(name \\ __MODULE__) do
-    try do
-      case name do
-        name when is_atom(name) ->
-          case Process.whereis(name) do
-            nil ->
-              case :global.whereis_name(name) do
-                :undefined -> nil
-                pid -> do_get_conn(pid)
-              end
+    case name do
+      name when is_atom(name) ->
+        case Process.whereis(name) do
+          nil ->
+            case :global.whereis_name(name) do
+              :undefined -> nil
+              pid -> do_get_conn(pid)
+            end
 
-            pid ->
-              do_get_conn(pid)
-          end
+          pid ->
+            do_get_conn(pid)
+        end
 
-        _ ->
-          nil
-      end
-    rescue
-      _ -> nil
-    catch
-      _, _ -> nil
+      _ ->
+        nil
     end
+  rescue
+    _ -> nil
+  catch
+    _, _ -> nil
   end
 
   defp do_get_conn(pid) do
@@ -446,19 +444,7 @@ defmodule AshScylla.Connection do
         node -> to_string(node)
       end)
 
-    xandra_opts =
-      Keyword.take(opts, [
-        :connect_timeout,
-        :authentication,
-        :compressor,
-        :encryption,
-        :protocol_version,
-        :transport_options,
-        :backoff_min,
-        :backoff_max,
-        :backoff_type
-      ])
-      |> Keyword.put(:nodes, nodes_as_strings)
+    xandra_opts = build_xandra_opts(opts, nodes_as_strings)
 
     {start_fun, xandra_opts, cluster?} =
       if length(nodes) > 1 do
@@ -505,57 +491,36 @@ defmodule AshScylla.Connection do
 
           # Override nodes to only use the first node for single connection
           xandra_opts = Keyword.put(xandra_opts, :nodes, [hd(nodes_as_strings)])
-          {&Xandra.start_link/1, xandra_opts, false}
+          # :pool_size is only valid for Xandra.Cluster (single-node Xandra.start_link
+          # rejects it), so drop it on this fallback path.
+          {&Xandra.start_link/1, Keyword.delete(xandra_opts, :pool_size), false}
         end
       else
-        {&Xandra.start_link/1, xandra_opts, false}
+        # Single-node: :pool_size is not accepted by Xandra.start_link, drop it.
+        {&Xandra.start_link/1, Keyword.delete(xandra_opts, :pool_size), false}
       end
 
-    case start_fun.(xandra_opts) do
+    # Connect WITHOUT the keyspace first. Xandra 0.19.x applies `USE keyspace`
+    # to every pooled connection at connect time and *raises* (asynchronously,
+    # inside the spawned worker process) when the keyspace doesn't exist yet.
+    # That async crash kills this GenServer via the process link and tears down
+    # the whole app before any migration can run. By connecting bare and
+    # applying the keyspace best-effort afterwards, the connection comes up even
+    # when the keyspace is absent; `query/4` re-issues `USE keyspace` before each
+    # statement, so correctness is preserved.
+    connect_opts = Keyword.delete(xandra_opts, :keyspace)
+
+    try do
+      start_fun.(connect_opts)
+    rescue
+      # Xandra 0.19.x can also raise synchronously in some code paths; convert
+      # that to {:error, reason} so we stop cleanly instead of crashing.
+      e in [MatchError, Xandra.Error] ->
+        {:error, Exception.message(e)}
+    end
+    |> case do
       {:ok, conn} ->
-        # Try to USE keyspace, but don't fail if it doesn't exist yet
-        # (e.g. during first-time setup before create_keyspace runs)
-        keyspace_used? =
-          if keyspace do
-            # Validate keyspace name before use (defense-in-depth)
-            try do
-              validate_keyspace!(keyspace)
-            rescue
-              ArgumentError ->
-                Logger.warning(
-                  "AshScylla: Invalid keyspace name: #{inspect(keyspace)}, skipping USE"
-                )
-
-                false
-            end
-
-            case execute_module(cluster?).execute(
-                   conn,
-                   "USE #{AshScylla.Identifier.quote_name(keyspace)}",
-                   []
-                 ) do
-              {:ok, _} ->
-                Logger.info(
-                  "AshScylla: Connected to ScyllaDB at #{inspect(nodes)}, keyspace: #{keyspace}"
-                )
-
-                true
-
-              {:error, reason} ->
-                Logger.warning(
-                  "AshScylla: Connected to ScyllaDB at #{inspect(nodes)} but keyspace '#{keyspace}' not available: #{inspect(reason)}. " <>
-                    "This is expected before keyspace creation. Will retry on first query."
-                )
-
-                false
-            end
-          else
-            Logger.info(
-              "AshScylla: Connected to ScyllaDB at #{inspect(nodes)}, no keyspace configured"
-            )
-
-            true
-          end
+        keyspace_used? = apply_keyspace(conn, cluster?, nodes, keyspace)
 
         {:ok,
          %__MODULE__{
@@ -569,6 +534,77 @@ defmodule AshScylla.Connection do
       {:error, reason} ->
         {:stop, reason}
     end
+  end
+
+  # Builds the option list passed to Xandra.start_link / Xandra.Cluster.start_link.
+  # `:keyspace` is forwarded so Xandra applies `USE keyspace` to every pooled
+  # connection at connect time (essential for Xandra.Cluster, where a manual
+  # `USE` only affects a single connection in the pool). `:pool_size` is forwarded
+  # so callers can size the connection pool (only meaningful for Xandra.Cluster).
+  @doc false
+  @spec build_xandra_opts(keyword(), [String.t()]) :: keyword()
+  def build_xandra_opts(opts, nodes_as_strings) do
+    Keyword.take(opts, [
+      :connect_timeout,
+      :authentication,
+      :compressor,
+      :encryption,
+      :protocol_version,
+      :transport_options,
+      :backoff_min,
+      :backoff_max,
+      :backoff_type,
+      :keyspace,
+      :pool_size
+    ])
+    # Xandra rejects a `nil` keyspace (it must be a string), so drop it when
+    # absent. This lets callers (e.g. Migrator.run/3) start a connection
+    # without a keyspace and apply it per-query instead.
+    |> drop_nil_keyspace()
+    |> Keyword.put(:nodes, nodes_as_strings)
+  end
+
+  defp drop_nil_keyspace(taken) do
+    if Keyword.get(taken, :keyspace) == nil do
+      Keyword.delete(taken, :keyspace)
+    else
+      taken
+    end
+  end
+
+  # Applies `USE keyspace` on the connection. Returns whether the keyspace is now
+  # active. Tolerates a missing keyspace (first-time setup) so the connection can
+  # still be established.
+  @spec apply_keyspace(term(), boolean(), [String.t()], String.t() | nil) :: boolean()
+  defp apply_keyspace(conn, cluster?, nodes, keyspace) do
+    # Validate keyspace name before use (defense-in-depth)
+    validate_keyspace!(keyspace)
+
+    case execute_module(cluster?).execute(
+           conn,
+           "USE #{AshScylla.Identifier.quote_name(keyspace)}",
+           []
+         ) do
+      {:ok, _} ->
+        Logger.info(
+          "AshScylla: Connected to ScyllaDB at #{inspect(nodes)}, keyspace: #{keyspace}"
+        )
+
+        true
+
+      {:error, reason} ->
+        Logger.warning(
+          "AshScylla: Connected to ScyllaDB at #{inspect(nodes)} but keyspace '#{keyspace}' not available: #{inspect(reason)}. " <>
+            "This is expected before keyspace creation. Will retry on first query."
+        )
+
+        false
+    end
+  rescue
+    ArgumentError ->
+      Logger.warning("AshScylla: Invalid keyspace name: #{inspect(keyspace)}, skipping USE")
+
+      false
   end
 
   @impl GenServer
