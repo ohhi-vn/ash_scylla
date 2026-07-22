@@ -13,7 +13,7 @@
 # limitations under the License.
 
 defmodule AshScylla.Error do
-  defexception [:message]
+  defexception [:message, :or_split]
 
   @moduledoc """
   Common error types and utilities for AshScylla.

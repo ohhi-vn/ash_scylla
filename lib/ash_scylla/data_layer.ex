@@ -468,6 +468,9 @@ defmodule AshScylla.DataLayer do
     %Query{repo: repo, table: table, tenant: tenant, filters: filters, sorts: sorts} =
       data_layer_query
 
+    Logger.debug("AshScylla: Data Layer query #{inspect(data_layer_query)}")
+    Logger.debug("AshScylla: Filter query: #{inspect(filters)}")
+
     # Validate filters to prevent ALLOW FILTERING anti-pattern
     FilterValidator.validate_filters(resource, filters)
 
@@ -481,50 +484,91 @@ defmodule AshScylla.DataLayer do
               "a broader result set than intended."
 
       {:ok, {query, params}} ->
-        # Detect if ORDER BY was dropped due to secondary index scan
-        order_dropped? =
-          resource != nil and sorts != [] and sorts != nil and
-            QueryBuilder.secondary_index_scan?(resource, filters)
-
-        # UUID string params are already converted to 16-byte binaries by
-        # QueryBuilder.filter_to_cql (gated on the declared attribute type).
-        opts = build_query_opts(resource, tenant)
-
-        Logger.debug("Executing run_query on #{table}")
-        Logger.debug("AshScylla: Final query: #{inspect(query)}")
-        Logger.debug("AshScylla: Final params: #{inspect(params)}")
-
-        result =
-          Telemetry.span(resource, :read, query, fn ->
-            case repo.query(query, params, opts) do
-              {:ok, %Xandra.Page{content: content, columns: columns}} when columns != nil ->
-                rows = content || []
-                records = Enum.map(rows, &to_ash_record(&1, resource, columns))
-                records = maybe_apply_in_memory_sort(records, sorts, order_dropped?)
-                {:ok, records}
-
-              {:ok, %Xandra.Page{content: content}} ->
-                rows = content || []
-                records = Enum.map(rows, &to_ash_record(&1, resource))
-                records = maybe_apply_in_memory_sort(records, sorts, order_dropped?)
-                {:ok, records}
-
-              error ->
-                handle_result(error)
-            end
-          end)
-
-        with {:ok, records} <- result do
-          %Query{context: context} = data_layer_query
-          aggregates = Map.get(context, :aggregates, [])
-          records = apply_calculations(records, context)
-          records = attach_aggregates(records, aggregates, resource, repo, opts)
-          {:ok, records}
-        end
+        execute_single_query(
+          data_layer_query,
+          resource,
+          repo,
+          table,
+          tenant,
+          query,
+          params,
+          filters,
+          sorts
+        )
     end
   rescue
-    e in [AshScylla.Error] -> reraise(e, __STACKTRACE__)
-    e -> handle_result({:error, e})
+    e in [AshScylla.Error] ->
+      # Handle OR split: CQL has no OR, so split into two queries and merge
+      case e do
+        %AshScylla.Error{or_split: {left, right}} ->
+          query = data_layer_query
+          left_query = %{query | filters: [left]}
+          right_query = %{query | filters: [right]}
+
+          with {:ok, left_records} <- run_query(left_query, resource),
+               {:ok, right_records} <- run_query(right_query, resource) do
+            # Merge and deduplicate by id
+            merged = (left_records ++ right_records) |> Enum.uniq_by(& &1.id)
+            {:ok, merged}
+          end
+
+        _ ->
+          reraise(e, __STACKTRACE__)
+      end
+
+    e ->
+      handle_result({:error, e})
+  end
+
+  defp execute_single_query(
+         data_layer_query,
+         resource,
+         repo,
+         table,
+         tenant,
+         query,
+         params,
+         filters,
+         sorts
+       ) do
+    # Detect if ORDER BY was dropped due to secondary index scan
+    order_dropped? =
+      resource != nil and sorts != [] and sorts != nil and
+        QueryBuilder.secondary_index_scan?(resource, filters)
+
+    opts = build_query_opts(resource, tenant)
+
+    Logger.debug("Executing run_query on #{table}")
+    Logger.debug("AshScylla: Final query: #{inspect(query)}")
+    Logger.debug("AshScylla: Final params: #{inspect(params)}")
+
+    result =
+      Telemetry.span(resource, :read, query, fn ->
+        case repo.query(query, params, opts) do
+          {:ok, %Xandra.Page{content: content, columns: columns}} when columns != nil ->
+            rows = content || []
+            records = Enum.map(rows, &to_ash_record(&1, resource, columns))
+            records = maybe_apply_in_memory_sort(records, sorts, order_dropped?)
+            {:ok, records}
+
+          {:ok, %Xandra.Page{content: content}} ->
+            rows = content || []
+            records = Enum.map(rows, &to_ash_record(&1, resource))
+            records = maybe_apply_in_memory_sort(records, sorts, order_dropped?)
+            {:ok, records}
+
+          error ->
+            handle_result(error)
+        end
+      end)
+
+    with {:ok, records} <- result do
+      %Query{context: context} = data_layer_query
+      aggregates = Map.get(context, :aggregates, [])
+      records = apply_calculations(records, context)
+      records = attach_aggregates(records, aggregates, resource, repo, opts)
+      {:ok, records}
+    end
   end
 
   # When ORDER BY is dropped due to secondary index scan, apply sorting in-memory

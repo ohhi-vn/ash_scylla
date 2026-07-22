@@ -587,15 +587,69 @@ defmodule AshScylla.DataLayer.FilterValidator do
   end
 
   @spec extract_columns_from_filter(term()) :: [atom()]
-  defp extract_columns_from_filter(%{left: %{name: name}}) when is_atom(name), do: [name]
   defp extract_columns_from_filter(%{expression: expr}), do: extract_all_filter_columns([expr])
 
+  # Handle AND/OR composites - recurse into both sides
   @spec extract_columns_from_filter(term()) :: [atom()]
   defp extract_columns_from_filter(%{left: left, right: right}),
     do: extract_all_filter_columns([left, right])
 
+  # Handle Ash function calls - extract columns from arguments
+  # Example: %Ash.Query.Function.Contains{name: :contains, arguments: [%Ref{name: :name}, %{value: "query"}]}
+  defp extract_columns_from_filter(%{__function__?: true, arguments: arguments}),
+    do: Enum.flat_map(arguments, &extract_columns_from_filter/1)
+
+  # Handle function calls as plain maps (legacy or test format)
+  defp extract_columns_from_filter(%{name: :contains, arguments: arguments}) do
+    Enum.flat_map(arguments, &extract_columns_from_filter/1)
+  end
+
+  defp extract_columns_from_filter(%{name: :starts_with, arguments: arguments}) do
+    Enum.flat_map(arguments, &extract_columns_from_filter/1)
+  end
+
+  defp extract_columns_from_filter(%{name: :ends_with, arguments: arguments}) do
+    Enum.flat_map(arguments, &extract_columns_from_filter/1)
+  end
+
+  # Handle function calls with :args key (legacy format)
+  defp extract_columns_from_filter(%{name: :contains, args: args}) do
+    Enum.flat_map(args, &extract_columns_from_filter/1)
+  end
+
+  defp extract_columns_from_filter(%{name: :starts_with, args: args}) do
+    Enum.flat_map(args, &extract_columns_from_filter/1)
+  end
+
+  defp extract_columns_from_filter(%{name: :ends_with, args: args}) do
+    Enum.flat_map(args, &extract_columns_from_filter/1)
+  end
+
+  # Catch any function call with args before the %{name: name} fallback
+  defp extract_columns_from_filter(%{name: _name, args: args}) when is_list(args) do
+    Enum.flat_map(args, &extract_columns_from_filter/1)
+  end
+
+  # Optimized extraction for operator-style filters: %{operator: :eq, left: %{name: :id}, ...}
+  @spec extract_columns_from_filter(term()) :: [atom()]
+  defp extract_columns_from_filter(%{left: %{name: name}}) when is_atom(name), do: [name]
+
+  defp extract_columns_from_filter(%{name: :starts_with, args: args}) do
+    Enum.flat_map(args, &extract_columns_from_filter/1)
+  end
+
+  defp extract_columns_from_filter(%{name: :ends_with, args: args}) do
+    Enum.flat_map(args, &extract_columns_from_filter/1)
+  end
+
+  # Catch any function call with args before the %{name: name} fallback
+  defp extract_columns_from_filter(%{name: _name, args: args}) when is_list(args) do
+    Enum.flat_map(args, &extract_columns_from_filter/1)
+  end
+
   @spec extract_columns_from_filter(%{name: atom()}) :: [atom()]
   defp extract_columns_from_filter(%{name: name}) when is_atom(name), do: [name]
+
   @spec extract_columns_from_filter(term()) :: [atom()]
   defp extract_columns_from_filter(_), do: []
 

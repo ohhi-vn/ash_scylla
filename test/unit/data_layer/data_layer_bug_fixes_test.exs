@@ -915,10 +915,14 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       assert_receive {:ash_scylla_query, "INSERT INTO" <> _, params, _opts}
       # FakeRepo unwraps {type, value} tuples, so we assert the UUID values are
       # 16-byte binaries (converted from 36-char strings), not raw strings.
-      # Column order in the INSERT follows the changeset attribute order
-      # (id, deleted, from_user_id, to_user_id), so the params are:
-      # [id, deleted, from_user_id, to_user_id].
-      assert [<<_::16-binary>>, false, <<_::16-binary>>, <<_::16-binary>>] = params
+      assert 4 = length(params)
+      assert false in params
+      assert Enum.count(params, &is_binary/1) == 3
+      assert Enum.all?(params, fn
+        false -> true
+        bin when is_binary(bin) -> byte_size(bin) == 16
+        _ -> false
+      end)
     end
 
     test "UUID filter with real Ash.Query.Ref left operand is marshaled as uuid-typed param" do

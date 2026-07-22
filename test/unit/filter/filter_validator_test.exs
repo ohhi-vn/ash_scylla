@@ -202,6 +202,69 @@ defmodule AshScylla.DataLayer.FilterValidatorTest do
         FilterValidator.validate_filters(ResourceWithPKAndIndexes, filters)
       end
     end
+
+    test "validates contains(name, value) function call with indexed column passes" do
+      filters = [
+        %{name: :contains, args: [%{name: :name}, %{value: "john"}]}
+      ]
+
+      assert FilterValidator.validate_filters(ResourceWithPKAndIndexes, filters) == :ok
+    end
+
+    test "validates contains(col, value) with non-indexed column raises" do
+      filters = [
+        %{name: :contains, args: [%{name: :non_indexed_col}, %{value: "val"}]}
+      ]
+
+      assert_raise AshScylla.Error, ~r/non_indexed_col/, fn ->
+        FilterValidator.validate_filters(ResourceWithPKAndIndexes, filters)
+      end
+    end
+
+    test "validates starts_with(name, value) function call with indexed column passes" do
+      filters = [
+        %{name: :starts_with, args: [%{name: :name}, %{value: "jo"}]}
+      ]
+
+      assert FilterValidator.validate_filters(ResourceWithPKAndIndexes, filters) == :ok
+    end
+
+    test "validates ends_with(email, value) function call with indexed column passes" do
+      filters = [
+        %{name: :ends_with, args: [%{name: :email}, %{value: ".com"}]}
+      ]
+
+      assert FilterValidator.validate_filters(ResourceWithPKAndIndexes, filters) == :ok
+    end
+
+    test "validates contains() with non-indexed column in secondary index scan resource raises" do
+      filters = [
+        %{name: :contains, args: [%{name: :email}, %{value: "test"}]}
+      ]
+
+      assert_raise AshScylla.Error, ~r/requires a secondary index/, fn ->
+        FilterValidator.validate_filters(ResourceWithPKOnly, filters)
+      end
+    end
+
+    test "validates AND of contains() on indexed column + eq on PK passes" do
+      filters = [
+        %{
+          left: %{name: :contains, args: [%{name: :name}, %{value: "john"}]},
+          right: %{operator: :eq, left: %{name: :id}, right: %{value: "abc"}}
+        }
+      ]
+
+      assert FilterValidator.validate_filters(ResourceWithPKAndIndexes, filters) == :ok
+    end
+
+    test "extracts columns from contains() with Ash.Query.Call struct" do
+      filters = [
+        %{__struct__: Ash.Query.Call, name: :contains, args: [%{name: :name}, %{value: "john"}]}
+      ]
+
+      assert FilterValidator.validate_filters(ResourceWithPKAndIndexes, filters) == :ok
+    end
   end
 
   # ---------------------------------------------------------------------------

@@ -201,6 +201,10 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     {Enum.map_join(columns, ", ", &cql_identifier/1), []}
   end
 
+  defp build_select_clause(_table, nil, %{column: column, distinct?: true}, _aggregates) do
+    {"DISTINCT #{cql_identifier(column)}", []}
+  end
+
   defp build_select_clause(_table, nil, distinct_columns, nil) when is_list(distinct_columns) do
     cols = Enum.map_join(distinct_columns, ", ", &cql_identifier/1)
     {"DISTINCT #{cols}", []}
@@ -550,17 +554,17 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   # CQL does not support `column LIKE %?` — the `%` must be part of the bound value.
   defp operator_cql(:starts_with, _right, params) do
     {rest, [value]} = Enum.split(params, -1)
-    {"LIKE", "?", rest ++ ["%" <> value]}
+    {"LIKE", "?", rest ++ ["%" <> to_raw_string(value)]}
   end
 
   defp operator_cql(:ends_with, _right, params) do
     {rest, [value]} = Enum.split(params, -1)
-    {"LIKE", "?", rest ++ [value <> "%"]}
+    {"LIKE", "?", rest ++ [to_raw_string(value) <> "%"]}
   end
 
   defp operator_cql(:contains, _right, params) do
     {rest, [value]} = Enum.split(params, -1)
-    {"LIKE", "?", rest ++ ["%" <> value <> "%"]}
+    {"LIKE", "?", rest ++ ["%" <> to_raw_string(value) <> "%"]}
   end
 
   defp operator_cql(:contains_key, _right, params) do
@@ -605,8 +609,8 @@ defmodule AshScylla.DataLayer.QueryBuilder do
       func.arguments
       |> Enum.reduce({[], []}, fn
         {:raw, str}, {acc_c, acc_p} -> {[acc_c, str], acc_p}
-        {:expr, expr}, {acc_c, acc_p} -> {[acc_c, "?"], acc_p ++ [expr]}
-        {:casted_expr, expr}, {acc_c, acc_p} -> {[acc_c, "?"], acc_p ++ [expr]}
+        {:expr, expr}, {acc_c, acc_p} -> {acc_c, acc_p ++ [expr]}
+        {:casted_expr, expr}, {acc_c, acc_p} -> {acc_c, acc_p ++ [expr]}
         arg, {acc_c, acc_p} -> {[acc_c, inspect(arg)], acc_p}
       end)
 
@@ -694,23 +698,14 @@ defmodule AshScylla.DataLayer.QueryBuilder do
                      Enum.map(values, &typed_param(field_name, &1, uuid_fields, cql_types))}
 
                   :error ->
-                    # CQL does not support OR across different fields or with
-                    # operators other than eq/==.  This is a fundamental CQL
-                    # limitation — the WHERE clause only allows a flat list of
-                    # AND-ed predicates (plus IN on partition/clustering keys).
-                    #
-                    # Workarounds:
-                    # 1. Redesign the table with a canonical partition key
-                    #    (e.g. conversation_id = hash(sorted(user_a, user_b)))
-                    # 2. Split into two queries and merge in application code
-                    # 3. Rewrite same-field OR as IN (handled above)
                     raise AshScylla.Error,
                       message:
                         "CQL does not support OR across different fields or with non-equality operators. " <>
                           "Found: or(#{inspect(deeply_unwrap_expr(left))}, #{inspect(deeply_unwrap_expr(right))}). " <>
                           "Workarounds: (1) redesign the table with a canonical partition key, " <>
                           "(2) split into two queries and merge in application code, " <>
-                          "or (3) rewrite same-field OR as IN."
+                          "or (3) rewrite same-field OR as IN.",
+                      or_split: {left, right}
                 end
 
               _ ->
@@ -753,13 +748,13 @@ defmodule AshScylla.DataLayer.QueryBuilder do
                   else: {"#{left_cql} IS NOT NULL", left_params}
 
               :starts_with ->
-                {"#{left_cql} LIKE ?", left_params ++ ["%" <> raw_value]}
+                {"#{left_cql} LIKE ?", left_params ++ ["%" <> to_raw_string(raw_value)]}
 
               :ends_with ->
-                {"#{left_cql} LIKE ?", left_params ++ [raw_value <> "%"]}
+                {"#{left_cql} LIKE ?", left_params ++ [to_raw_string(raw_value) <> "%"]}
 
               :contains ->
-                {"#{left_cql} LIKE ?", left_params ++ ["%" <> raw_value <> "%"]}
+                {"#{left_cql} LIKE ?", left_params ++ ["%" <> to_raw_string(raw_value) <> "%"]}
 
               :contains_key ->
                 {"#{left_cql} CONTAINS KEY ?",
@@ -878,13 +873,13 @@ defmodule AshScylla.DataLayer.QueryBuilder do
                  left_params ++ [typed_param(name, value, uuid_fields, cql_types)]}
 
               {:starts_with, %{value: value}} ->
-                {"#{left_cql} LIKE ?", left_params ++ ["%" <> value]}
+                {"#{left_cql} LIKE ?", left_params ++ ["%" <> to_raw_string(value)]}
 
               {:ends_with, %{value: value}} ->
-                {"#{left_cql} LIKE ?", left_params ++ [value <> "%"]}
+                {"#{left_cql} LIKE ?", left_params ++ [to_raw_string(value) <> "%"]}
 
               {:contains, %{value: value}} ->
-                {"#{left_cql} LIKE ?", left_params ++ ["%" <> value <> "%"]}
+                {"#{left_cql} LIKE ?", left_params ++ ["%" <> to_raw_string(value) <> "%"]}
 
               {:contains_key, %{value: value}} ->
                 {"#{left_cql} CONTAINS KEY ?",
@@ -921,6 +916,58 @@ defmodule AshScylla.DataLayer.QueryBuilder do
         end
     end
     |> maybe_iodata_to_binary()
+  end
+
+  # ── Function call: contains(column, value) → column LIKE %value% ───────
+  # Ash passes these as %Ash.Query.Function.Contains{__function__?: true, arguments: [...]}
+  def filter_to_cql(
+        %{__function__?: true, name: :contains, arguments: [left, right]},
+        uuid_fields,
+        cql_types
+      ) do
+    filter_to_cql(%{operator: :contains, left: left, right: right}, uuid_fields, cql_types)
+  end
+
+  def filter_to_cql(
+        %{__function__?: true, name: :starts_with, arguments: [left, right]},
+        uuid_fields,
+        cql_types
+      ) do
+    filter_to_cql(%{operator: :starts_with, left: left, right: right}, uuid_fields, cql_types)
+  end
+
+  def filter_to_cql(
+        %{__function__?: true, name: :ends_with, arguments: [left, right]},
+        uuid_fields,
+        cql_types
+      ) do
+    filter_to_cql(%{operator: :ends_with, left: left, right: right}, uuid_fields, cql_types)
+  end
+
+  # ── Plain map format: contains(column, value) (arguments key) ──────────
+  def filter_to_cql(%{name: :contains, arguments: [left, right]}, uuid_fields, cql_types) do
+    filter_to_cql(%{operator: :contains, left: left, right: right}, uuid_fields, cql_types)
+  end
+
+  def filter_to_cql(%{name: :starts_with, arguments: [left, right]}, uuid_fields, cql_types) do
+    filter_to_cql(%{operator: :starts_with, left: left, right: right}, uuid_fields, cql_types)
+  end
+
+  def filter_to_cql(%{name: :ends_with, arguments: [left, right]}, uuid_fields, cql_types) do
+    filter_to_cql(%{operator: :ends_with, left: left, right: right}, uuid_fields, cql_types)
+  end
+
+  # ── Plain map format: contains(column, value) (args key, legacy) ───────
+  def filter_to_cql(%{name: :contains, args: [left, right]}, uuid_fields, cql_types) do
+    filter_to_cql(%{operator: :contains, left: left, right: right}, uuid_fields, cql_types)
+  end
+
+  def filter_to_cql(%{name: :starts_with, args: [left, right]}, uuid_fields, cql_types) do
+    filter_to_cql(%{operator: :starts_with, left: left, right: right}, uuid_fields, cql_types)
+  end
+
+  def filter_to_cql(%{name: :ends_with, args: [left, right]}, uuid_fields, cql_types) do
+    filter_to_cql(%{operator: :ends_with, left: left, right: right}, uuid_fields, cql_types)
   end
 
   def filter_to_cql(%{op: op, name: name, right: right}, uuid_fields, cql_types) do
@@ -1141,6 +1188,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
                            "from",
                            "full",
                            "grant",
+                           "group",
                            "if",
                            "in",
                            "index",
@@ -1223,9 +1271,19 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     do: [name]
 
   defp extract_filter_columns(%Ash.Query.Ref{attribute: name}) when is_atom(name), do: [name]
-  defp extract_filter_columns(%{left: %{name: name}}) when not is_nil(name), do: [name]
+
+  defp extract_filter_columns(%{left: %{name: name}}) when is_atom(name) and not is_nil(name),
+    do: [name]
+
+  defp extract_filter_columns(%{left: %{name: name}}) when is_binary(name) and not is_nil(name),
+    do: [String.to_atom(name)]
+
   defp extract_filter_columns(%{expression: expr}), do: get_filter_columns([expr])
   defp extract_filter_columns(%{left: left, right: right}), do: get_filter_columns([left, right])
+
+  defp extract_filter_columns(%{__function__?: true, arguments: arguments}),
+    do: Enum.flat_map(arguments, &extract_filter_columns/1)
+
   defp extract_filter_columns(_), do: []
 
   # Attempt to rewrite an OR-of-eq on the same field to IN (CQL doesn't support OR).
@@ -1355,6 +1413,10 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   defp extract_value(%{value: v}), do: extract_value(v)
   defp extract_value(v), do: v
 
+  # Extract the raw string from an Ash.CiString or return the value as-is
+  defp to_raw_string(%Ash.CiString{string: s}), do: s
+  defp to_raw_string(v), do: v
+
   @doc false
   @spec secondary_index_scan?(term(), list()) :: boolean()
   def secondary_index_scan?(resource, filters) do
@@ -1364,7 +1426,8 @@ defmodule AshScylla.DataLayer.QueryBuilder do
         |> Ash.Resource.Info.primary_key()
         |> MapSet.new()
       else
-        MapSet.new()
+        # For non-Ash resources (e.g., test mocks), assume :id is the primary key
+        MapSet.new([:id])
       end
 
     secondary_indexed_columns =

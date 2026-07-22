@@ -115,11 +115,11 @@ defmodule AshScylla.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ash, "~> 3.0"},
+      {:ash, "~> 3.30"},
       {:xandra, "~> 0.19"},
       {:decimal, "~> 3.1", override: true, only: [:dev, :test]},
       {:hackney, "~> 4.3", override: true, only: [:dev, :test]},
-      {:testcontainer_ex, "~> 0.8", only: [:test], runtime: false},
+      {:testcontainer_ex, "~> 0.9", only: [:test], runtime: false},
       # {:testcontainer_ex, path: "../testcontainer_ex", only: [:test, :dev]},
       {:benchee, "~> 1.5", only: [:dev, :test]},
       {:benchee_html, "~> 1.0", only: [:dev, :test]},
