@@ -109,10 +109,9 @@ defmodule AshScylla.ClusterIntegrationTest do
   defp start_node(index) do
     container = build_container(index)
 
-    case TestcontainerEx.start_container(container) do
+    case ScyllaContainer.start(container) do
       {:ok, started} -> {:ok, {index, started}}
       {:error, reason} -> {:error, reason}
-      {:error, reason, _extra} -> {:error, reason}
     end
   end
 
@@ -121,13 +120,13 @@ defmodule AshScylla.ClusterIntegrationTest do
   end
 
   defp get_host_port(container) do
-    host = TestcontainerEx.get_host(container)
-    port = TestcontainerEx.get_port(container, 9042)
+    host = ScyllaContainer.host(container)
+    port = ScyllaContainer.port(container)
     {host, port}
   end
 
   defp stop_container(container) do
-    TestcontainerEx.stop_container(container.container_id)
+    ScyllaContainer.stop(container.container_id)
   end
 
   # ── Connection helpers ──────────────────────────────────────────────────────

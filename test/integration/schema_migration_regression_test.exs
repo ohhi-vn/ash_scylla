@@ -122,14 +122,41 @@ defmodule AshScylla.SchemaMigration.RegressionTest do
       else
         case AshScylla.Test.ContainerEngine.ensure_running() do
           :ok ->
-            _ =
-              ScyllaContainer.start(
-                ScyllaContainer.new()
-                |> ScyllaContainer.with_image("scylladb/scylla:5.4")
-                |> ScyllaContainer.with_wait_timeout(120_000)
-              )
+            case ScyllaContainer.start(
+                   ScyllaContainer.new()
+                   |> ScyllaContainer.with_image("scylladb/scylla:5.4")
+                   |> ScyllaContainer.with_wait_timeout(120_000)
+                 ) do
+              {:ok, container} ->
+                host = ScyllaContainer.host(container)
+                port = ScyllaContainer.port(container)
+                conn = connect_with_retry(host, port)
 
-            %{conn: nil}
+                Xandra.execute(
+                  conn,
+                  "CREATE KEYSPACE IF NOT EXISTS ash_scylla_dl_test WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}"
+                )
+
+                case AshScylla.Connection.start_link(
+                       name: AshScylla.TestRepo,
+                       nodes: ["#{host}:#{port}"],
+                       keyspace: "ash_scylla_dl_test",
+                       connect_timeout: 15_000
+                     ) do
+                  {:ok, _} -> :ok
+                  {:error, {:already_started, _}} -> :ok
+                end
+
+                Xandra.stop(conn)
+
+                on_exit(fn -> ScyllaContainer.stop(container.container_id) end)
+
+                %{conn: conn}
+
+              {:error, reason} ->
+                Logger.warning("Failed to start ScyllaDB container: #{inspect(reason)}")
+                %{conn: nil}
+            end
 
           {:error, _} ->
             %{conn: nil}

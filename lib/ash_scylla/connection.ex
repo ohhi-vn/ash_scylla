@@ -576,6 +576,8 @@ defmodule AshScylla.Connection do
   # active. Tolerates a missing keyspace (first-time setup) so the connection can
   # still be established.
   @spec apply_keyspace(term(), boolean(), [String.t()], String.t() | nil) :: boolean()
+  defp apply_keyspace(_conn, _cluster?, _nodes, nil), do: true
+
   defp apply_keyspace(conn, cluster?, nodes, keyspace) do
     # Validate keyspace name before use (defense-in-depth)
     validate_keyspace!(keyspace)

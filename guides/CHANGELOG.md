@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Multi-word search engine** (`AshScylla.Search`) — Lucene/OpenSearch-style full-text search on top of ScyllaDB's inverted index tables:
+  - `AshScylla.Search` — public API: `create_tables/2`, `index/5`, `update/5`, `delete/3`, `search/4`, `search!/4`
+  - `AshScylla.Search.Analyzer` — text analysis pipeline coordinator (tokenize → normalize → stop words → stem → count)
+  - `AshScylla.Search.Analyzer.Tokenizer` — Unicode-aware word tokenization using `[\p{L}\p{N}][\p{L}\p{N}_]*` regex
+  - `AshScylla.Search.Analyzer.Normalizer` — lowercase, NFC normalization, punctuation stripping
+  - `AshScylla.Search.Analyzer.StopWords` — 100+ English stop words filter
+  - `AshScylla.Search.Analyzer.Stemmer` — Porter stemming algorithm (reduces "running"/"runs"/"runner" → "run")
+  - `AshScylla.Search.Indexer` — index management coordinator (delegates to Builder/Updater/Deleter)
+  - `AshScylla.Search.Indexer.Builder` — UNLOGGED BATCH writes to `search_post_terms` and `search_post_fields`
+  - `AshScylla.Search.Indexer.Updater` — diff-based updates (computes added/removed terms vs stored set)
+  - `AshScylla.Search.Indexer.Deleter` — removes all term entries for a document
+  - `AshScylla.Search.Query.Parser` — query string parser (AND/OR/NOT/phrase support)
+  - `AshScylla.Search.Query.Planner` — sharded term lookups across 16 partitions with boolean logic
+  - `AshScylla.Search.Query.BooleanEngine` — two-pointer O(n+m) intersection/union/difference
+  - `AshScylla.Search.Query.Ranking` — TF, TF-IDF, and BM25 relevance scoring
+  - `AshScylla.Search.Query.Paginator` — paginated results with page metadata
+  - `AshScylla.Search.Storage` — CQL schema (`search_post_terms` with sharded `(term, shard)` partition key + `search_post_fields`)
+  - Unit tests for all pure search modules (79 test cases)
+
 ## [1.5.0]
 
 ### Changed

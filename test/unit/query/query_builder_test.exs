@@ -1101,7 +1101,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         __function__?: true,
         name: :fragment,
         arguments: [
-          {:raw, "status = ?"},
+          {:raw, "status = "},
           {:expr, "active"}
         ]
       }
@@ -1116,7 +1116,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
         __function__?: true,
         name: :fragment,
         arguments: [
-          {:raw, "name = ?"},
+          {:raw, "name = "},
           {:casted_expr, "John"}
         ]
       }

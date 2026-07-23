@@ -8,7 +8,7 @@
 
 AshScylla is a comprehensive data layer for the Ash Framework that enables persistence with **ScyllaDB** or **Apache Cassandra**. It uses [Xandra](https://github.com/whatyouhide/xandra) (a native Elixir CQL driver) to communicate via CQL (Cassandra Query Language).
 
-Current version: **0.13.1**
+Current version: **1.5.3**
 
 ---
 
@@ -97,6 +97,28 @@ Current version: **0.13.1**
 | `lib/ash_scylla/data_layer/collection.ex` | Collection type (LIST, SET, MAP) encoding/CQL |
 | `lib/ash_scylla/data_layer/compression.ex` | Application-level compression for large payloads |
 | `lib/ash_scylla/data_layer/udt.ex` | User Defined Type encoding/decoding |
+| `lib/ash_scylla/data_layer/schema_utils.ex` | Schema helper utilities |
+
+### Search Modules
+
+| File | Purpose |
+|------|---------|
+| `lib/ash_scylla/search.ex` | Public API: `create_tables/2`, `index/5`, `update/5`, `delete/3`, `search/4` |
+| `lib/ash_scylla/search/storage.ex` | CQL schema (sharded `search_post_terms` + `search_post_fields`) |
+| `lib/ash_scylla/search/analyzer.ex` | Text analysis pipeline coordinator |
+| `lib/ash_scylla/search/analyzer/tokenizer.ex` | Unicode-aware word tokenizer |
+| `lib/ash_scylla/search/analyzer/normalizer.ex` | Lowercase + NFC normalization + punctuation stripping |
+| `lib/ash_scylla/search/analyzer/stop_words.ex` | 100+ English stop words filter |
+| `lib/ash_scylla/search/analyzer/stemmer.ex` | Porter stemming algorithm |
+| `lib/ash_scylla/search/indexer.ex` | Index management coordinator |
+| `lib/ash_scylla/search/indexer/builder.ex` | UNLOGGED BATCH writes to index tables |
+| `lib/ash_scylla/search/indexer/updater.ex` | Diff-based updates (add/remove changed terms) |
+| `lib/ash_scylla/search/indexer/deleter.ex` | Document removal from index |
+| `lib/ash_scylla/search/query/parser.ex` | Query string parser (AND/OR/NOT/phrase) |
+| `lib/ash_scylla/search/query/planner.ex` | Sharded term lookups + boolean logic |
+| `lib/ash_scylla/search/query/boolean_engine.ex` | Two-pointer O(n+m) intersect/union/difference |
+| `lib/ash_scylla/search/query/ranking.ex` | TF, TF-IDF, BM25 relevance scoring |
+| `lib/ash_scylla/search/query/paginator.ex` | Paginated results with page metadata |
 
 ### Mix Tasks
 
@@ -120,6 +142,16 @@ Current version: **0.13.1**
 | `test/support/schema_fixtures.ex` | Schema migration fixtures |
 | `test/support/scylla_container.ex` | ScyllaDB container management |
 | `test/support/container_engine.ex` | Container engine (Podman) integration |
+| `test/unit/search/analyzer/analyzer_test.exs` | Analyzer pipeline tests |
+| `test/unit/search/analyzer/tokenizer_test.exs` | Tokenizer tests |
+| `test/unit/search/analyzer/normalizer_test.exs` | Normalizer tests |
+| `test/unit/search/analyzer/stop_words_test.exs` | Stop words filter tests |
+| `test/unit/search/analyzer/stemmer_test.exs` | Porter stemmer tests |
+| `test/unit/search/query/parser_test.exs` | Query parser tests |
+| `test/unit/search/query/boolean_engine_test.exs` | Boolean engine tests |
+| `test/unit/search/query/ranking_test.exs` | Ranking engine tests |
+| `test/unit/search/query/paginator_test.exs` | Paginator tests |
+| `test/unit/search/storage_test.exs` | Storage schema tests |
 
 ---
 

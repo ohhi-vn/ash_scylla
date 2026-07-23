@@ -117,18 +117,58 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
     else
       case AshScylla.Test.ContainerEngine.ensure_running() do
         :ok ->
-          _ =
-            ScyllaContainer.start(
-              ScyllaContainer.new()
-              |> ScyllaContainer.with_image("scylladb/scylla:5.4")
-              |> ScyllaContainer.with_wait_timeout(120_000)
-            )
+          case ScyllaContainer.start(
+                 ScyllaContainer.new()
+                 |> ScyllaContainer.with_image("scylladb/scylla:5.4")
+                 |> ScyllaContainer.with_wait_timeout(120_000)
+               ) do
+            {:ok, container} ->
+              host = ScyllaContainer.host(container)
+              port = ScyllaContainer.port(container)
+              conn = connect_with_retry(host, port)
 
-          %{conn: nil, keyspace: nil}
+              Xandra.execute(
+                conn,
+                "CREATE KEYSPACE IF NOT EXISTS #{test_keyspace()} WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}"
+              )
+
+              case AshScylla.Connection.start_link(
+                     name: AshScylla.TestRepo,
+                     nodes: ["#{host}:#{port}"],
+                     keyspace: test_keyspace(),
+                     connect_timeout: 15_000
+                   ) do
+                {:ok, _} -> :ok
+                {:error, {:already_started, _}} -> :ok
+              end
+
+              Xandra.stop(conn)
+
+              on_exit(fn -> ScyllaContainer.stop(container.container_id) end)
+
+              %{conn: nil, keyspace: nil, scylla: :container, container_host: host, container_port: port}
+
+            {:error, reason} ->
+              Logger.warning("Failed to start ScyllaDB container: #{inspect(reason)}")
+              %{conn: nil, keyspace: nil}
+          end
 
         {:error, _} ->
           %{conn: nil, keyspace: nil}
       end
+    end
+  end
+
+  setup context do
+    case Map.get(context, :scylla) do
+      :container ->
+        %{scylla_nodes: ["#{context.container_host}:#{context.container_port}"]}
+
+      _ ->
+        nodes =
+          if direct_connect?(), do: ["#{direct_host()}:#{direct_port()}"], else: nil
+
+        %{scylla_nodes: nodes}
     end
   end
 
@@ -220,7 +260,8 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
   describe "full migration flow" do
     test "Migrator.run/3 executes bare table name CQL via keyspace context", %{
       conn: conn,
-      keyspace: ks
+      keyspace: ks,
+      scylla_nodes: scylla_nodes
     } do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
@@ -235,7 +276,7 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
 
         assert {:ok, _} =
                  AshScylla.Migrator.run(
-                   ["#{direct_host()}:#{direct_port()}"],
+                   scylla_nodes,
                    statements,
                    keyspace: ks
                  )
@@ -276,7 +317,7 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
       end
     end
 
-    test "Migrator.run/3 auto-migrate via SchemaMigration.generate", %{conn: conn, keyspace: ks} do
+    test "Migrator.run/3 auto-migrate via SchemaMigration.generate", %{conn: conn, keyspace: ks, scylla_nodes: scylla_nodes} do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
         :ok
@@ -307,7 +348,7 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
 
         assert {:ok, _} =
                  AshScylla.Migrator.run(
-                   ["#{direct_host()}:#{direct_port()}"],
+                   scylla_nodes,
                    statements,
                    keyspace: ks
                  )
@@ -357,7 +398,7 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
       end
     end
 
-    test "migrate then CRUD works", %{conn: conn, keyspace: ks} do
+    test "migrate then CRUD works", %{conn: conn, keyspace: ks, scylla_nodes: scylla_nodes} do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
         :ok
@@ -370,7 +411,7 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
 
         assert {:ok, _} =
                  AshScylla.Migrator.run(
-                   ["#{direct_host()}:#{direct_port()}"],
+                   scylla_nodes,
                    statements,
                    keyspace: ks
                  )
@@ -396,7 +437,7 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
       end
     end
 
-    test "multiple resources in same migration", %{conn: conn, keyspace: ks} do
+    test "multiple resources in same migration", %{conn: conn, keyspace: ks, scylla_nodes: scylla_nodes} do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
         :ok
@@ -411,7 +452,7 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
 
         assert {:ok, results} =
                  AshScylla.Migrator.run(
-                   ["#{direct_host()}:#{direct_port()}"],
+                   scylla_nodes,
                    statements,
                    keyspace: ks
                  )
@@ -432,7 +473,7 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
       end
     end
 
-    test "add column migration via SchemaMigration.diff", %{conn: conn, keyspace: ks} do
+    test "add column migration via SchemaMigration.diff", %{conn: conn, keyspace: ks, scylla_nodes: scylla_nodes} do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
         :ok
@@ -461,7 +502,7 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
 
         assert {:ok, _} =
                  AshScylla.Migrator.run(
-                   ["#{direct_host()}:#{direct_port()}"],
+                   scylla_nodes,
                    statements,
                    keyspace: ks
                  )
@@ -478,7 +519,7 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
       end
     end
 
-    test "add index migration via SchemaMigration.diff", %{conn: conn, keyspace: ks} do
+    test "add index migration via SchemaMigration.diff", %{conn: conn, keyspace: ks, scylla_nodes: scylla_nodes} do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
         :ok
@@ -518,7 +559,7 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
 
         assert {:ok, _} =
                  AshScylla.Migrator.run(
-                   ["#{direct_host()}:#{direct_port()}"],
+                   scylla_nodes,
                    statements,
                    keyspace: ks
                  )

@@ -64,6 +64,16 @@ defmodule Mix.Tasks.AshScylla.Reset do
     end
   end
 
+  # Resolves the ScyllaDB nodes to use for temp connections.
+  # Prefers the running connection's state (which may have been set dynamically,
+  # e.g. by test setup or env vars) over Application env config.
+  defp resolve_nodes(repo) do
+    case AshScylla.Connection.get_conn(repo) do
+      %AshScylla.Connection{nodes: nodes} when nodes != [] -> nodes
+      _ -> repo.nodes()
+    end
+  end
+
   # Retries the drop+create cycle up to 10 times until the old tables are
   # actually gone from the fresh keyspace.
   defp drop_and_recreate_keyspace(repo, keyspace, opts, retries \\ 10) do
@@ -115,7 +125,7 @@ defmodule Mix.Tasks.AshScylla.Reset do
   # Checks whether tables from the old keyspace survived the create.
   defp old_tables_survived?(repo, keyspace) do
     temp_name = :"#{inspect(repo)}_verify_#{:erlang.unique_integer([:positive])}"
-    nodes = repo.nodes()
+    nodes = resolve_nodes(repo)
 
     case AshScylla.Connection.start_link(name: temp_name, nodes: nodes) do
       {:ok, _} ->
@@ -176,7 +186,7 @@ defmodule Mix.Tasks.AshScylla.Reset do
 
       nil ->
         keyspace = repo.keyspace()
-        nodes = repo.nodes()
+        nodes = resolve_nodes(repo)
 
         case AshScylla.Connection.start_link(name: repo, nodes: nodes, keyspace: keyspace) do
           {:ok, _} ->
@@ -219,7 +229,7 @@ defmodule Mix.Tasks.AshScylla.Reset do
 
   defp drop_keyspace_via_temp(repo, keyspace) do
     temp_name = :"#{inspect(repo)}_drop_temp_#{:erlang.unique_integer([:positive])}"
-    nodes = repo.nodes()
+    nodes = resolve_nodes(repo)
 
     with {:ok, _} <- AshScylla.Connection.start_link(name: temp_name, nodes: nodes) do
       query = "DROP KEYSPACE IF EXISTS #{AshScylla.Identifier.quote_name(keyspace)}"
@@ -280,7 +290,7 @@ defmodule Mix.Tasks.AshScylla.Reset do
 
   defp keyspace_exists?(repo, keyspace) do
     temp_name = :"#{inspect(repo)}_wait_temp_#{:erlang.unique_integer([:positive])}"
-    nodes = repo.nodes()
+    nodes = resolve_nodes(repo)
 
     case AshScylla.Connection.start_link(name: temp_name, nodes: nodes) do
       {:ok, _} ->
@@ -306,7 +316,7 @@ defmodule Mix.Tasks.AshScylla.Reset do
 
   defp tables_exist?(repo, keyspace) do
     temp_name = :"#{inspect(repo)}_wait_tbl_#{:erlang.unique_integer([:positive])}"
-    nodes = repo.nodes()
+    nodes = resolve_nodes(repo)
 
     case AshScylla.Connection.start_link(name: temp_name, nodes: nodes) do
       {:ok, _} ->
@@ -348,7 +358,7 @@ defmodule Mix.Tasks.AshScylla.Reset do
 
   defp create_keyspace_with_retry(repo, keyspace, query, retries \\ 30) do
     temp_name = :"#{inspect(repo)}_create_temp_#{:erlang.unique_integer([:positive])}"
-    nodes = repo.nodes()
+    nodes = resolve_nodes(repo)
 
     case AshScylla.Connection.start_link(name: temp_name, nodes: nodes) do
       {:ok, _} ->

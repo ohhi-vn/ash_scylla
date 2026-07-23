@@ -605,14 +605,14 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   def filter_to_cql(%{__function__?: true, name: :fragment} = func, _uuid_fields, _cql_types) do
     # Ash.Query.Function.Fragment stores args as [{:raw, str}, {:expr, arg}, ...]
     # We need to convert this into a CQL string with ? placeholders + params
-    {cql_parts, params} =
-      func.arguments
-      |> Enum.reduce({[], []}, fn
-        {:raw, str}, {acc_c, acc_p} -> {[acc_c, str], acc_p}
-        {:expr, expr}, {acc_c, acc_p} -> {acc_c, acc_p ++ [expr]}
-        {:casted_expr, expr}, {acc_c, acc_p} -> {acc_c, acc_p ++ [expr]}
-        arg, {acc_c, acc_p} -> {[acc_c, inspect(arg)], acc_p}
-      end)
+{cql_parts, params} =
+        func.arguments
+        |> Enum.reduce({[], []}, fn
+          {:raw, str}, {acc_c, acc_p} -> {[acc_c, str], acc_p}
+          {:expr, expr}, {acc_c, acc_p} -> {[acc_c, "?"], acc_p ++ [expr]}
+          {:casted_expr, expr}, {acc_c, acc_p} -> {[acc_c, "?"], acc_p ++ [expr]}
+          arg, {acc_c, acc_p} -> {[acc_c, inspect(arg)], acc_p}
+        end)
 
     {IO.iodata_to_binary(cql_parts), params}
   end

@@ -12,13 +12,14 @@
 4. [CRUD Operations](#crud-operations)
 5. [Querying](#querying)
 6. [Data Modeling Best Practices](#data-modeling-best-practices)
-7. [ScyllaDB Features](#scylladb-features)
-8. [Migrations](#migrations)
-9. [Ash Extension Callbacks](#ash-extension-callbacks)
-10. [Performance Tips](#performance-tips)
-11. [Common Patterns](#common-patterns)
-12. [Troubleshooting](#troubleshooting)
-13. [Additional Resources](#additional-resources)
+7. [Full-Text Search](#full-text-search)
+8. [ScyllaDB Features](#scylladb-features)
+9. [Migrations](#migrations)
+10. [Ash Extension Callbacks](#ash-extension-callbacks)
+11. [Performance Tips](#performance-tips)
+12. [Common Patterns](#common-patterns)
+13. [Troubleshooting](#troubleshooting)
+14. [Additional Resources](#additional-resources)
 
 ---
 
@@ -491,6 +492,204 @@ User
 ```
 
 > **Note:** `has_many` and `many_to_many` relationship aggregates are not yet implemented. Use denormalization or materialized views for those patterns. `:first`, `:list`, `:exists`, and `:custom` aggregate kinds are also not supported.
+
+---
+
+## Full-Text Search
+
+AshScylla includes a built-in inverted-index search engine (`AshScylla.Search`) that enables Lucene/OpenSearch-style multi-word search without `LIKE`, `ALLOW FILTERING`, or secondary indexes.
+
+### Architecture
+
+The search engine stores analyzed terms in two tables:
+
+| Table | Purpose |
+|-------|---------|
+| `search_post_terms` | Inverted index mapping `(term, shard)` → post_id + term frequency |
+| `search_post_fields` | Raw term sets per post/field for diff-based updates |
+
+Terms are sharded across 16 partitions to prevent hotspot partitions for common words.
+
+### Setup
+
+Create the search tables in your keyspace:
+
+```elixir
+AshScylla.Search.create_tables(MyApp.Repo, "my_keyspace")
+```
+
+### Indexing Documents
+
+```elixir
+# Index a document with multiple text fields
+AshScylla.Search.index(MyApp.Repo, "my_keyspace", post_id, %{
+  title: "Learning Elixir Phoenix Framework",
+  body: "Phoenix is a distributed web framework built on Elixir."
+})
+#=> :ok
+```
+
+Each field is run through the full analysis pipeline:
+tokenize → lowercased → unicode-normalized → stop words removed → stemmed → written to index.
+
+### Updating Documents
+
+When a document's text changes, compute only the diff:
+
+```elixir
+AshScylla.Search.update(MyApp.Repo, "my_keyspace", post_id, %{
+  title: "Updated Title",
+  body: "New body content"
+})
+#=> :ok
+```
+
+The updater reads the stored term set from `search_post_fields`, computes added/removed terms, and applies only the necessary inserts and deletes. Fields omitted from the map are left unchanged.
+
+### Deleting Documents
+
+```elixir
+AshScylla.Search.delete(MyApp.Repo, "my_keyspace", post_id)
+#=> :ok
+```
+
+### Searching
+
+```elixir
+# Basic multi-word AND search
+{:ok, page} = AshScylla.Search.search(MyApp.Repo, "my_keyspace", "learning phoenix")
+#=> {:ok, %{
+#     entries: [{"post-uuid", 2.0}, ...],
+#     page_number: 1,
+#     page_size: 20,
+#     total_count: 1,
+#     total_pages: 1,
+#     has_next?: false,
+#     has_prev?: false
+#   }}
+
+# OR search
+{:ok, page} = AshScylla.Search.search(repo, keyspace, "elixir OR phoenix")
+
+# NOT search
+{:ok, page} = AshScylla.Search.search(repo, keyspace, "phoenix NOT framework")
+
+# Bang variant (raises on error)
+page = AshScylla.Search.search!(repo, keyspace, "phoenix")
+```
+
+### Search Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `:page` | `1` | Page number (1-based) |
+| `:page_size` | `20` | Results per page |
+| `:strategy` | `:tf` | Ranking: `:tf`, `:tfidf`, or `:bm25` |
+| `:num_shards` | `16` | Shards per term partition |
+| `:analyzer_opts` | `[]` | Passed to the analyzer (`stem`, `remove_stop_words`, `min_length`) |
+
+### Ranking Strategies
+
+```elixir
+# Simple TF (Term Frequency) scoring
+AshScylla.Search.search(repo, keyspace, "distributed web", strategy: :tf)
+
+# TF-IDF (needs document stats)
+AshScylla.Search.search(repo, keyspace, "distributed web",
+  strategy: :tfidf,
+  total_docs: 100_000,
+  doc_freqs: %{"distributed" => 500, "web" => 2000}
+)
+
+# BM25 (Okapi BM25)
+AshScylla.Search.search(repo, keyspace, "distributed web",
+  strategy: :bm25,
+  total_docs: 100_000,
+  doc_freqs: %{"distributed" => 500, "web" => 2000},
+  avg_doc_length: 50.0
+)
+```
+
+### Text Analysis Pipeline
+
+The default analysis pipeline:
+
+```
+Document → Tokenizer → Lowercase → NFC Normalize → Stop Words → Stemmer → Index
+```
+
+```elixir
+# Analyze text manually to see terms
+AshScylla.Search.Analyzer.analyze("The quick brown fox jumps over the lazy dog")
+#=> [{"brown", 1}, {"dog", 1}, {"fox", 1}, {"jump", 1}, {"lazi", 1}, {"quick", 1}]
+
+# Analyze with options
+AshScylla.Search.Analyzer.analyze("The Running Cats", stem: false, remove_stop_words: false)
+#=> [{"cat", 1}, {"run", 1}, {"the", 1}]
+
+# Analyze a query (preserves term order for phrase search)
+AshScylla.Search.Analyzer.analyze_query("learning phoenix framework")
+#=> ["learn", "phoenix", "framework"]
+```
+
+### Integrating with Ash Resources
+
+For a complete integration, call the search functions from custom Ash actions or a search context module:
+
+```elixir
+defmodule MyApp.SearchContext do
+  alias AshScylla.Search
+
+  @repo MyApp.Repo
+  @keyspace "my_app"
+
+  def index_post(post) do
+    Search.index(@repo, @keyspace, post.id, %{
+      title: post.title,
+      body: post.body
+    })
+  end
+
+  def search(query, opts \\ []) do
+    Search.search(@repo, @keyspace, query, opts)
+  end
+end
+```
+
+### Search Tables Schema
+
+```sql
+-- Inverted index (sharded to prevent hotspot partitions)
+CREATE TABLE search_post_terms (
+  term text,
+  shard smallint,
+  post_id uuid,
+  field tinyint,
+  tf smallint,
+  PRIMARY KEY ((term, shard), post_id)
+);
+
+-- Stored term sets for diff-based updates
+CREATE TABLE search_post_fields (
+  post_id uuid,
+  field tinyint,
+  terms set<text>,
+  PRIMARY KEY (post_id, field)
+);
+```
+
+### Performance Characteristics
+
+| Stage | Complexity | Notes |
+|-------|-----------|-------|
+| Tokenization | O(n) | Linear in document length |
+| Index Write | O(t) | Linear in unique terms; uses UNLOGGED BATCH |
+| Term Lookup | O(1) | Single partition lookup per term/shard |
+| AND Merge | O(n+m) | Two-pointer algorithm |
+| Ranking | O(k log k) | Sort by score |
+| Fetch Posts | O(k) | Linear in matched documents |
+
+Where: **n** = document length, **t** = unique terms, **k** = matched documents.
 
 ---
 

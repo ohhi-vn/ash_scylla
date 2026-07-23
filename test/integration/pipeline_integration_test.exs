@@ -209,9 +209,47 @@ defmodule AshScylla.DataLayer.PipelineTest do
       else
         case AshScylla.Test.ContainerEngine.ensure_running() do
           :ok ->
-            _ = ScyllaContainer.start(scylla_container_config())
-            Logger.warning("ScyllaContainer.start not implemented. Skipping integration tests.")
-            %{conn: nil, scylla: nil}
+            case ScyllaContainer.start(scylla_container_config()) do
+              {:ok, container} ->
+                host = ScyllaContainer.host(container)
+                port = ScyllaContainer.port(container)
+                conn = connect_with_retry(host, port, 60)
+
+                Xandra.execute!(conn, "DROP KEYSPACE IF EXISTS ash_scylla_test")
+                Xandra.execute!(
+                  conn,
+                  "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}"
+                )
+                Xandra.execute!(
+                  conn,
+                  "CREATE TABLE IF NOT EXISTS ash_scylla_test.users (id UUID PRIMARY KEY, name TEXT, email TEXT, age INT, status TEXT, created_at TIMESTAMP)"
+                )
+                Xandra.execute!(
+                  conn,
+                  "CREATE INDEX IF NOT EXISTS idx_users_email ON ash_scylla_test.users (email)"
+                )
+                Xandra.execute!(
+                  conn,
+                  "CREATE INDEX IF NOT EXISTS idx_users_status ON ash_scylla_test.users (status)"
+                )
+                Xandra.execute!(
+                  conn,
+                  "CREATE INDEX IF NOT EXISTS idx_users_age ON ash_scylla_test.users (age)"
+                )
+
+                Xandra.stop(conn)
+
+                on_exit(fn -> ScyllaContainer.stop(container.container_id) end)
+
+                %{conn: nil, scylla: :container, container_host: host, container_port: port}
+
+              {:error, reason} ->
+                Logger.warning(
+                  "Failed to start ScyllaDB container: #{inspect(reason)}. Skipping integration tests."
+                )
+
+                %{conn: nil, scylla: nil}
+            end
 
           {:error, reason} ->
             Logger.warning(
@@ -228,6 +266,11 @@ defmodule AshScylla.DataLayer.PipelineTest do
     case Map.fetch(context, :scylla) do
       {:ok, :direct} ->
         conn = connect_with_retry(direct_host(), direct_port(), 5)
+        ensure_pipeline_schema(conn)
+        %{conn: conn}
+
+      {:ok, :container} ->
+        conn = connect_with_retry(context.container_host, context.container_port, 5)
         ensure_pipeline_schema(conn)
         %{conn: conn}
 

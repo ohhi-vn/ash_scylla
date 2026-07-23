@@ -617,20 +617,6 @@ defmodule AshScylla.DataLayer.FilterValidator do
     Enum.flat_map(args, &extract_columns_from_filter/1)
   end
 
-  defp extract_columns_from_filter(%{name: :starts_with, args: args}) do
-    Enum.flat_map(args, &extract_columns_from_filter/1)
-  end
-
-  defp extract_columns_from_filter(%{name: :ends_with, args: args}) do
-    Enum.flat_map(args, &extract_columns_from_filter/1)
-  end
-
-  # Catch any function call with args before the %{name: name} fallback
-  defp extract_columns_from_filter(%{name: _name, args: args}) when is_list(args) do
-    Enum.flat_map(args, &extract_columns_from_filter/1)
-  end
-
-  # Optimized extraction for operator-style filters: %{operator: :eq, left: %{name: :id}, ...}
   @spec extract_columns_from_filter(term()) :: [atom()]
   defp extract_columns_from_filter(%{left: %{name: name}}) when is_atom(name), do: [name]
 

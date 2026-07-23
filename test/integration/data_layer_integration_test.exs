@@ -271,8 +271,40 @@ defmodule AshScylla.DataLayer.IntegrationTest do
       else
         case AshScylla.Test.ContainerEngine.ensure_running() do
           :ok ->
-            _ = ScyllaContainer.start(scylla_container_config())
-            %{scylla: nil}
+            case ScyllaContainer.start(scylla_container_config()) do
+              {:ok, container} ->
+                host = ScyllaContainer.host(container)
+                port = ScyllaContainer.port(container)
+
+                conn = connect_with_retry(host, port)
+
+                xq(
+                  conn,
+                  "CREATE KEYSPACE IF NOT EXISTS ash_scylla_dl_test WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}"
+                )
+
+                xq(
+                  conn,
+                  "CREATE TABLE IF NOT EXISTS ash_scylla_dl_test.items (id UUID PRIMARY KEY, name TEXT, status TEXT, value INT, score DOUBLE, active BOOLEAN, created_at TIMESTAMP, tags LIST<TEXT>, metadata MAP<TEXT, TEXT>)"
+                )
+
+                xq(
+                  conn,
+                  "CREATE INDEX IF NOT EXISTS idx_items_status ON ash_scylla_dl_test.items (status)"
+                )
+
+                xq(conn, "CREATE INDEX IF NOT EXISTS idx_items_value ON ash_scylla_dl_test.items (value)")
+
+                Xandra.stop(conn)
+
+                on_exit(fn -> ScyllaContainer.stop(container.container_id) end)
+
+                %{scylla: :container, container_host: host, container_port: port}
+
+              {:error, reason} ->
+                Logger.warning("Failed to start ScyllaDB container: #{inspect(reason)}")
+                %{scylla: nil}
+            end
 
           {:error, _} ->
             %{scylla: nil}
@@ -285,6 +317,11 @@ defmodule AshScylla.DataLayer.IntegrationTest do
     case Map.fetch(context, :scylla) do
       {:ok, :direct} ->
         conn = connect_with_retry(direct_host(), direct_port())
+        xq(conn, "TRUNCATE ash_scylla_dl_test.items")
+        %{conn: conn}
+
+      {:ok, :container} ->
+        conn = connect_with_retry(context.container_host, context.container_port)
         xq(conn, "TRUNCATE ash_scylla_dl_test.items")
         %{conn: conn}
 

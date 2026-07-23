@@ -202,8 +202,52 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
     else
       case AshScylla.Test.ContainerEngine.ensure_running() do
         :ok ->
-          _ = ScyllaContainer.start(scylla_container_config())
-          %{scylla: nil}
+          case ScyllaContainer.start(scylla_container_config()) do
+            {:ok, container} ->
+              host = ScyllaContainer.host(container)
+              port = ScyllaContainer.port(container)
+              conn = connect_with_retry(host, port)
+
+              execute_cql(
+                conn,
+                "CREATE KEYSPACE IF NOT EXISTS ash_scylla_type_test WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}"
+              )
+
+              execute_cql(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS ash_scylla_type_test.roundtrip (
+                  id UUID PRIMARY KEY,
+                  str_val TEXT,
+                  int_val BIGINT,
+                  float_val DOUBLE,
+                  double_val DOUBLE,
+                  bool_val BOOLEAN,
+                  timestamp_val TIMESTAMP,
+                  date_val DATE,
+                  time_val TIME,
+                  smallint_val SMALLINT,
+                  tinyint_val TINYINT,
+                  decimal_val DECIMAL,
+                  blob_val BLOB,
+                  list_val LIST<TEXT>,
+                  set_val SET<INT>,
+                  map_val MAP<TEXT, TEXT>,
+                  atom_val TEXT
+                )
+                """
+              )
+
+              Xandra.stop(conn)
+
+              on_exit(fn -> ScyllaContainer.stop(container.container_id) end)
+
+              %{conn: nil, scylla: :container, container_host: host, container_port: port}
+
+            {:error, reason} ->
+              Logger.warning("Failed to start ScyllaDB container: #{inspect(reason)}")
+              %{scylla: nil}
+          end
 
         {:error, _} ->
           %{scylla: nil}
@@ -215,6 +259,11 @@ defmodule AshScylla.TypeRoundtripIntegrationTest do
     case Map.fetch(context, :scylla) do
       {:ok, :direct} ->
         conn = connect_with_retry(direct_host(), direct_port())
+        execute_cql(conn, "TRUNCATE ash_scylla_type_test.roundtrip")
+        %{conn: conn}
+
+      {:ok, :container} ->
+        conn = connect_with_retry(context.container_host, context.container_port)
         execute_cql(conn, "TRUNCATE ash_scylla_type_test.roundtrip")
         %{conn: conn}
 

@@ -187,10 +187,24 @@ defmodule AshScylla.DataLayer.SchemaMigration do
         Enum.each(statements, &Logger.info/1)
         {:ok, statements}
       else
-        nodes = Keyword.get(opts, :nodes, repo.nodes())
-        migration_opts = Keyword.put_new(opts, :keyspace, repo.keyspace())
+        nodes = Keyword.get(opts, :nodes, resolve_nodes(repo))
+        migration_opts = Keyword.put_new(opts, :keyspace, resolve_keyspace(repo))
         Migrator.run(nodes, statements, migration_opts)
       end
+    end
+  end
+
+  defp resolve_nodes(repo) do
+    case AshScylla.Connection.get_conn(repo) do
+      %AshScylla.Connection{nodes: nodes} when nodes != [] -> nodes
+      _ -> repo.nodes()
+    end
+  end
+
+  defp resolve_keyspace(repo) do
+    case AshScylla.Connection.get_conn(repo) do
+      %AshScylla.Connection{keyspace: ks} when is_binary(ks) -> ks
+      _ -> repo.keyspace()
     end
   end
 

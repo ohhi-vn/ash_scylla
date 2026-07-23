@@ -364,10 +364,29 @@ defmodule AshScylla.ScyllaIntegrationTest do
         case AshScylla.Test.ContainerEngine.ensure_running() do
           :ok ->
             Logger.info("Container engine ready. Starting ScyllaDB container...")
-            Logger.info("About to call ScyllaContainer.start...")
-            _ = ScyllaContainer.start(scylla_container_config())
-            Logger.warning("ScyllaContainer.start not implemented. Skipping integration tests.")
-            :ok
+
+            case ScyllaContainer.start(scylla_container_config()) do
+              {:ok, container} ->
+                host = ScyllaContainer.host(container)
+                port = ScyllaContainer.port(container)
+                Logger.info("ScyllaDB container started at #{host}:#{port}")
+
+                conn = connect_with_retry(host, port, 60)
+                schema(conn)
+                Xandra.stop(conn)
+
+                on_exit(fn -> ScyllaContainer.stop(container.container_id) end)
+
+                Logger.info("=== ScyllaIntegrationTest setup_all complete (container) ===")
+                %{scylla: :container, container_host: host, container_port: port}
+
+              {:error, reason} ->
+                Logger.warning(
+                  "Failed to start ScyllaDB container: #{inspect(reason)}. Skipping integration tests."
+                )
+
+                :ok
+            end
 
           {:error, reason} ->
             Logger.warning(
@@ -386,12 +405,18 @@ defmodule AshScylla.ScyllaIntegrationTest do
         host = direct_host()
         port = direct_port()
         conn = connect_with_retry(host, port, 5)
-        %{conn: conn}
+        %{conn: conn, scylla_host: host, scylla_port: port}
+
+      {:ok, :container} ->
+        host = context.container_host
+        port = context.container_port
+        conn = connect_with_retry(host, port, 5)
+        %{conn: conn, scylla_host: host, scylla_port: port}
 
       _ ->
         # No ScyllaDB available (no SCYLLA_DIRECT and no container engine).
         # Return a nil connection so each test skips itself gracefully.
-        %{conn: nil}
+        %{conn: nil, scylla_host: nil, scylla_port: nil}
     end
   end
 
@@ -1099,13 +1124,10 @@ defmodule AshScylla.ScyllaIntegrationTest do
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "concurrent read/write simulation" do
-    test "50 concurrent writers insert distinct records", %{conn: conn} do
+    test "50 concurrent writers insert distinct records", %{conn: conn, scylla_host: host, scylla_port: port} do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
       else
-        host = direct_host()
-        port = direct_port()
-
         tasks =
           Enum.map(1..50, fn i ->
             Task.async(fn ->
@@ -1132,13 +1154,10 @@ defmodule AshScylla.ScyllaIntegrationTest do
       end
     end
 
-    test "concurrent readers and writers", %{conn: conn} do
+    test "concurrent readers and writers", %{conn: conn, scylla_host: host, scylla_port: port} do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
       else
-        host = direct_host()
-        port = direct_port()
-
         tasks =
           Enum.map(1..20, fn i ->
             Task.async(fn ->
@@ -1165,12 +1184,10 @@ defmodule AshScylla.ScyllaIntegrationTest do
       end
     end
 
-    test "concurrent reads on same secondary index query", %{conn: conn} do
+    test "concurrent reads on same secondary index query", %{conn: conn, scylla_host: host, scylla_port: port} do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
       else
-        host = direct_host()
-        port = direct_port()
         {:ok, setup_conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
         id = uid()
 
@@ -1202,12 +1219,10 @@ defmodule AshScylla.ScyllaIntegrationTest do
       end
     end
 
-    test "concurrent event writes to same partition", %{conn: conn} do
+    test "concurrent event writes to same partition", %{conn: conn, scylla_host: host, scylla_port: port} do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
       else
-        host = direct_host()
-        port = direct_port()
         user_id = uid()
 
         tasks =
@@ -1235,12 +1250,10 @@ defmodule AshScylla.ScyllaIntegrationTest do
       end
     end
 
-    test "mixed CRUD operations under concurrent load", %{conn: conn} do
+    test "mixed CRUD operations under concurrent load", %{conn: conn, scylla_host: host, scylla_port: port} do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
       else
-        host = direct_host()
-        port = direct_port()
         {:ok, setup_conn} = Xandra.start_link(nodes: ["#{host}:#{port}"])
         base_ids = Enum.map(1..10, fn _ -> uid() end)
 

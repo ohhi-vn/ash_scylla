@@ -176,17 +176,37 @@ defmodule AshScylla.ResetIntegrationTest do
     else
       case AshScylla.Test.ContainerEngine.ensure_running() do
         :ok ->
-          _ =
-            AshScylla.ScyllaContainer.start(
-              AshScylla.ScyllaContainer.new()
-              |> AshScylla.ScyllaContainer.with_image("scylladb/scylla:5.4")
-              |> AshScylla.ScyllaContainer.with_wait_timeout(120_000)
-            )
+          case AshScylla.ScyllaContainer.start(
+                 AshScylla.ScyllaContainer.new()
+                 |> AshScylla.ScyllaContainer.with_image("scylladb/scylla:5.4")
+                 |> AshScylla.ScyllaContainer.with_wait_timeout(120_000)
+               ) do
+            {:ok, container} ->
+              host = AshScylla.ScyllaContainer.host(container)
+              port = AshScylla.ScyllaContainer.port(container)
+              conn = connect_with_retry(host, port)
 
-          %{conn: nil}
+              case AshScylla.Connection.start_link(
+                     name: AshScylla.TestRepo,
+                     nodes: ["#{host}:#{port}"],
+                     keyspace: "ash_scylla_test",
+                     connect_timeout: 15_000
+                   ) do
+                {:ok, _} -> :ok
+                {:error, {:already_started, _}} -> :ok
+              end
+
+              on_exit(fn -> AshScylla.ScyllaContainer.stop(container.container_id) end)
+
+              %{conn: conn, host: host, port: port}
+
+            {:error, reason} ->
+              Logger.warning("Failed to start ScyllaDB container: #{inspect(reason)}")
+              %{conn: nil, host: nil, port: nil}
+          end
 
         {:error, _} ->
-          %{conn: nil}
+          %{conn: nil, host: nil, port: nil}
       end
     end
   end
@@ -231,10 +251,8 @@ defmodule AshScylla.ResetIntegrationTest do
 
   describe "mix ash_scylla.reset" do
     @tag :integration
-    test "drops keyspace and data, then recreates it", %{conn: conn} do
+    test "drops keyspace and data, then recreates it", %{conn: conn, host: host, port: port} do
       with_scylla(conn, fn conn ->
-        host = direct_host()
-        port = direct_port()
         keyspace = "ash_scylla_test"
 
         # Sanity: data exists before reset.

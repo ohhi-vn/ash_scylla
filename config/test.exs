@@ -6,7 +6,7 @@ config :logger, level: :warning
 config :ash_scylla, ash_domains: [AshScylla.TestDomain]
 
 config :ash_scylla, AshScylla.TestRepo,
-  nodes: ["127.0.0.1:9042"],
+  nodes: ["127.0.0.1:9051"],
   keyspace: "ash_scylla_test",
   connect_timeout: 5_000
 

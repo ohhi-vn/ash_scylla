@@ -4,7 +4,7 @@ defmodule AshScylla.MixProject do
   def project do
     [
       app: :ash_scylla,
-      version: "1.5.3",
+      version: "1.6.0",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -107,6 +107,24 @@ defmodule AshScylla.MixProject do
         "Error Handling": [
           AshScylla.Error,
           AshScylla.Error.ScyllaError
+        ],
+        "Full-Text Search": [
+          AshScylla.Search,
+          AshScylla.Search.Storage,
+          AshScylla.Search.Analyzer,
+          AshScylla.Search.Analyzer.Tokenizer,
+          AshScylla.Search.Analyzer.Normalizer,
+          AshScylla.Search.Analyzer.StopWords,
+          AshScylla.Search.Analyzer.Stemmer,
+          AshScylla.Search.Indexer,
+          AshScylla.Search.Indexer.Builder,
+          AshScylla.Search.Indexer.Updater,
+          AshScylla.Search.Indexer.Deleter,
+          AshScylla.Search.Query.Parser,
+          AshScylla.Search.Query.Planner,
+          AshScylla.Search.Query.BooleanEngine,
+          AshScylla.Search.Query.Ranking,
+          AshScylla.Search.Query.Paginator
         ]
       ]
     ]
