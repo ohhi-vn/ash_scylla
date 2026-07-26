@@ -899,20 +899,29 @@ defmodule AshScylla.DataLayer do
               "a broader result set than intended."
 
       {:ok, {where_clause, where_params}} ->
-        query =
-          IO.iodata_to_binary([
-            "UPDATE ",
-            sanitized_table,
-            " SET ",
-            Enum.join(set_clauses, ", "),
-            " WHERE ",
-            where_clause
-          ])
+        # CQL does not allow UPDATE without a SET clause — skip when no attrs changed.
+        if set_clauses == [] do
+          Logger.debug(
+            "update_query: no attribute changes, skipping UPDATE and returning existing records"
+          )
 
-        Logger.debug("Executing bulk UPDATE on #{sanitized_table}")
-
-        with {:ok, _} <- repo.query(query, set_values ++ where_params, opts) do
           run_query(data_layer_query, resource)
+        else
+          query =
+            IO.iodata_to_binary([
+              "UPDATE ",
+              sanitized_table,
+              " SET ",
+              Enum.join(set_clauses, ", "),
+              " WHERE ",
+              where_clause
+            ])
+
+          Logger.debug("Executing bulk UPDATE on #{sanitized_table}")
+
+          with {:ok, _} <- repo.query(query, set_values ++ where_params, opts) do
+            run_query(data_layer_query, resource)
+          end
         end
     end
   end
@@ -1695,8 +1704,66 @@ defmodule AshScylla.DataLayer do
   end
 
   @spec changeset_to_update_attrs(term(), module()) :: map()
-  defp changeset_to_update_attrs(changeset, _resource) do
-    changeset.attributes
+  defp changeset_to_update_attrs(changeset, resource) do
+    attrs = changeset.attributes
+
+    if map_size(attrs) > 0 do
+      Logger.debug(
+        "changeset_to_update_attrs: using changeset.attributes with #{map_size(attrs)} keys: #{inspect(Map.keys(attrs))}"
+      )
+
+      attrs
+    else
+      # For atomic updates, values are in :atomics, not :casted_attributes
+      atomics = Map.get(changeset, :atomics, [])
+
+      if is_list(atomics) and length(atomics) > 0 do
+        # Extract simple values from atomics (skip expressions like `if ... do now() else ... end`)
+        simple_atomics =
+          atomics
+          |> Enum.filter(fn
+            {_key, value}
+            when is_atom(value) or is_binary(value) or is_integer(value) or is_boolean(value) or
+                   is_float(value) or is_nil(value) ->
+              true
+
+            {_key, _value} ->
+              false
+          end)
+          |> Enum.into(%{})
+
+        # Filter to only include actual resource attributes
+        resource_attr_names =
+          resource
+          |> Info.attributes()
+          |> Enum.flat_map(fn attr -> [attr.name, to_string(attr.name)] end)
+          |> MapSet.new()
+
+        filtered = Map.filter(simple_atomics, fn {k, _v} -> k in resource_attr_names end)
+
+        Logger.debug(
+          "changeset_to_update_attrs: using atomics with #{map_size(filtered)} keys: #{inspect(Map.keys(filtered))}"
+        )
+
+        filtered
+      else
+        # Fallback to casted_attributes
+        resource_attr_names =
+          resource
+          |> Info.attributes()
+          |> Enum.flat_map(fn attr -> [attr.name, to_string(attr.name)] end)
+          |> MapSet.new()
+
+        casted = Map.get(changeset, :casted_attributes, %{})
+        filtered = Map.filter(casted, fn {k, _v} -> k in resource_attr_names end)
+
+        Logger.debug(
+          "changeset_to_update_attrs: using casted_attributes with #{map_size(filtered)} keys: #{inspect(Map.keys(filtered))}"
+        )
+
+        filtered
+      end
+    end
   end
 
   @spec autogenerate_value(map()) :: term()

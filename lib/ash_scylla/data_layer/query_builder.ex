@@ -605,14 +605,14 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   def filter_to_cql(%{__function__?: true, name: :fragment} = func, _uuid_fields, _cql_types) do
     # Ash.Query.Function.Fragment stores args as [{:raw, str}, {:expr, arg}, ...]
     # We need to convert this into a CQL string with ? placeholders + params
-{cql_parts, params} =
-        func.arguments
-        |> Enum.reduce({[], []}, fn
-          {:raw, str}, {acc_c, acc_p} -> {[acc_c, str], acc_p}
-          {:expr, expr}, {acc_c, acc_p} -> {[acc_c, "?"], acc_p ++ [expr]}
-          {:casted_expr, expr}, {acc_c, acc_p} -> {[acc_c, "?"], acc_p ++ [expr]}
-          arg, {acc_c, acc_p} -> {[acc_c, inspect(arg)], acc_p}
-        end)
+    {cql_parts, params} =
+      func.arguments
+      |> Enum.reduce({[], []}, fn
+        {:raw, str}, {acc_c, acc_p} -> {[acc_c, str], acc_p}
+        {:expr, expr}, {acc_c, acc_p} -> {[acc_c, "?"], acc_p ++ [expr]}
+        {:casted_expr, expr}, {acc_c, acc_p} -> {[acc_c, "?"], acc_p ++ [expr]}
+        arg, {acc_c, acc_p} -> {[acc_c, inspect(arg)], acc_p}
+      end)
 
     {IO.iodata_to_binary(cql_parts), params}
   end
@@ -661,6 +661,26 @@ defmodule AshScylla.DataLayer.QueryBuilder do
               "Found: overlaps(#{inspect(attribute_name(left))}, #{inspect(values)}). " <>
               "Workaround: split into multiple queries (one per value) and merge in application code."
     end
+  end
+
+  def filter_to_cql(%Ash.Filter{expression: expression}, uuid_fields, cql_types) do
+    filter_to_cql(expression, uuid_fields, cql_types)
+  end
+
+  def filter_to_cql(
+        %Ash.Query.BooleanExpression{op: op, left: left, right: right},
+        uuid_fields,
+        cql_types
+      ) do
+    filter_to_cql(%{op: op, left: left, right: right}, uuid_fields, cql_types)
+  end
+
+  def filter_to_cql(
+        %Ash.Query.Call{name: name, args: [left, right], operator?: true},
+        uuid_fields,
+        cql_types
+      ) do
+    filter_to_cql(%{operator: name, left: left, right: right}, uuid_fields, cql_types)
   end
 
   def filter_to_cql(%{expression: expression}, uuid_fields, cql_types) do
