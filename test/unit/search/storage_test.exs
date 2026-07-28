@@ -38,4 +38,57 @@ defmodule AshScylla.Search.StorageTest do
       assert Enum.min(shards) >= 0
     end
   end
+
+  describe "create_tables/2" do
+    defmodule MockCreateRepo do
+      def query(_cql, _params), do: {:ok, %{}}
+    end
+
+    defmodule MockCreateFailingRepo do
+      def query(_cql, _params), do: {:error, :mock_create_error}
+    end
+
+    test "returns :ok when all statements succeed" do
+      assert Storage.create_tables(MockCreateRepo, "test_ks") == :ok
+    end
+
+    test "returns {:error, reason} when first statement fails" do
+      assert Storage.create_tables(MockCreateFailingRepo, "test_ks") ==
+               {:error, :mock_create_error}
+    end
+
+    test "stops on first failure" do
+      defmodule MockCreatePartialRepo do
+        def query(cql, _params) do
+          if String.contains?(cql, "search_post_terms") do
+            {:ok, %{}}
+          else
+            {:error, :second_failed}
+          end
+        end
+      end
+
+      assert Storage.create_tables(MockCreatePartialRepo, "test_ks") ==
+               {:error, :second_failed}
+    end
+  end
+
+  describe "drop_tables/2" do
+    defmodule MockDropRepo do
+      def query(_cql, _params), do: {:ok, %{}}
+    end
+
+    defmodule MockDropFailingRepo do
+      def query(_cql, _params), do: {:error, :mock_drop_error}
+    end
+
+    test "returns :ok when all statements succeed" do
+      assert Storage.drop_tables(MockDropRepo, "test_ks") == :ok
+    end
+
+    test "returns {:error, reason} when a statement fails" do
+      assert Storage.drop_tables(MockDropFailingRepo, "test_ks") ==
+               {:error, :mock_drop_error}
+    end
+  end
 end

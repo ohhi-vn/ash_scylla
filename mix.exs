@@ -138,7 +138,6 @@ defmodule AshScylla.MixProject do
       {:decimal, "~> 3.1", override: true, only: [:dev, :test]},
       {:hackney, "~> 4.3", override: true, only: [:dev, :test]},
       {:testcontainer_ex, "~> 0.9", only: [:test], runtime: false},
-      # {:testcontainer_ex, path: "../testcontainer_ex", only: [:test, :dev]},
       {:benchee, "~> 1.5", only: [:dev, :test]},
       {:benchee_html, "~> 1.0", only: [:dev, :test]},
       {:ex_doc, "~> 0.40", only: :dev, runtime: false},

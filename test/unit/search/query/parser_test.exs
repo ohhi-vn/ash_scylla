@@ -69,6 +69,34 @@ defmodule AshScylla.Search.Query.ParserTest do
       {:ok, ast} = Parser.parse("elixir and phoenix")
       assert %Parser.Group{op: :and} = ast
     end
+
+    test "parses NOT with phrase" do
+      {:ok, ast} = Parser.parse(~s(hello NOT "world peace"))
+      assert %Parser.Group{op: :and} = ast
+      assert length(ast.terms) == 2
+      assert %Parser.NotExpr{term: %Parser.Phrase{words: ["world", "peace"]}} = Enum.at(ast.terms, 1)
+    end
+
+    test "parses explicit AND with phrases" do
+      {:ok, ast} = Parser.parse(~s("hello world" AND "foo bar"))
+      assert %Parser.Group{op: :and} = ast
+      assert length(ast.terms) == 2
+    end
+
+    test "parses implicit AND before OR" do
+      {:ok, ast} = Parser.parse("hello world OR foo")
+      assert %Parser.Group{op: :or} = ast
+    end
+
+    test "parses OR with NOT inside clause" do
+      {:ok, ast} = Parser.parse("hello OR world NOT foo")
+      assert %Parser.Group{op: :or} = ast
+    end
+
+    test "parses multiple OR clauses" do
+      {:ok, ast} = Parser.parse("a OR b OR c")
+      assert %Parser.Group{op: :or} = ast
+    end
   end
 
   describe "parse!/1" do

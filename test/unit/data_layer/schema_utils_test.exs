@@ -1,98 +1,100 @@
 defmodule AshScylla.DataLayer.SchemaUtilsTest do
-  @moduledoc """
-  Tests for AshScylla.DataLayer.SchemaUtils — shared schema utilities.
-  """
-
-  use ExUnit.Case, async: false
+  use ExUnit.Case, async: true
 
   alias AshScylla.DataLayer.SchemaUtils
-  alias AshScylla.Identifier
 
   describe "get_table_name/1" do
-    test "returns DSL table name when configured" do
-      # TestResourceWithIndexes has table "test_users" configured in DSL
-      result = SchemaUtils.get_table_name(AshScylla.TestResourceWithIndexes)
-      assert is_binary(result)
-      assert result == "test_users"
+    test "returns explicitly configured table name" do
+      assert SchemaUtils.get_table_name(AshScylla.TestResource) == "test_resource"
     end
 
-    test "derives table name from module when no DSL config" do
-      # TestResource has no explicit table config
-      result = SchemaUtils.get_table_name(AshScylla.TestResource)
+    test "returns table name for composite PK resource" do
+      assert SchemaUtils.get_table_name(AshScylla.TestResourceCompositePK) == "test_composite_pk"
+    end
+
+    test "derives table name from module when no explicit table is set" do
+      result = SchemaUtils.get_table_name(AshScylla.TestResourceNoTable)
       assert is_binary(result)
+      refute result == ""
     end
   end
 
   describe "quote_name/1" do
-    test "quotes a valid identifier" do
-      assert SchemaUtils.quote_name("users") == ~s("users")
+    test "quotes atom name" do
+      assert SchemaUtils.quote_name(:my_table) == ~s("my_table")
     end
 
-    test "quotes an atom identifier" do
-      assert SchemaUtils.quote_name(:users) == ~s("users")
+    test "quotes string name" do
+      assert SchemaUtils.quote_name("my_table") == ~s("my_table")
     end
 
-    test "raises for identifier containing double quotes" do
-      # Double quotes are not valid in CQL identifiers
+    test "raises on identifier with double quotes" do
       assert_raise ArgumentError, fn ->
-        SchemaUtils.quote_name("my\"table")
+        SchemaUtils.quote_name(~s(my"table))
       end
     end
 
-    test "raises for invalid identifier" do
+    test "raises on invalid identifier" do
       assert_raise ArgumentError, fn ->
-        SchemaUtils.quote_name("users; DROP TABLE")
+        SchemaUtils.quote_name("123invalid")
       end
     end
 
-    test "raises for empty string" do
+    test "raises on non-string-or-atom input" do
       assert_raise ArgumentError, fn ->
-        SchemaUtils.quote_name("")
-      end
-    end
-
-    test "raises for non-string non-atom" do
-      assert_raise ArgumentError, fn ->
-        SchemaUtils.quote_name(123)
+        SchemaUtils.quote_name(42)
       end
     end
   end
 
   describe "quote_name_unchecked/1" do
-    test "quotes without validation" do
-      assert SchemaUtils.quote_name_unchecked("users") == ~s("users")
+    test "quotes plain name" do
+      assert SchemaUtils.quote_name_unchecked("my_table") == ~s("my_table")
     end
 
-    test "escapes double quotes" do
-      assert SchemaUtils.quote_name_unchecked("a\"b") == ~s("a""b")
+    test "quotes name with special characters" do
+      assert SchemaUtils.quote_name_unchecked("my table") == ~s("my table")
+    end
+
+    test "escapes embedded double quotes" do
+      assert SchemaUtils.quote_name_unchecked(~s(my"table)) == ~s("my""table")
+    end
+
+    test "handles empty string" do
+      assert SchemaUtils.quote_name_unchecked("") == ~s("")
     end
   end
 
   describe "unindexable_columns/1" do
-    test "returns empty list for resource with composite PK" do
-      # TestResource has only :id as PK (sole partition key)
-      result = SchemaUtils.unindexable_columns(AshScylla.TestResource)
-      assert is_list(result)
+    test "returns single partition key column" do
+      assert SchemaUtils.unindexable_columns(AshScylla.TestResource) == [:id]
     end
 
-    test "returns empty list for plain module" do
-      result = SchemaUtils.unindexable_columns(SomePlainModule)
-      assert result == []
+    test "returns empty list for composite partition key" do
+      assert SchemaUtils.unindexable_columns(AshScylla.TestResourceCompositePK) == []
+    end
+
+    test "returns empty list for non-Ash module" do
+      assert SchemaUtils.unindexable_columns(SomeMadeUpModule) == []
     end
   end
 
   describe "sanitize_type_name/1" do
-    test "returns valid type name" do
-      assert SchemaUtils.sanitize_type_name("MyType") == "MyType"
-    end
-
-    test "accepts atom" do
+    test "sanitizes atom type name" do
       assert SchemaUtils.sanitize_type_name(:my_type) == "my_type"
     end
 
-    test "raises for invalid characters" do
+    test "sanitizes string type name" do
+      assert SchemaUtils.sanitize_type_name("my_type") == "my_type"
+    end
+
+    test "sanitizes type name with uppercase" do
+      assert SchemaUtils.sanitize_type_name("MyType") == "MyType"
+    end
+
+    test "raises on invalid type name" do
       assert_raise ArgumentError, fn ->
-        SchemaUtils.sanitize_type_name("type; DROP")
+        SchemaUtils.sanitize_type_name("123invalid")
       end
     end
   end

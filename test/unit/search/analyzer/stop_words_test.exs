@@ -21,6 +21,20 @@ defmodule AshScylla.Search.Analyzer.StopWordsTest do
     end
   end
 
+  describe "stop_words/0" do
+    test "returns a MapSet" do
+      assert is_map(StopWords.stop_words())
+      assert MapSet.size(StopWords.stop_words()) > 0
+    end
+
+    test "contains common English stop words" do
+      sw = StopWords.stop_words()
+      assert "the" in sw
+      assert "a" in sw
+      assert "is" in sw
+    end
+  end
+
   describe "filter/1" do
     test "removes stop words from list" do
       input = ["the", "quick", "brown", "fox", "is", "very", "fast"]

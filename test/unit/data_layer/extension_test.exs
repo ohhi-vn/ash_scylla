@@ -86,6 +86,44 @@ defmodule AshScylla.ExtensionTest do
     test "omits flags that are not present" do
       assert [] = AshScylla.Extension.parse_codegen_argv([])
     end
+
+    test "parses --force flag" do
+      opts = AshScylla.Extension.parse_codegen_argv(["--force"])
+      assert opts[:force] == true
+    end
+
+    test "parses all flags together" do
+      opts =
+        AshScylla.Extension.parse_codegen_argv([
+          "add_users",
+          "--dev",
+          "--dry-run",
+          "--force"
+        ])
+
+      assert opts[:name] == "add_users"
+      assert opts[:dev] == true
+      assert opts[:dry_run] == true
+      assert opts[:force] == true
+    end
+
+    test "positional name takes priority over --name flag" do
+      opts =
+        AshScylla.Extension.parse_codegen_argv(["positional_name", "--name", "flag_name"])
+
+      assert opts[:name] == "positional_name"
+    end
+
+    test "handles flag-like positional arguments" do
+      opts = AshScylla.Extension.parse_codegen_argv(["--not-a-flag"])
+      refute opts[:name]
+    end
+
+    test "positional arg after --flag is not parsed as name" do
+      opts = AshScylla.Extension.parse_codegen_argv(["--dry-run", "migration_name"])
+      refute opts[:name]
+      assert opts[:dry_run] == true
+    end
   end
 
   describe "setup/1" do
@@ -385,6 +423,34 @@ defmodule AshScylla.ExtensionTest do
       capture_io(fn ->
         AshScylla.Extension.tear_down([])
       end)
+    end
+  end
+
+  describe "setup/1 with --no-keyspace" do
+    test "runs setup with --no-keyspace flag" do
+      capture_io(fn ->
+        assert AshScylla.Extension.setup(["--no-keyspace"]) == :ok
+      end)
+    end
+  end
+
+  describe "migrate/1 with --no-keyspace" do
+    test "runs migrate with --no-keyspace flag" do
+      capture_io(fn ->
+        assert AshScylla.Extension.migrate(["--no-keyspace"]) == :ok
+      end)
+    end
+
+    test "runs migrate with --no-keyspace and --dry-run" do
+      capture_io(fn ->
+        assert AshScylla.Extension.migrate(["--no-keyspace", "--dry-run"]) == :ok
+      end)
+    end
+  end
+
+  describe "reset/1 rescue path" do
+    test "handles missing repo gracefully when no repo configured" do
+      assert AshScylla.Extension.reset([]) == :ok
     end
   end
 
