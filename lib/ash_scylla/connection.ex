@@ -181,31 +181,25 @@ defmodule AshScylla.Connection do
       %__MODULE__{} = conn ->
         request_keyspace = Keyword.get(opts, :keyspace)
 
-        if request_keyspace && request_keyspace != conn.keyspace do
-          GenServer.call(name, {:set_keyspace, request_keyspace}, 5_000)
-          opts = Keyword.delete(opts, :keyspace)
+        case request_keyspace do
+          keyspace when is_binary(keyspace) and keyspace != conn.keyspace ->
+            case GenServer.call(name, {:set_keyspace, keyspace}, 5_000) do
+              {:ok, :set} -> query(name, query, params, Keyword.delete(opts, :keyspace))
+              {:error, reason} -> {:error, reason}
+            end
 
-          query(
-            %__MODULE__{conn | keyspace: request_keyspace, keyspace_used: true},
-            query,
-            params,
-            opts
-          )
-        else
-          ensure_keyspace!(conn, name)
+          _ ->
+            ensure_keyspace!(conn, name)
 
-          # Re-fetch connection to get updated `keyspace_used` state after
-          # `ensure_keyspace!` (the GenServer may have tried `USE keyspace`
-          # again and updated the state).
-          updated_conn = get_conn(name) || conn
+            # Re-fetch after ensure_keyspace!/2 because the GenServer may have
+            # updated keyspace_used. Always pass the configured keyspace to the
+            # struct clause so it issues USE immediately before the statement.
+            # This is required for cluster pools, where session state is not
+            # shared by every pooled connection.
+            updated_conn = get_conn(name) || conn
+            opts = put_connection_keyspace(opts, updated_conn.keyspace)
 
-          # Always keep keyspace in opts so `query/4` re-issues `USE keyspace`
-          # before each statement. This guarantees the correct keyspace context
-          # for every statement regardless of connection type (single-node or
-          # cluster) or whether a prior `USE` appeared to succeed.
-          opts = opts
-
-          query(updated_conn, query, params, opts)
+            query(updated_conn, query, params, opts)
         end
     end
   end
@@ -277,29 +271,19 @@ defmodule AshScylla.Connection do
       %__MODULE__{} = conn ->
         request_keyspace = Keyword.get(opts, :keyspace)
 
-        if request_keyspace && request_keyspace != conn.keyspace do
-          GenServer.call(name, {:set_keyspace, request_keyspace}, 5_000)
-          opts = Keyword.delete(opts, :keyspace)
-
-          query!(
-            %__MODULE__{conn | keyspace: request_keyspace, keyspace_used: true},
-            query,
-            params,
-            opts
-          )
-        else
-          ensure_keyspace!(conn, name)
-
-          updated_conn = get_conn(name) || conn
-
-          opts =
-            if updated_conn.cluster? or not updated_conn.keyspace_used do
-              opts
-            else
-              Keyword.delete(opts, :keyspace)
+        case request_keyspace do
+          keyspace when is_binary(keyspace) and keyspace != conn.keyspace ->
+            case GenServer.call(name, {:set_keyspace, keyspace}, 5_000) do
+              {:ok, :set} -> query!(name, query, params, Keyword.delete(opts, :keyspace))
+              {:error, reason} -> raise Xandra.Error, reason: reason
             end
 
-          query!(updated_conn, query, params, opts)
+          _ ->
+            ensure_keyspace!(conn, name)
+            updated_conn = get_conn(name) || conn
+            opts = put_connection_keyspace(opts, updated_conn.keyspace)
+
+            query!(updated_conn, query, params, opts)
         end
     end
   end
@@ -355,6 +339,12 @@ defmodule AshScylla.Connection do
   def ensure_keyspace!(conn, _name) do
     conn
   end
+
+  defp put_connection_keyspace(opts, keyspace) when is_binary(keyspace) do
+    Keyword.put(opts, :keyspace, keyspace)
+  end
+
+  defp put_connection_keyspace(opts, _keyspace), do: opts
 
   @doc false
   @spec validate_keyspace!(String.t()) :: :ok | no_return()

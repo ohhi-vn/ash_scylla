@@ -408,7 +408,7 @@ defmodule AshScylla.DslResourceTest do
       assert %AshScylla.Query{} = query
       assert query.resource == SimpleResource
       assert query.repo == AshScylla.TestRepo
-      assert query.table == "simple_items"
+      assert query.table == "#{AshScylla.TestRepo.keyspace()}.simple_items"
     end
 
     test "builds query struct for full config resource" do
@@ -416,7 +416,7 @@ defmodule AshScylla.DslResourceTest do
       assert %AshScylla.Query{} = query
       assert query.resource == FullConfigResource
       assert query.repo == AshScylla.TestRepo
-      assert query.table == "full_items"
+      assert query.table == "test_keyspace.full_items"
     end
 
     test "builds query struct with domain argument" do
@@ -493,7 +493,7 @@ defmodule AshScylla.DslResourceTest do
 
       {:ok, {cql, params}} = AshScylla.DataLayer.QueryBuilder.build_optimized_query(q4)
 
-      assert cql =~ "SELECT id, name, status FROM full_items"
+      assert cql =~ "SELECT id, name, status FROM test_keyspace.full_items"
       assert cql =~ "WHERE"
       # ScyllaDB does not support ORDER BY with secondary index scans;
       # status is a secondary-indexed column, so ORDER BY is stripped

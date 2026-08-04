@@ -1658,7 +1658,7 @@ defmodule AshScylla.DslGettersTest do
       assert %AshScylla.Query{} = query
       assert query.resource == FullFeatureResource
       assert query.repo == AshScylla.TestRepo
-      assert query.table == "full_feature_items"
+      assert query.table == "ff_keyspace.full_feature_items"
     end
 
     test "source/1 resolves table from FullFeatureResource" do

@@ -378,7 +378,12 @@ defmodule AshScylla.DataLayer do
   @impl Ash.DataLayer
   @spec resource_to_query(Ash.Resource.t(), Ash.Domain.t()) :: t()
   def resource_to_query(resource, _domain) do
-    table = source(resource)
+    # Use the fully-qualified table (keyspace.table) so read queries carry the
+    # keyspace explicitly. This is required for Xandra.Cluster (and for
+    # connections whose startup `USE` was not applied), where an unqualified
+    # table name relies on a session keyspace that only exists on a single
+    # pooled connection.
+    table = qualified_table(resource)
 
     %Query{
       resource: resource,
@@ -2180,7 +2185,7 @@ defmodule AshScylla.DataLayer do
   # Keyspace is handled at connection level; TTL is inline in CQL.
   @spec build_opts(module()) :: keyword()
   defp build_opts(resource) do
-    keyspace = Dsl.keyspace(resource)
+    keyspace = resource_keyspace(resource)
 
     []
     |> maybe_put(:consistency, Dsl.consistency(resource))
@@ -2192,7 +2197,7 @@ defmodule AshScylla.DataLayer do
   # Keyspace is handled at connection level.
   @spec build_query_opts(module(), String.t() | nil) :: keyword()
   defp build_query_opts(resource, _tenant) do
-    keyspace = Dsl.keyspace(resource)
+    keyspace = resource_keyspace(resource)
 
     []
     |> maybe_put(:consistency, Dsl.consistency(resource))
@@ -2203,6 +2208,32 @@ defmodule AshScylla.DataLayer do
   @spec sanitize_keyspace(String.t() | nil) :: String.t() | nil
   defp sanitize_keyspace(nil), do: nil
   defp sanitize_keyspace(keyspace), do: sanitize_identifier(keyspace)
+
+  # Resolves the effective keyspace for a resource: the resource-level `scylla`
+  # DSL setting wins, otherwise the keyspace configured on the resource's repo
+  # (e.g. `config :my_app, MyApp.Repo, keyspace: ...`) is used. This mirrors the
+  # resolution in `AshScylla.resource_keyspace/2`.
+  @spec resource_keyspace(module()) :: String.t() | nil
+  defp resource_keyspace(resource) do
+    case Dsl.keyspace(resource) do
+      nil -> repo_keyspace(resource)
+      keyspace -> keyspace
+    end
+  end
+
+  @spec repo_keyspace(module()) :: String.t() | nil
+  defp repo_keyspace(resource) do
+    case repo(resource) do
+      repo when is_atom(repo) ->
+        if function_exported?(repo, :keyspace, 0), do: repo.keyspace()
+
+      _ ->
+        nil
+    end
+  rescue
+    # No repo configured for this resource (e.g. non-AshScylla test doubles).
+    _ -> nil
+  end
 
   @doc """
   Returns the qualified table name (with keyspace prefix if configured).
@@ -2222,7 +2253,7 @@ defmodule AshScylla.DataLayer do
     # "order".
     table = QueryBuilder.cql_identifier(raw_table_name(resource))
 
-    case Dsl.keyspace(resource) do
+    case resource_keyspace(resource) do
       nil -> table
       ks -> "#{sanitize_keyspace(ks)}.#{table}"
     end
