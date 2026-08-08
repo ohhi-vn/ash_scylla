@@ -66,17 +66,16 @@ defmodule AshScylla.Search.Indexer.Builder do
 
     statement =
       terms
-      |> Enum.map(fn {term, tf} ->
+      |> Enum.map_join(";", fn {term, tf} ->
         shard = Storage.shard_for(term)
+
         "INSERT INTO #{ks}.#{table_terms} (term, shard, post_id, field, tf) " <>
           "VALUES (#{cql_string(term)}, #{shard}, #{post_id}, #{field}, #{tf})"
       end)
-      |> Enum.join(";")
 
     unique_terms =
       terms
-      |> Enum.map(fn {term, _} -> cql_string(term) end)
-      |> Enum.join(", ")
+      |> Enum.map_join(", ", fn {term, _} -> cql_string(term) end)
 
     fields_insert =
       "INSERT INTO #{ks}.#{table_fields} (post_id, field, terms) " <>
@@ -100,5 +99,6 @@ defmodule AshScylla.Search.Indexer.Builder do
 
   defp validate_cql_length!(cql) when byte_size(cql) > 50_000_000,
     do: raise("CQL batch too large")
+
   defp validate_cql_length!(_cql), do: :ok
 end

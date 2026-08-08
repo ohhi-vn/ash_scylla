@@ -12,6 +12,7 @@ defmodule AshScylla.Search.Query.ParserTest do
 
     test "parses multiple words as AND" do
       {:ok, ast} = Parser.parse("learning phoenix")
+
       assert %Parser.Group{
                op: :and,
                terms: [%Parser.Term{word: "learning"}, %Parser.Term{word: "phoenix"}]
@@ -20,6 +21,7 @@ defmodule AshScylla.Search.Query.ParserTest do
 
     test "parses explicit AND" do
       {:ok, ast} = Parser.parse("elixir AND phoenix")
+
       assert %Parser.Group{
                op: :and,
                terms: [%Parser.Term{word: "elixir"}, %Parser.Term{word: "phoenix"}]
@@ -33,6 +35,7 @@ defmodule AshScylla.Search.Query.ParserTest do
 
     test "parses NOT queries" do
       {:ok, ast} = Parser.parse("phoenix NOT framework")
+
       assert %Parser.Group{
                op: :and,
                terms: [
@@ -44,6 +47,7 @@ defmodule AshScylla.Search.Query.ParserTest do
 
     test "parses phrase queries" do
       {:ok, ast} = Parser.parse(~s("phoenix framework"))
+
       assert %Parser.Group{
                op: :and,
                terms: [%Parser.Phrase{words: ["phoenix", "framework"]}]
@@ -74,7 +78,9 @@ defmodule AshScylla.Search.Query.ParserTest do
       {:ok, ast} = Parser.parse(~s(hello NOT "world peace"))
       assert %Parser.Group{op: :and} = ast
       assert length(ast.terms) == 2
-      assert %Parser.NotExpr{term: %Parser.Phrase{words: ["world", "peace"]}} = Enum.at(ast.terms, 1)
+
+      assert %Parser.NotExpr{term: %Parser.Phrase{words: ["world", "peace"]}} =
+               Enum.at(ast.terms, 1)
     end
 
     test "parses explicit AND with phrases" do

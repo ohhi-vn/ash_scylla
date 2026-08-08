@@ -159,6 +159,7 @@ defmodule AshScylla.ConnectionUnitTest do
   describe "prepare!/3" do
     test "dispatches to Xandra when not clustered" do
       conn = %Connection{conn: nil, cluster?: false}
+
       assert_raise Xandra.ConnectionError, fn ->
         Connection.prepare!(conn, "SELECT 1")
       end

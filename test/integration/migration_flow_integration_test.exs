@@ -146,7 +146,13 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
 
               on_exit(fn -> ScyllaContainer.stop(container.container_id) end)
 
-              %{conn: nil, keyspace: nil, scylla: :container, container_host: host, container_port: port}
+              %{
+                conn: nil,
+                keyspace: nil,
+                scylla: :container,
+                container_host: host,
+                container_port: port
+              }
 
             {:error, reason} ->
               Logger.warning("Failed to start ScyllaDB container: #{inspect(reason)}")
@@ -317,7 +323,11 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
       end
     end
 
-    test "Migrator.run/3 auto-migrate via SchemaMigration.generate", %{conn: conn, keyspace: ks, scylla_nodes: scylla_nodes} do
+    test "Migrator.run/3 auto-migrate via SchemaMigration.generate", %{
+      conn: conn,
+      keyspace: ks,
+      scylla_nodes: scylla_nodes
+    } do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
         :ok
@@ -437,7 +447,11 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
       end
     end
 
-    test "multiple resources in same migration", %{conn: conn, keyspace: ks, scylla_nodes: scylla_nodes} do
+    test "multiple resources in same migration", %{
+      conn: conn,
+      keyspace: ks,
+      scylla_nodes: scylla_nodes
+    } do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
         :ok
@@ -473,7 +487,11 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
       end
     end
 
-    test "add column migration via SchemaMigration.diff", %{conn: conn, keyspace: ks, scylla_nodes: scylla_nodes} do
+    test "add column migration via SchemaMigration.diff", %{
+      conn: conn,
+      keyspace: ks,
+      scylla_nodes: scylla_nodes
+    } do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
         :ok
@@ -519,7 +537,11 @@ defmodule AshScylla.MigrationFlowIntegrationTest do
       end
     end
 
-    test "add index migration via SchemaMigration.diff", %{conn: conn, keyspace: ks, scylla_nodes: scylla_nodes} do
+    test "add index migration via SchemaMigration.diff", %{
+      conn: conn,
+      keyspace: ks,
+      scylla_nodes: scylla_nodes
+    } do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
         :ok

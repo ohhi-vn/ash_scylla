@@ -216,22 +216,27 @@ defmodule AshScylla.DataLayer.PipelineTest do
                 conn = connect_with_retry(host, port, 60)
 
                 Xandra.execute!(conn, "DROP KEYSPACE IF EXISTS ash_scylla_test")
+
                 Xandra.execute!(
                   conn,
                   "CREATE KEYSPACE IF NOT EXISTS ash_scylla_test WITH REPLICATION = {'class': 'NetworkTopologyStrategy', 'replication_factor': 1}"
                 )
+
                 Xandra.execute!(
                   conn,
                   "CREATE TABLE IF NOT EXISTS ash_scylla_test.users (id UUID PRIMARY KEY, name TEXT, email TEXT, age INT, status TEXT, created_at TIMESTAMP)"
                 )
+
                 Xandra.execute!(
                   conn,
                   "CREATE INDEX IF NOT EXISTS idx_users_email ON ash_scylla_test.users (email)"
                 )
+
                 Xandra.execute!(
                   conn,
                   "CREATE INDEX IF NOT EXISTS idx_users_status ON ash_scylla_test.users (status)"
                 )
+
                 Xandra.execute!(
                   conn,
                   "CREATE INDEX IF NOT EXISTS idx_users_age ON ash_scylla_test.users (age)"

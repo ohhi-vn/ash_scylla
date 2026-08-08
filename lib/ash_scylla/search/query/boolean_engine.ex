@@ -53,7 +53,9 @@ defmodule AshScylla.Search.Query.BooleanEngine do
   @spec or_union([posting_list()]) :: [{String.t(), non_neg_integer()}]
   def or_union(lists) when is_list(lists) do
     case lists do
-      [] -> []
+      [] ->
+        []
+
       _ ->
         lists
         |> List.flatten()

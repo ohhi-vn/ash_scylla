@@ -482,11 +482,7 @@ defmodule AshScylla.DataLayer do
     # Build the optimized query with filters, sorts, limit, offset
     case QueryBuilder.build_optimized_query(data_layer_query) do
       {:error, {:unknown_filter, unknown}} ->
-        raise AshScylla.Error,
-          message:
-            "AshScylla: Unable to translate filter expression to CQL: " <>
-              "#{inspect(unknown)}. The query was not executed to avoid returning " <>
-              "a broader result set than intended."
+        unknown_filter_error!(unknown)
 
       {:ok, {query, params}} ->
         execute_single_query(
@@ -543,7 +539,7 @@ defmodule AshScylla.DataLayer do
 
     opts = build_query_opts(resource, tenant)
 
-    Logger.debug("Executing run_query on #{table}")
+    Logger.debug("AshScylla: Executing run_query on #{table}")
     Logger.debug("AshScylla: Final query: #{inspect(query)}")
     Logger.debug("AshScylla: Final params: #{inspect(params)}")
 
@@ -758,7 +754,7 @@ defmodule AshScylla.DataLayer do
       []
       |> maybe_put(:consistency, consistency)
 
-    Logger.info("Bulk creating records in table #{source(resource)}")
+    Logger.debug("AshScylla: Bulk creating records in table #{source(resource)}")
 
     result =
       statements
@@ -881,33 +877,15 @@ defmodule AshScylla.DataLayer do
 
     {set_clauses, set_values} = build_set_clauses(attrs, resource)
 
-    %Query{filters: filters} = data_layer_query
-
-    where_result =
-      case filters do
-        [] ->
-          {clause, params} = build_pk_where_clause(changeset, resource)
-          {:ok, {clause, params}}
-
-        _ ->
-          uuid_fields = uuid_attribute_names(resource)
-          cql_types = attr_cql_type_map(resource)
-          QueryBuilder.build_where_clause(filters, uuid_fields, cql_types)
-      end
-
-    case where_result do
+    case build_where_result(data_layer_query, changeset, resource) do
       {:error, {:unknown_filter, unknown}} ->
-        raise AshScylla.Error,
-          message:
-            "AshScylla: Unable to translate filter expression to CQL: " <>
-              "#{inspect(unknown)}. The query was not executed to avoid returning " <>
-              "a broader result set than intended."
+        unknown_filter_error!(unknown)
 
       {:ok, {where_clause, where_params}} ->
         # CQL does not allow UPDATE without a SET clause — skip when no attrs changed.
         if set_clauses == [] do
           Logger.debug(
-            "update_query: no attribute changes, skipping UPDATE and returning existing records"
+            "AshScylla: update_query: no attribute changes, skipping UPDATE and returning existing records"
           )
 
           run_query(data_layer_query, resource)
@@ -922,9 +900,9 @@ defmodule AshScylla.DataLayer do
               where_clause
             ])
 
-          Logger.debug("Executing bulk UPDATE on #{sanitized_table}")
+          Logger.debug("AshScylla: Executing bulk UPDATE on #{sanitized_table}")
 
-          with {:ok, _} <- repo.query(query, set_values ++ where_params, opts) do
+          with {:ok, _} <- handle_result(repo.query(query, set_values ++ where_params, opts)) do
             run_query(data_layer_query, resource)
           end
         end
@@ -941,51 +919,12 @@ defmodule AshScylla.DataLayer do
 
     %Query{filters: filters} = data_layer_query
 
-    where_result =
-      case filters do
-        [] ->
-          {clause, params} = build_pk_where_clause(changeset, resource)
-          {:ok, {clause, params}}
-
-        _ ->
-          uuid_fields = uuid_attribute_names(resource)
-          cql_types = attr_cql_type_map(resource)
-          QueryBuilder.build_where_clause(filters, uuid_fields, cql_types)
-      end
-
-    case where_result do
+    case build_where_result(data_layer_query, changeset, resource) do
       {:error, {:unknown_filter, unknown}} ->
-        raise AshScylla.Error,
-          message:
-            "AshScylla: Unable to translate filter expression to CQL: " <>
-              "#{inspect(unknown)}. The query was not executed to avoid returning " <>
-              "a broader result set than intended."
+        unknown_filter_error!(unknown)
 
       {:ok, {where_clause, where_params}} ->
-        # Check if this is a secondary index scan (for bulk delete by filter)
-        pk_columns =
-          if Ash.Resource.Info.resource?(resource) do
-            resource
-            |> Ash.Resource.Info.primary_key()
-            |> MapSet.new()
-          else
-            MapSet.new()
-          end
-
-        secondary_indexed_columns =
-          resource
-          |> Dsl.secondary_indexes()
-          |> Enum.flat_map(fn idx -> idx.columns end)
-          |> MapSet.new()
-
-        filter_columns = QueryBuilder.get_filter_columns(filters)
-
-        needs_allow_filtering =
-          filter_columns != [] and
-            Enum.any?(filter_columns, fn col -> MapSet.member?(secondary_indexed_columns, col) end) and
-            Enum.all?(filter_columns, fn col ->
-              MapSet.member?(pk_columns, col) or MapSet.member?(secondary_indexed_columns, col)
-            end)
+        needs_allow_filtering = needs_allow_filtering?(resource, filters)
 
         query =
           IO.iodata_to_binary([
@@ -996,9 +935,9 @@ defmodule AshScylla.DataLayer do
             if(needs_allow_filtering, do: " ALLOW FILTERING", else: "")
           ])
 
-        Logger.debug("Executing bulk DELETE on #{sanitized_table}")
+        Logger.debug("AshScylla: Executing bulk DELETE on #{sanitized_table}")
 
-        with {:ok, _} <- repo.query(query, where_params, opts), do: :ok
+        with {:ok, _} <- handle_result(repo.query(query, where_params, opts)), do: :ok
     end
   end
 
@@ -1095,11 +1034,7 @@ defmodule AshScylla.DataLayer do
 
     case where_result do
       {:error, {:unknown_filter, unknown}} ->
-        raise AshScylla.Error,
-          message:
-            "AshScylla: Unable to translate filter expression to CQL: " <>
-              "#{inspect(unknown)}. The query was not executed to avoid returning " <>
-              "a broader result set than intended."
+        unknown_filter_error!(unknown)
 
       {:ok, {where_clause, where_params}} ->
         # Build aggregate queries for each aggregate
@@ -1113,7 +1048,7 @@ defmodule AshScylla.DataLayer do
                    filters
                  ) do
               {:error, reason} ->
-                {:halt, {:error, reason}}
+                {:halt, handle_result({:error, reason})}
 
               {query, params} ->
                 case repo.query(query, where_params ++ params, opts) do
@@ -1129,8 +1064,8 @@ defmodule AshScylla.DataLayer do
                   {:ok, %Xandra.Page{content: nil}} ->
                     {:cont, Map.put(acc, aggregate.name, Map.get(aggregate, :default_value))}
 
-                  {:error, reason} ->
-                    {:halt, {:error, reason}}
+                  {:error, error} ->
+                    {:halt, handle_result({:error, error})}
                 end
             end
           end)
@@ -1489,8 +1424,7 @@ defmodule AshScylla.DataLayer do
 
     where =
       clauses
-      |> Enum.map(fn {col, _} -> "#{col} = ?" end)
-      |> Enum.join(" AND ")
+      |> Enum.map_join(" AND ", fn {col, _} -> "#{col} = ?" end)
 
     params =
       clauses
@@ -1570,7 +1504,7 @@ defmodule AshScylla.DataLayer do
         if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
       ])
 
-    Logger.debug("Executing UPSERT: #{query} with params #{inspect(values)}")
+    Logger.debug("AshScylla: Executing UPSERT: #{query} with params #{inspect(values)}")
 
     case repo.query(query, values, opts) do
       {:ok, %Xandra.Page{content: [[true]]}} ->
@@ -1714,7 +1648,7 @@ defmodule AshScylla.DataLayer do
 
     if map_size(attrs) > 0 do
       Logger.debug(
-        "changeset_to_update_attrs: using changeset.attributes with #{map_size(attrs)} keys: #{inspect(Map.keys(attrs))}"
+        "AshScylla: changeset_to_update_attrs: using changeset.attributes with #{map_size(attrs)} keys: #{inspect(Map.keys(attrs))}"
       )
 
       attrs
@@ -1722,7 +1656,7 @@ defmodule AshScylla.DataLayer do
       # For atomic updates, values are in :atomics, not :casted_attributes
       atomics = Map.get(changeset, :atomics, [])
 
-      if is_list(atomics) and length(atomics) > 0 do
+      if is_list(atomics) and atomics != [] do
         # Extract simple values from atomics (skip expressions like `if ... do now() else ... end`)
         simple_atomics =
           atomics
@@ -1747,7 +1681,7 @@ defmodule AshScylla.DataLayer do
         filtered = Map.filter(simple_atomics, fn {k, _v} -> k in resource_attr_names end)
 
         Logger.debug(
-          "changeset_to_update_attrs: using atomics with #{map_size(filtered)} keys: #{inspect(Map.keys(filtered))}"
+          "AshScylla: changeset_to_update_attrs: using atomics with #{map_size(filtered)} keys: #{inspect(Map.keys(filtered))}"
         )
 
         filtered
@@ -1763,7 +1697,7 @@ defmodule AshScylla.DataLayer do
         filtered = Map.filter(casted, fn {k, _v} -> k in resource_attr_names end)
 
         Logger.debug(
-          "changeset_to_update_attrs: using casted_attributes with #{map_size(filtered)} keys: #{inspect(Map.keys(filtered))}"
+          "AshScylla: changeset_to_update_attrs: using casted_attributes with #{map_size(filtered)} keys: #{inspect(Map.keys(filtered))}"
         )
 
         filtered
@@ -1832,7 +1766,7 @@ defmodule AshScylla.DataLayer do
         if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
       ])
 
-    Logger.debug("Executing INSERT on #{sanitized_table}")
+    Logger.debug("AshScylla: Executing INSERT on #{sanitized_table}")
 
     with {:ok, _} <- repo.query(query, values, opts),
          pk <- get_primary_key(%{attributes: attrs}, resource),
@@ -1885,7 +1819,7 @@ defmodule AshScylla.DataLayer do
         lwt_suffix
       ])
 
-    Logger.debug("Executing UPDATE on #{sanitized_table}")
+    Logger.debug("AshScylla: Executing UPDATE on #{sanitized_table}")
 
     case repo.query(query, values ++ pk_values, opts) do
       {:ok, %Xandra.Page{content: [[false]]}} ->
@@ -1914,31 +1848,8 @@ defmodule AshScylla.DataLayer do
 
     {pk_where, pk_values} = build_pk_where_clause(changeset, resource)
 
-    # Check if this is a secondary index scan (for bulk delete by filter)
-    pk_columns =
-      if Ash.Resource.Info.resource?(resource) do
-        resource
-        |> Ash.Resource.Info.primary_key()
-        |> MapSet.new()
-      else
-        MapSet.new()
-      end
-
-    secondary_indexed_columns =
-      resource
-      |> Dsl.secondary_indexes()
-      |> Enum.flat_map(fn idx -> idx.columns end)
-      |> MapSet.new()
-
     filters = changeset.filter || []
-    filter_columns = QueryBuilder.get_filter_columns(filters)
-
-    needs_allow_filtering =
-      filter_columns != [] and
-        Enum.any?(filter_columns, fn col -> MapSet.member?(secondary_indexed_columns, col) end) and
-        Enum.all?(filter_columns, fn col ->
-          MapSet.member?(pk_columns, col) or MapSet.member?(secondary_indexed_columns, col)
-        end)
+    needs_allow_filtering = needs_allow_filtering?(resource, filters)
 
     query =
       IO.iodata_to_binary([
@@ -1949,7 +1860,7 @@ defmodule AshScylla.DataLayer do
         if(needs_allow_filtering, do: " ALLOW FILTERING", else: "")
       ])
 
-    Logger.debug("Executing DELETE on #{sanitized_table}")
+    Logger.debug("AshScylla: Executing DELETE on #{sanitized_table}")
 
     # Use LWT IF EXISTS for conditional delete when LWT is enabled
     lwt? = Dsl.lwt(resource)
@@ -1990,7 +1901,7 @@ defmodule AshScylla.DataLayer do
         " LIMIT 1"
       ])
 
-    Logger.debug("Executing SELECT: #{query} with params #{inspect(pk_values)}")
+    Logger.debug("AshScylla: Executing SELECT: #{query} with params #{inspect(pk_values)}")
 
     case repo.query(query, pk_values) do
       {:ok, %Xandra.Page{content: [row | _], columns: columns}} when columns != nil ->
@@ -2307,27 +2218,82 @@ defmodule AshScylla.DataLayer do
   defp maybe_put(opts, _key, nil), do: opts
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
 
+  # Raises the standard error used when a filter expression cannot be translated to CQL.
+  # Centralizes the identical message produced in several query paths.
+  @spec unknown_filter_error!(term()) :: no_return()
+  defp unknown_filter_error!(unknown) do
+    raise AshScylla.Error,
+      message:
+        "AshScylla: Unable to translate filter expression to CQL: " <>
+          "#{inspect(unknown)}. The query was not executed to avoid returning " <>
+          "a broader result set than intended."
+  end
+
   # Normalize ScyllaDB/Xandra errors into AshScylla errors.
   @spec handle_result({:ok, term()} | :ok | {:error, term()}) ::
           {:ok, term()} | :ok | {:error, term()}
   defp handle_result({:ok, _} = ok), do: ok
   defp handle_result(:ok), do: :ok
+  defp handle_result({:error, %AshScylla.Error.ScyllaError{}} = error), do: error
 
   defp handle_result({:error, %Xandra.Error{} = error}) do
-    Logger.warning("Xandra error: #{Exception.message(error)}")
     {:error, AshScylla.Error.wrap_xandra_error(error)}
   end
 
   defp handle_result({:error, %Xandra.ConnectionError{} = error}) do
-    Logger.warning("Xandra connection error: #{Exception.message(error)}")
     {:error, AshScylla.Error.wrap_xandra_error(error)}
   end
 
-  defp handle_result({:error, %AshScylla.Error.ScyllaError{}} = error), do: error
-
   defp handle_result({:error, error}) do
-    Logger.error("Unexpected error: #{inspect(error)}")
+    Logger.error("AshScylla: Unexpected data layer error: #{inspect(error)}")
     {:error, AshScylla.Error.wrap_xandra_error(error)}
+  end
+
+  # Determines if a query needs ALLOW FILTERING for secondary index scans.
+  # Used by destroy_query/4 and do_delete/3 to avoid duplication.
+  @spec needs_allow_filtering?(module(), list()) :: boolean()
+  defp needs_allow_filtering?(resource, filters) do
+    pk_columns =
+      if Ash.Resource.Info.resource?(resource) do
+        resource
+        |> Ash.Resource.Info.primary_key()
+        |> MapSet.new()
+      else
+        MapSet.new()
+      end
+
+    secondary_indexed_columns =
+      resource
+      |> Dsl.secondary_indexes()
+      |> Enum.flat_map(fn idx -> idx.columns end)
+      |> MapSet.new()
+
+    filter_columns = QueryBuilder.get_filter_columns(filters)
+
+    filter_columns != [] and
+      Enum.any?(filter_columns, fn col -> MapSet.member?(secondary_indexed_columns, col) end) and
+      Enum.all?(filter_columns, fn col ->
+        MapSet.member?(pk_columns, col) or MapSet.member?(secondary_indexed_columns, col)
+      end)
+  end
+
+  # Builds the WHERE clause result for update_query and destroy_query.
+  # Returns {:ok, {clause, params}} or {:error, {:unknown_filter, term()}}.
+  @spec build_where_result(t(), Ash.Changeset.t(), module()) ::
+          {:ok, {String.t(), [term()]}} | {:error, {:unknown_filter, term()}}
+  defp build_where_result(data_layer_query, changeset, resource) do
+    %Query{filters: filters} = data_layer_query
+
+    case filters do
+      [] ->
+        {clause, params} = build_pk_where_clause(changeset, resource)
+        {:ok, {clause, params}}
+
+      _ ->
+        uuid_fields = uuid_attribute_names(resource)
+        cql_types = attr_cql_type_map(resource)
+        QueryBuilder.build_where_clause(filters, uuid_fields, cql_types)
+    end
   end
 
   # ---------------------------------------------------------------------------
@@ -2365,29 +2331,11 @@ defmodule AshScylla.DataLayer do
 
     {clauses, values} =
       Enum.reduce(attrs, {[], []}, fn {k, v}, {cs, vs} ->
-        sanitized = QueryBuilder.cql_identifier(to_string(k))
-
-        value =
-          if uuid_field?(k, v, uuid_fields, resource) do
-            case Types.uuid_string_to_binary(v) do
-              {:ok, bin} -> bin
-              _ -> v
-            end
-          else
-            v
-          end
-
-        wrapped = wrap_typed(value, k, cql_types)
-        {["#{sanitized} = ?" | cs], [wrapped | vs]}
+        {clause, value} = build_set_or_where_clause(k, v, uuid_fields, cql_types, resource)
+        {[clause | cs], [value | vs]}
       end)
 
     {Enum.reverse(clauses), :lists.reverse(values)}
-  end
-
-  @spec build_pk_where_clause(term(), module()) :: {String.t(), [term()]}
-  defp build_pk_where_clause(changeset, resource) do
-    pk = get_primary_key_from_changeset(changeset, resource)
-    build_where_from_map(pk, resource)
   end
 
   @spec build_where_from_map(map(), module()) :: {String.t(), [term()]}
@@ -2397,23 +2345,38 @@ defmodule AshScylla.DataLayer do
 
     {clauses, values} =
       Enum.reduce(pk_map, {[], []}, fn {k, v}, {cs, vs} ->
-        sanitized = QueryBuilder.cql_identifier(to_string(k))
-
-        value =
-          if uuid_field?(k, v, uuid_fields, resource) do
-            case Types.uuid_string_to_binary(v) do
-              {:ok, bin} -> bin
-              _ -> v
-            end
-          else
-            v
-          end
-
-        wrapped = wrap_typed(value, k, cql_types)
-        {["#{sanitized} = ?" | cs], [wrapped | vs]}
+        {clause, value} = build_set_or_where_clause(k, v, uuid_fields, cql_types, resource)
+        {[clause | cs], [value | vs]}
       end)
 
     {Enum.reverse(clauses) |> Enum.join(" AND "), :lists.reverse(values)}
+  end
+
+  @spec build_pk_where_clause(term(), module()) :: {String.t(), [term()]}
+  defp build_pk_where_clause(changeset, resource) do
+    pk = get_primary_key_from_changeset(changeset, resource)
+    build_where_from_map(pk, resource)
+  end
+
+  # Shared helper for building SET or WHERE clauses from key-value pairs.
+  # Returns {clause_string, wrapped_value}.
+  @spec build_set_or_where_clause(atom() | String.t(), term(), MapSet.t(), map(), module()) ::
+          {String.t(), term()}
+  defp build_set_or_where_clause(key, value, uuid_fields, cql_types, resource) do
+    sanitized = QueryBuilder.cql_identifier(to_string(key))
+
+    processed_value =
+      if uuid_field?(key, value, uuid_fields, resource) do
+        case Types.uuid_string_to_binary(value) do
+          {:ok, bin} -> bin
+          _ -> value
+        end
+      else
+        value
+      end
+
+    wrapped = wrap_typed(processed_value, key, cql_types)
+    {"#{sanitized} = ?", wrapped}
   end
 
   # Returns a MapSet of attribute names (atoms and strings) declared as UUID.

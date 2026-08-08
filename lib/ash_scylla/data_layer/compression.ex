@@ -162,7 +162,7 @@ defmodule AshScylla.DataLayer.Compression do
 
     extras =
       opts
-      |> Enum.map(fn
+      |> Enum.map_join(", ", fn
         {:chunk_length_kb, val} when is_integer(val) and val > 0 ->
           "'chunk_length_kb': #{val}"
 
@@ -173,7 +173,6 @@ defmodule AshScylla.DataLayer.Compression do
           raise ArgumentError,
                 "Unknown compression option: #{inspect(key)} with value #{inspect(val)}"
       end)
-      |> Enum.join(", ")
 
     inner =
       if extras != "" do

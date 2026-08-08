@@ -40,10 +40,11 @@ defmodule AshScylla.Search.Analyzer.TokenizerTest do
 
   describe "tokenize_fields/1" do
     test "merges tokens from multiple fields" do
-      result = Tokenizer.tokenize_fields(%{
-        title: "Learning Elixir",
-        body: "Phoenix Framework"
-      })
+      result =
+        Tokenizer.tokenize_fields(%{
+          title: "Learning Elixir",
+          body: "Phoenix Framework"
+        })
 
       assert Enum.sort(result) ==
                Enum.sort(["Learning", "Elixir", "Phoenix", "Framework"])

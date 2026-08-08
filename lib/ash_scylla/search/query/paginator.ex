@@ -4,14 +4,14 @@ defmodule AshScylla.Search.Query.Paginator do
   """
 
   @type page :: %{
-    entries: [entry()],
-    page_number: pos_integer(),
-    page_size: pos_integer(),
-    total_count: non_neg_integer(),
-    total_pages: non_neg_integer(),
-    has_next?: boolean(),
-    has_prev?: boolean()
-  }
+          entries: [entry()],
+          page_number: pos_integer(),
+          page_size: pos_integer(),
+          total_count: non_neg_integer(),
+          total_pages: non_neg_integer(),
+          has_next?: boolean(),
+          has_prev?: boolean()
+        }
 
   @type entry :: {String.t(), float()}
 

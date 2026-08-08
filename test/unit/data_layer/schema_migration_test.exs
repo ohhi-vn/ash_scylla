@@ -77,13 +77,15 @@ defmodule AshScylla.DataLayer.SchemaMigrationTest do
       statements =
         SchemaMigration.generate_new_indexes(AshScylla.TestResourceWithIndexes, [])
 
-      assert length(statements) > 0
+      assert statements != []
       assert Enum.all?(statements, &String.contains?(&1, "CREATE INDEX IF NOT EXISTS"))
     end
 
     test "skips indexes that already exist in live schema" do
       existing = [%{index_name: "idx_test_users_email", kind: "COMPOSITES", options: ""}]
-      statements = SchemaMigration.generate_new_indexes(AshScylla.TestResourceWithIndexes, existing)
+
+      statements =
+        SchemaMigration.generate_new_indexes(AshScylla.TestResourceWithIndexes, existing)
 
       refute Enum.any?(statements, &String.contains?(&1, "idx_test_users_email"))
     end
@@ -95,7 +97,7 @@ defmodule AshScylla.DataLayer.SchemaMigrationTest do
       named =
         Enum.filter(statements, &String.contains?(&1, "idx_user_status_"))
 
-      assert length(named) > 0
+      assert named != []
     end
   end
 
@@ -215,7 +217,7 @@ defmodule AshScylla.DataLayer.SchemaMigrationTest do
       assert {:ok, indexes} =
                SchemaMigration.fetch_indexes(AshScylla.TestResource, MockIndexRepo)
 
-      assert length(indexes) > 0
+      assert indexes != []
       assert hd(indexes)[:index_name] == "idx_test_resource_name"
     end
 
@@ -285,7 +287,7 @@ defmodule AshScylla.DataLayer.SchemaMigrationTest do
 
     test "returns full DDL when table not found" do
       statements = SchemaMigration.diff(AshScylla.TestResource, MockTableNotFoundRepo)
-      assert length(statements) > 0
+      assert statements != []
       assert Enum.all?(statements, &is_binary/1)
     end
 
@@ -316,7 +318,7 @@ defmodule AshScylla.DataLayer.SchemaMigrationTest do
                SchemaMigration.migrate(AshScylla.TestResource, MockDryRunRepo, dry_run: true)
 
       assert is_list(statements)
-      assert length(statements) > 0
+      assert statements != []
       assert Enum.all?(statements, &is_binary/1)
     end
   end

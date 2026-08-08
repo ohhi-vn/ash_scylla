@@ -28,7 +28,7 @@ defmodule AshScyllaVerifyTest do
                  resources: [AshScylla.TestResource]
                )
 
-      assert length(report.resources) > 0
+      assert report.resources != []
       assert hd(report.resources).checked? == false
     end
   end

@@ -83,7 +83,8 @@ defmodule AshScylla.Search.Indexer do
   @doc """
   Removes a single field from the index for a document.
   """
-  @spec delete_field(module(), String.t(), String.t(), non_neg_integer()) :: :ok | {:error, term()}
+  @spec delete_field(module(), String.t(), String.t(), non_neg_integer()) ::
+          :ok | {:error, term()}
   def delete_field(repo, keyspace, post_id, field_num) do
     Deleter.delete_field(repo, keyspace, post_id, field_num)
   end

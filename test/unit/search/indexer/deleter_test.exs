@@ -26,9 +26,10 @@ defmodule AshScylla.Search.Indexer.DeleterTest do
 
     defmodule MockWithTermsRepo do
       def query(cql, _params) do
-        cond do
-          String.contains?(cql, "SELECT terms") -> {:ok, %{rows: [[["hello", "world"]]]}}
-          true -> {:ok, %{}}
+        if String.contains?(cql, "SELECT terms") do
+          {:ok, %{rows: [[["hello", "world"]]]}}
+        else
+          {:ok, %{}}
         end
       end
     end
@@ -36,10 +37,14 @@ defmodule AshScylla.Search.Indexer.DeleterTest do
     defmodule MockFailingDeleteFieldRepo do
       def query(cql, _params) do
         cond do
-          String.contains?(cql, "SELECT terms") -> {:ok, %{rows: [[["term1"]]]}}
+          String.contains?(cql, "SELECT terms") ->
+            {:ok, %{rows: [[["term1"]]]}}
+
           String.contains?(cql, "DELETE FROM") and String.contains?(cql, "search_post_fields") ->
             {:error, :field_delete_error}
-          true -> {:ok, %{}}
+
+          true ->
+            {:ok, %{}}
         end
       end
     end
@@ -61,9 +66,10 @@ defmodule AshScylla.Search.Indexer.DeleterTest do
   describe "delete_field/4 success paths" do
     defmodule MockFieldSuccessRepo do
       def query(cql, _params) do
-        cond do
-          String.contains?(cql, "SELECT terms") -> {:ok, %{rows: []}}
-          true -> {:ok, %{}}
+        if String.contains?(cql, "SELECT terms") do
+          {:ok, %{rows: []}}
+        else
+          {:ok, %{}}
         end
       end
     end
@@ -78,9 +84,10 @@ defmodule AshScylla.Search.Indexer.DeleterTest do
 
     defmodule MockFieldWithTermsRepo do
       def query(cql, _params) do
-        cond do
-          String.contains?(cql, "SELECT terms") -> {:ok, %{rows: [[["alpha", "beta"]]]}}
-          true -> {:ok, %{}}
+        if String.contains?(cql, "SELECT terms") do
+          {:ok, %{rows: [[["alpha", "beta"]]]}}
+        else
+          {:ok, %{}}
         end
       end
     end

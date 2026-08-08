@@ -918,11 +918,12 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       assert 4 = length(params)
       assert false in params
       assert Enum.count(params, &is_binary/1) == 3
+
       assert Enum.all?(params, fn
-        false -> true
-        bin when is_binary(bin) -> byte_size(bin) == 16
-        _ -> false
-      end)
+               false -> true
+               bin when is_binary(bin) -> byte_size(bin) == 16
+               _ -> false
+             end)
     end
 
     test "UUID filter with real Ash.Query.Ref left operand is marshaled as uuid-typed param" do

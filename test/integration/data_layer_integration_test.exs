@@ -293,7 +293,10 @@ defmodule AshScylla.DataLayer.IntegrationTest do
                   "CREATE INDEX IF NOT EXISTS idx_items_status ON ash_scylla_dl_test.items (status)"
                 )
 
-                xq(conn, "CREATE INDEX IF NOT EXISTS idx_items_value ON ash_scylla_dl_test.items (value)")
+                xq(
+                  conn,
+                  "CREATE INDEX IF NOT EXISTS idx_items_value ON ash_scylla_dl_test.items (value)"
+                )
 
                 Xandra.stop(conn)
 

@@ -70,13 +70,13 @@ defmodule AshScylla.DataLayer.AtomicUpdateTest do
         atomics: [
           name: "Halo Club 3333",
           description: "Test TEst",
-          location: "Saigon",
+          location: "Saigon"
         ],
         data: %AtomicUpdateResource{
           id: "019f92c8-ea99-7193-93a8-d4591edbbd15",
           name: "Halo Club",
           description: "Test TEst",
-          location: "Saigon",
+          location: "Saigon"
         },
         filter: nil
       }
@@ -139,7 +139,13 @@ defmodule AshScylla.DataLayer.AtomicUpdateTest do
         resource: AtomicUpdateResource,
         repo: FakeRepo,
         table: "test_ks.atomic_items",
-        filters: [%{operator: :eq, left: %{name: :id}, right: %{value: "019f92c8-ea99-7193-93a8-d4591edbbd15"}}],
+        filters: [
+          %{
+            operator: :eq,
+            left: %{name: :id},
+            right: %{value: "019f92c8-ea99-7193-93a8-d4591edbbd15"}
+          }
+        ],
         sorts: [],
         limit: nil,
         select: nil,
@@ -218,20 +224,14 @@ defmodule AshScylla.DataLayer.AtomicUpdateTest do
         table: "test_ks.atomic_items",
         filters: [
           %{name: :id},
-
-
-
-
-
-        sorts: [],
-        limit: nil,
-        select: nil,
-        tenant: nil,
-        context: %{},
-        atomic: nil,
-        upsert?: false,
+          sorts: [],
+          limit: nil,
+          select: nil,
+          tenant: nil,
+          context: %{},
+          atomic: nil,
+          upsert?: false
         ]
-
       }
 
       assert {:ok, _} = DataLayer.update_query(query, changeset, AtomicUpdateResource, [])

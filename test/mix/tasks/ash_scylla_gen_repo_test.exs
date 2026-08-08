@@ -1,6 +1,8 @@
 defmodule Mix.Tasks.AshScylla.Gen.RepoTest do
   use ExUnit.Case, async: true
 
+  alias Mix.Tasks.AshScylla.Gen
+
   import ExUnit.CaptureIO
 
   describe "Mix.Tasks.AshScylla.Gen.Repo" do
@@ -12,7 +14,7 @@ defmodule Mix.Tasks.AshScylla.Gen.RepoTest do
       output =
         capture_io(fn ->
           try do
-            Mix.Tasks.AshScylla.Gen.Repo.run([])
+            Gen.Repo.run([])
           rescue
             _ -> :ok
           end
@@ -25,7 +27,7 @@ defmodule Mix.Tasks.AshScylla.Gen.RepoTest do
       output =
         capture_io(fn ->
           try do
-            Mix.Tasks.AshScylla.Gen.Repo.run(["--repo", "MyApp.CustomRepo"])
+            Gen.Repo.run(["--repo", "MyApp.CustomRepo"])
           rescue
             _ -> :ok
           end
@@ -38,7 +40,7 @@ defmodule Mix.Tasks.AshScylla.Gen.RepoTest do
       output =
         capture_io(fn ->
           try do
-            Mix.Tasks.AshScylla.Gen.Repo.run(["--otp-app", "my_custom_app"])
+            Gen.Repo.run(["--otp-app", "my_custom_app"])
           rescue
             _ -> :ok
           end
@@ -51,7 +53,7 @@ defmodule Mix.Tasks.AshScylla.Gen.RepoTest do
       output =
         capture_io(fn ->
           try do
-            Mix.Tasks.AshScylla.Gen.Repo.run(["--keyspace", "custom_keyspace"])
+            Gen.Repo.run(["--keyspace", "custom_keyspace"])
           rescue
             _ -> :ok
           end
@@ -64,7 +66,7 @@ defmodule Mix.Tasks.AshScylla.Gen.RepoTest do
       output =
         capture_io(fn ->
           try do
-            Mix.Tasks.AshScylla.Gen.Repo.run(["--nodes", "10.0.0.1:9042,10.0.0.2:9042"])
+            Gen.Repo.run(["--nodes", "10.0.0.1:9042,10.0.0.2:9042"])
           rescue
             _ -> :ok
           end
@@ -77,7 +79,7 @@ defmodule Mix.Tasks.AshScylla.Gen.RepoTest do
       output =
         capture_io(fn ->
           try do
-            Mix.Tasks.AshScylla.Gen.Repo.run([
+            Gen.Repo.run([
               "--repo",
               "MyApp.ProdRepo",
               "--otp-app",

@@ -110,7 +110,7 @@ defmodule AshScylla.Search.Query.Ranking do
           df = Map.get(doc_freqs, term, 1)
           idf_val = idf(total_docs, df)
           doc_length = Enum.sum(Enum.map(term_scores, &elem(&1, 1)))
-          bm25 = (tf * (k1 + 1)) / (tf + k1 * (1 - b + b * (doc_length / max(avg_doc_length, 1))))
+          bm25 = tf * (k1 + 1) / (tf + k1 * (1 - b + b * (doc_length / max(avg_doc_length, 1))))
           idf_val * bm25
         end)
         |> Enum.sum()

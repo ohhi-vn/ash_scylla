@@ -41,7 +41,13 @@ defmodule AshScylla.Search.Query.Planner do
     end
   end
 
-  defp execute_ast(repo, keyspace, %Parser.Group{terms: terms, op: :and}, num_shards, analyzer_opts) do
+  defp execute_ast(
+         repo,
+         keyspace,
+         %Parser.Group{terms: terms, op: :and},
+         num_shards,
+         analyzer_opts
+       ) do
     lists =
       terms
       |> Enum.map(&execute_term(repo, keyspace, &1, num_shards, analyzer_opts))
@@ -58,7 +64,13 @@ defmodule AshScylla.Search.Query.Planner do
     end
   end
 
-  defp execute_ast(repo, keyspace, %Parser.Group{terms: terms, op: :or}, num_shards, analyzer_opts) do
+  defp execute_ast(
+         repo,
+         keyspace,
+         %Parser.Group{terms: terms, op: :or},
+         num_shards,
+         analyzer_opts
+       ) do
     results =
       terms
       |> Enum.map(&execute_term(repo, keyspace, &1, num_shards, analyzer_opts))

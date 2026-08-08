@@ -5,7 +5,7 @@ defmodule AshScylla.DataLayer.UdtTest do
 
   describe "create_type_cql/2" do
     test "generates CQL with atom type name" do
-      cql = Udt.create_type_cql(:my_type, [name: :text, age: :int])
+      cql = Udt.create_type_cql(:my_type, name: :text, age: :int)
       assert cql =~ "CREATE TYPE IF NOT EXISTS"
       assert cql =~ "my_type"
       assert cql =~ "name TEXT"
@@ -13,13 +13,13 @@ defmodule AshScylla.DataLayer.UdtTest do
     end
 
     test "generates CQL with string type name" do
-      cql = Udt.create_type_cql("my_type", [name: :text])
+      cql = Udt.create_type_cql("my_type", name: :text)
       assert cql =~ "CREATE TYPE IF NOT EXISTS my_type"
       assert cql =~ "name TEXT"
     end
 
     test "handles multiple fields" do
-      cql = Udt.create_type_cql("address", [street: :text, city: :text, zip: :int])
+      cql = Udt.create_type_cql("address", street: :text, city: :text, zip: :int)
       assert cql =~ "street TEXT"
       assert cql =~ "city TEXT"
       assert cql =~ "zip INT"
@@ -38,31 +38,31 @@ defmodule AshScylla.DataLayer.UdtTest do
 
   describe "alter_type_cql/3" do
     test "generates ALTER TYPE ADD with atom" do
-      cql = Udt.alter_type_cql(:my_type, :add, [email: :text])
+      cql = Udt.alter_type_cql(:my_type, :add, email: :text)
       assert cql =~ "ALTER TYPE my_type"
       assert cql =~ "ADD email TEXT"
     end
 
     test "generates ALTER TYPE ADD with string" do
-      cql = Udt.alter_type_cql("my_type", :add, [email: :text])
+      cql = Udt.alter_type_cql("my_type", :add, email: :text)
       assert cql =~ "ALTER TYPE my_type"
       assert cql =~ "ADD email TEXT"
     end
 
     test "generates ALTER TYPE ADD for multiple fields" do
-      cql = Udt.alter_type_cql("my_type", :add, [email: :text, phone: :text])
+      cql = Udt.alter_type_cql("my_type", :add, email: :text, phone: :text)
       assert cql =~ "ADD email TEXT"
       assert cql =~ "ADD phone TEXT"
     end
 
     test "generates ALTER TYPE RENAME" do
-      cql = Udt.alter_type_cql("my_type", :rename, [new_name: :old_name])
+      cql = Udt.alter_type_cql("my_type", :rename, new_name: :old_name)
       assert cql =~ "ALTER TYPE my_type"
       assert cql =~ "RENAME old_name TO new_name"
     end
 
     test "generates ALTER TYPE RENAME for multiple renames" do
-      cql = Udt.alter_type_cql("my_type", :rename, [a: :b, c: :d])
+      cql = Udt.alter_type_cql("my_type", :rename, a: :b, c: :d)
       assert cql =~ "RENAME b TO a"
       assert cql =~ "RENAME d TO c"
     end
@@ -89,7 +89,7 @@ defmodule AshScylla.DataLayer.UdtTest do
 
   describe "validate_fields/1" do
     test "accepts valid field list" do
-      assert Udt.validate_fields([name: :text, age: :int]) == :ok
+      assert Udt.validate_fields(name: :text, age: :int) == :ok
     end
 
     test "rejects non-atom field name" do

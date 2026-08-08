@@ -42,7 +42,7 @@ defmodule AshScylla.Search do
   """
 
   alias AshScylla.Search.Indexer
-  alias AshScylla.Search.Query.{Parser, Planner, Ranking, Paginator}
+  alias AshScylla.Search.Query.{Paginator, Parser, Planner, Ranking}
   alias AshScylla.Search.Storage
 
   @type field_map :: %{optional(atom()) => String.t()}
@@ -148,8 +148,8 @@ defmodule AshScylla.Search do
     analyzer_opts = Keyword.get(opts, :analyzer_opts, [])
 
     with {:ok, ast} <- Parser.parse(query),
-         {:ok, results} <- Planner.plan(repo, keyspace, ast,
-           num_shards: num_shards, analyzer_opts: analyzer_opts) do
+         {:ok, results} <-
+           Planner.plan(repo, keyspace, ast, num_shards: num_shards, analyzer_opts: analyzer_opts) do
       post_scores = results |> Map.to_list()
 
       ranked =

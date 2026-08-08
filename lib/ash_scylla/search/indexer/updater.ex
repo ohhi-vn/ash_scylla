@@ -43,9 +43,9 @@ defmodule AshScylla.Search.Indexer.Updater do
       new_terms
       |> Enum.filter(fn {term, _} -> MapSet.member?(to_add, term) end)
 
-    with :ok <- maybe_delete_terms(repo, keyspace, post_id, field, to_remove),
-         :ok <- maybe_insert_terms(repo, keyspace, post_id, field, add_entries) do
-      :ok
+    case maybe_delete_terms(repo, keyspace, post_id, field, to_remove) do
+      :ok -> maybe_insert_terms(repo, keyspace, post_id, field, add_entries)
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -57,39 +57,28 @@ defmodule AshScylla.Search.Indexer.Updater do
   @spec fetch_old_terms(module(), String.t(), String.t(), non_neg_integer()) ::
           {:ok, MapSet.t()} | {:error, term()}
   def fetch_old_terms(repo, keyspace, post_id, field) do
-    ks = Identifier.quote_name(keyspace)
-    table = Identifier.quote_name("search_post_fields")
-
-    cql =
-      "SELECT terms FROM #{ks}.#{table} WHERE post_id = #{post_id} AND field = #{field}"
-
-    case repo.query(cql, []) do
-      {:ok, %{rows: []}} -> {:ok, MapSet.new()}
-      {:ok, %{rows: [[terms]]}} -> {:ok, MapSet.new(terms)}
-      {:ok, %{rows: rows}} ->
-        all_terms = Enum.flat_map(rows, fn [terms] -> terms end)
-        {:ok, MapSet.new(all_terms)}
-      {:error, reason} -> {:error, reason}
-    end
+    AshScylla.Search.Storage.fetch_terms(repo, keyspace, post_id, field)
   end
 
   defp maybe_delete_terms(repo, keyspace, post_id, field, to_remove) do
     if MapSet.size(to_remove) == 0 do
       :ok
     else
-    ks = Identifier.quote_name(keyspace)
-    table = Identifier.quote_name("search_post_terms")
+      ks = Identifier.quote_name(keyspace)
+      table = Identifier.quote_name("search_post_terms")
 
-    Enum.reduce_while(to_remove, :ok, fn term, :ok ->
-      shard = AshScylla.Search.Storage.shard_for(term)
-      escaped = String.replace(term, "'", "''")
-      query = "DELETE FROM #{ks}.#{table} WHERE term = '#{escaped}' AND shard = #{shard} AND post_id = #{post_id} AND field = #{field}"
+      Enum.reduce_while(to_remove, :ok, fn term, :ok ->
+        shard = AshScylla.Search.Storage.shard_for(term)
+        escaped = String.replace(term, "'", "''")
 
-      case repo.query(query, []) do
-        {:ok, _} -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, reason}}
-      end
-    end)
+        query =
+          "DELETE FROM #{ks}.#{table} WHERE term = '#{escaped}' AND shard = #{shard} AND post_id = #{post_id} AND field = #{field}"
+
+        case repo.query(query, []) do
+          {:ok, _} -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
     end
   end
 
@@ -103,19 +92,19 @@ defmodule AshScylla.Search.Indexer.Updater do
     table_fields = Identifier.quote_name("search_post_fields")
 
     inserts =
-      add_entries
-      |> Enum.map(fn {term, tf} ->
+      Enum.map_join(add_entries, ";", fn {term, tf} ->
         shard = AshScylla.Search.Storage.shard_for(term)
         escaped = String.replace(term, "'", "''")
+
         "INSERT INTO #{ks}.#{table_terms} (term, shard, post_id, field, tf) " <>
           "VALUES ('#{escaped}', #{shard}, #{post_id}, #{field}, #{tf})"
       end)
-      |> Enum.join(";")
 
     all_terms_set =
-      (add_entries |> Enum.map(&elem(&1, 0)) |> Enum.map(&String.replace(&1, "'", "''")))
-      |> Enum.map(&"'#{&1}'")
-      |> Enum.join(", ")
+      add_entries
+      |> Enum.map_join(", ", fn {term, _} ->
+        "'#{String.replace(term, "'", "''")}'"
+      end)
 
     update_fields =
       "UPDATE #{ks}.#{table_fields} SET terms = terms + {#{all_terms_set}} " <>

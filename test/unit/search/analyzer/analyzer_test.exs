@@ -51,10 +51,11 @@ defmodule AshScylla.Search.AnalyzerTest do
 
   describe "analyze_fields/1" do
     test "merges term frequencies across fields" do
-      result = Analyzer.analyze_fields(%{
-        title: "Elixir Phoenix",
-        body: "Phoenix is great for Elixir"
-      })
+      result =
+        Analyzer.analyze_fields(%{
+          title: "Elixir Phoenix",
+          body: "Phoenix is great for Elixir"
+        })
 
       assert {"elixir", 2} in result
       assert {"phoenix", 2} in result

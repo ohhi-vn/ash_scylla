@@ -35,11 +35,12 @@ defmodule AshScylla.Search.Query.RankingTest do
         {"post2", [{"phoenix", 1}]}
       ]
 
-      ranked = Ranking.rank(results,
-        strategy: :tfidf,
-        total_docs: 100,
-        doc_freqs: %{"phoenix" => 10}
-      )
+      ranked =
+        Ranking.rank(results,
+          strategy: :tfidf,
+          total_docs: 100,
+          doc_freqs: %{"phoenix" => 10}
+        )
 
       assert length(ranked) == 2
       [{_, score1, _}, {_, score2, _}] = ranked
@@ -54,12 +55,13 @@ defmodule AshScylla.Search.Query.RankingTest do
         {"post2", [{"phoenix", 1}]}
       ]
 
-      ranked = Ranking.rank(results,
-        strategy: :bm25,
-        total_docs: 100,
-        doc_freqs: %{"phoenix" => 10},
-        avg_doc_length: 5.0
-      )
+      ranked =
+        Ranking.rank(results,
+          strategy: :bm25,
+          total_docs: 100,
+          doc_freqs: %{"phoenix" => 10},
+          avg_doc_length: 5.0
+        )
 
       assert length(ranked) == 2
       [{_, score1, _}, {_, score2, _}] = ranked

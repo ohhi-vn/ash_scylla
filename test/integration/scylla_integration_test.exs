@@ -1124,7 +1124,11 @@ defmodule AshScylla.ScyllaIntegrationTest do
   # ══════════════════════════════════════════════════════════════════════════
 
   describe "concurrent read/write simulation" do
-    test "50 concurrent writers insert distinct records", %{conn: conn, scylla_host: host, scylla_port: port} do
+    test "50 concurrent writers insert distinct records", %{
+      conn: conn,
+      scylla_host: host,
+      scylla_port: port
+    } do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
       else
@@ -1184,7 +1188,11 @@ defmodule AshScylla.ScyllaIntegrationTest do
       end
     end
 
-    test "concurrent reads on same secondary index query", %{conn: conn, scylla_host: host, scylla_port: port} do
+    test "concurrent reads on same secondary index query", %{
+      conn: conn,
+      scylla_host: host,
+      scylla_port: port
+    } do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
       else
@@ -1219,7 +1227,11 @@ defmodule AshScylla.ScyllaIntegrationTest do
       end
     end
 
-    test "concurrent event writes to same partition", %{conn: conn, scylla_host: host, scylla_port: port} do
+    test "concurrent event writes to same partition", %{
+      conn: conn,
+      scylla_host: host,
+      scylla_port: port
+    } do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
       else
@@ -1250,7 +1262,11 @@ defmodule AshScylla.ScyllaIntegrationTest do
       end
     end
 
-    test "mixed CRUD operations under concurrent load", %{conn: conn, scylla_host: host, scylla_port: port} do
+    test "mixed CRUD operations under concurrent load", %{
+      conn: conn,
+      scylla_host: host,
+      scylla_port: port
+    } do
       if is_nil(conn) do
         Logger.warning("No ScyllaDB connection available — skipping test")
       else

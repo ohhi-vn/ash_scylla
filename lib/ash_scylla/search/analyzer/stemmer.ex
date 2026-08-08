@@ -65,12 +65,20 @@ defmodule AshScylla.Search.Analyzer.Stemmer do
 
   defp step_1a(word) do
     cond do
-      String.ends_with?(word, "sses") -> String.replace_suffix(word, "sses", "ss")
-      String.ends_with?(word, "ies") -> String.replace_suffix(word, "ies", "i")
-      String.ends_with?(word, "ss") -> word
+      String.ends_with?(word, "sses") ->
+        String.replace_suffix(word, "sses", "ss")
+
+      String.ends_with?(word, "ies") ->
+        String.replace_suffix(word, "ies", "i")
+
+      String.ends_with?(word, "ss") ->
+        word
+
       String.ends_with?(word, "s") and byte_size(word) > 2 ->
         String.replace_suffix(word, "s", "")
-      true -> word
+
+      true ->
+        word
     end
   end
 
@@ -106,13 +114,23 @@ defmodule AshScylla.Search.Analyzer.Stemmer do
 
   defp step_1b_extra(stem) do
     cond do
-      String.ends_with?(stem, "at") -> stem <> "e"
-      String.ends_with?(stem, "bl") -> stem <> "e"
-      String.ends_with?(stem, "iz") -> stem <> "e"
+      String.ends_with?(stem, "at") ->
+        stem <> "e"
+
+      String.ends_with?(stem, "bl") ->
+        stem <> "e"
+
+      String.ends_with?(stem, "iz") ->
+        stem <> "e"
+
       double_consonant_ending?(stem) and not String.ends_with?(stem, ["l", "s", "z"]) ->
         String.slice(stem, 0..(byte_size(stem) - 2))
-      measure(stem) == 1 and cvc_ending?(stem) -> stem <> "e"
-      true -> stem
+
+      measure(stem) == 1 and cvc_ending?(stem) ->
+        stem <> "e"
+
+      true ->
+        stem
     end
   end
 
@@ -151,13 +169,26 @@ defmodule AshScylla.Search.Analyzer.Stemmer do
   #   biliti  → ble   (sensibiliti → sensible)
 
   @step_2_suffixes [
-    {"ational", "ate"}, {"tional", "tion"}, {"enci", "ence"},
-    {"anci", "ance"}, {"izer", "ize"}, {"abli", "able"},
-    {"alli", "al"}, {"entli", "ent"}, {"eli", "e"},
-    {"ousli", "ous"}, {"ization", "ize"}, {"ation", "ate"},
-    {"ator", "ate"}, {"alism", "al"}, {"iveness", "ive"},
-    {"fulness", "ful"}, {"ousness", "ous"}, {"aliti", "al"},
-    {"iviti", "ive"}, {"biliti", "ble"}
+    {"ational", "ate"},
+    {"tional", "tion"},
+    {"enci", "ence"},
+    {"anci", "ance"},
+    {"izer", "ize"},
+    {"abli", "able"},
+    {"alli", "al"},
+    {"entli", "ent"},
+    {"eli", "e"},
+    {"ousli", "ous"},
+    {"ization", "ize"},
+    {"ation", "ate"},
+    {"ator", "ate"},
+    {"alism", "al"},
+    {"iveness", "ive"},
+    {"fulness", "ful"},
+    {"ousness", "ous"},
+    {"aliti", "al"},
+    {"iviti", "ive"},
+    {"biliti", "ble"}
   ]
 
   defp step_2(word) do
@@ -171,8 +202,13 @@ defmodule AshScylla.Search.Analyzer.Stemmer do
 
   # Step 3: Handle more suffixes
   @step_3_suffixes [
-    {"icate", "ic"}, {"ative", ""}, {"alize", "al"},
-    {"iciti", "ic"}, {"ical", "ic"}, {"ful", ""}, {"ness", ""}
+    {"icate", "ic"},
+    {"ative", ""},
+    {"alize", "al"},
+    {"iciti", "ic"},
+    {"ical", "ic"},
+    {"ful", ""},
+    {"ness", ""}
   ]
 
   defp step_3(word) do
@@ -252,7 +288,9 @@ defmodule AshScylla.Search.Analyzer.Stemmer do
         a = String.at(word, len - 2)
         b = String.at(word, len - 1)
         a == b and consonant_char?(a)
-      _ -> false
+
+      _ ->
+        false
     end
   end
 
@@ -262,9 +300,12 @@ defmodule AshScylla.Search.Analyzer.Stemmer do
         a = String.at(word, len - 3)
         b = String.at(word, len - 2)
         c = String.at(word, len - 1)
+
         consonant_char?(a) and vowel_char?(b) and consonant_char?(c) and
           c not in ~w(w x y)
-      _ -> false
+
+      _ ->
+        false
     end
   end
 end

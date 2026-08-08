@@ -371,23 +371,11 @@ defmodule AshScylla.Migration do
   end
 
   def alter_type_cql(type_name, :add, fields) when is_binary(type_name) do
-    alterations =
-      fields
-      |> Enum.map_join(", ", fn {name, type} ->
-        "ADD #{name} #{AshScylla.DataLayer.Types.ash_type_to_cql_type(type, [])}"
-      end)
-
-    "ALTER TYPE #{type_name} #{alterations}"
+    AshScylla.DataLayer.Udt.alter_type_cql(type_name, :add, fields)
   end
 
   def alter_type_cql(type_name, :rename, renames) when is_binary(type_name) do
-    alterations =
-      renames
-      |> Enum.map_join(", ", fn {new_name, old_name} ->
-        "RENAME #{old_name} TO #{new_name}"
-      end)
-
-    "ALTER TYPE #{type_name} #{alterations}"
+    AshScylla.DataLayer.Udt.alter_type_cql(type_name, :rename, renames)
   end
 
   @doc """
@@ -397,7 +385,7 @@ defmodule AshScylla.Migration do
   """
   @spec list_types_cql() :: String.t()
   def list_types_cql do
-    "SELECT type_name, field_names, field_types FROM system_schema.types"
+    AshScylla.DataLayer.Udt.list_types_cql()
   end
 
   @doc """

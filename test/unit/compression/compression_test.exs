@@ -21,6 +21,7 @@ defmodule AshScylla.DataLayer.CompressionTest do
 
     test "raises on marker mismatch" do
       compressed = Compression.compress("test", :deflate)
+
       assert_raise ArgumentError, ~r/marker mismatch/i, fn ->
         Compression.decompress(compressed, :lz4)
       end

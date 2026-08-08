@@ -22,7 +22,7 @@ defmodule AshScylla.ReleaseTest do
 
   describe "rollback/3" do
     test "returns :ok (placeholder)" do
-      assert Release.rollback(AshScylla.TestRepo, 20240101000000, [AshScylla.TestRepo]) == :ok
+      assert Release.rollback(AshScylla.TestRepo, 20_240_101_000_000, [AshScylla.TestRepo]) == :ok
     end
 
     test "accepts string version" do
@@ -55,6 +55,4 @@ defmodule AshScylla.ReleaseTest do
       assert Release.create_keyspace(MockOptsRepo, strategy: :simple) == :ok
     end
   end
-
-
 end

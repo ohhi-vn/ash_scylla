@@ -468,25 +468,7 @@ defmodule Mix.Tasks.AshScylla.Reset do
   end
 
   defp add_child_app_paths do
-    build_path = Mix.Project.build_path() |> Path.expand()
-
-    paths =
-      case Mix.Project.apps_paths() do
-        nil ->
-          []
-
-        apps_paths ->
-          apps_paths
-          |> Map.keys()
-          |> Enum.map(fn app -> Path.join(build_path, "lib/#{app}/ebin") end)
-      end
-
-    default_ebin = Path.join(build_path, "lib/ebin")
-    paths = if File.dir?(default_ebin), do: [default_ebin | paths], else: paths
-
-    paths
-    |> Enum.filter(&File.dir?/1)
-    |> Enum.each(fn ebin -> :code.add_pathsa([ebin]) end)
+    AshScylla.MixHelpers.add_child_app_paths()
   end
 
   defp run_migrate(opts) do

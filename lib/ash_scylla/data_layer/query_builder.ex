@@ -212,83 +212,41 @@ defmodule AshScylla.DataLayer.QueryBuilder do
 
   defp build_select_clause(_table, nil, nil, aggregates)
        when is_list(aggregates) and aggregates != [] do
-    {agg_clause, params} =
-      aggregates
-      |> Enum.map(fn
-        %{kind: :count, name: name, field: nil} ->
-          {"COUNT(*) AS #{cql_identifier(name)}", []}
-
-        %{kind: :count, name: name, field: field} ->
-          {"COUNT(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
-
-        %{kind: :sum, name: name, field: field} ->
-          {"SUM(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
-
-        %{kind: :avg, name: name, field: field} ->
-          {"AVG(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
-
-        %{kind: :min, name: name, field: field} ->
-          {"MIN(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
-
-        %{kind: :max, name: name, field: field} ->
-          {"MAX(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
-
-        %{kind: kind, name: name} ->
-          Logger.warning("AshScylla: Unsupported aggregate kind: #{kind}")
-          {"COUNT(*) AS #{cql_identifier(name)}", []}
-      end)
-      |> Enum.reduce({"", []}, fn {c, p}, {acc_c, acc_p} ->
-        {[acc_c, ", ", c], acc_p ++ p}
-      end)
-
-    # Remove leading ", "
-    agg_clause =
-      agg_clause
-      |> IO.iodata_to_binary()
-      |> String.trim_leading(", ")
-
-    {agg_clause, params}
+    {build_aggregate_clause(aggregates), []}
   end
 
   defp build_select_clause(_table, columns, nil, aggregates)
        when is_list(columns) and is_list(aggregates) and aggregates != [] do
     col_clause = Enum.map_join(columns, ", ", &cql_identifier/1)
 
-    {agg_clause, params} =
-      aggregates
-      |> Enum.map(fn
-        %{kind: :count, name: name, field: nil} ->
-          {"COUNT(*) AS #{cql_identifier(name)}", []}
+    {"#{col_clause}, #{build_aggregate_clause(aggregates)}", []}
+  end
 
-        %{kind: :count, name: name, field: field} ->
-          {"COUNT(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
+  defp build_aggregate_clause(aggregates) do
+    aggregates
+    |> Enum.map_join(", ", fn
+      %{kind: :count, name: name, field: nil} ->
+        "COUNT(*) AS #{cql_identifier(name)}"
 
-        %{kind: :sum, name: name, field: field} ->
-          {"SUM(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
+      %{kind: :count, name: name, field: field} ->
+        "COUNT(#{cql_identifier(field)}) AS #{cql_identifier(name)}"
 
-        %{kind: :avg, name: name, field: field} ->
-          {"AVG(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
+      %{kind: :sum, name: name, field: field} ->
+        "SUM(#{cql_identifier(field)}) AS #{cql_identifier(name)}"
 
-        %{kind: :min, name: name, field: field} ->
-          {"MIN(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
+      %{kind: :avg, name: name, field: field} ->
+        "AVG(#{cql_identifier(field)}) AS #{cql_identifier(name)}"
 
-        %{kind: :max, name: name, field: field} ->
-          {"MAX(#{cql_identifier(field)}) AS #{cql_identifier(name)}", []}
+      %{kind: :min, name: name, field: field} ->
+        "MIN(#{cql_identifier(field)}) AS #{cql_identifier(name)}"
 
-        %{kind: kind, name: name} ->
-          Logger.warning("AshScylla: Unsupported aggregate kind: #{kind}")
-          {"COUNT(*) AS #{cql_identifier(name)}", []}
-      end)
-      |> Enum.reduce({"", []}, fn {c, p}, {acc_c, acc_p} ->
-        {[acc_c, ", ", c], acc_p ++ p}
-      end)
+      %{kind: :max, name: name, field: field} ->
+        "MAX(#{cql_identifier(field)}) AS #{cql_identifier(name)}"
 
-    agg_clause =
-      agg_clause
-      |> IO.iodata_to_binary()
-      |> String.trim_leading(", ")
-
-    {"#{col_clause}, #{agg_clause}", params}
+      %{kind: kind, name: name} ->
+        unsupported_aggregate_warning(kind)
+        "COUNT(*) AS #{cql_identifier(name)}"
+    end)
   end
 
   defp build_select_clause(_table, _select, _distinct, _aggregates) do
@@ -861,32 +819,17 @@ defmodule AshScylla.DataLayer.QueryBuilder do
                       "Workaround: split into multiple queries and merge in application code."
 
               {:overlaps, %{value: %MapSet{} = ms}} ->
-                vals = MapSet.to_list(ms)
-
-                if length(vals) == 1 do
-                  {"#{left_cql} CONTAINS ?",
-                   left_params ++ Enum.map(vals, &typed_param(name, &1, uuid_fields, cql_types))}
-                else
-                  raise AshScylla.Error,
-                    message:
-                      "CQL does not support OR, so overlaps/2 with multiple values cannot be expressed in a single query. " <>
-                        "Found: overlaps(#{left_cql}, #{inspect(vals)}). " <>
-                        "Workaround: split into multiple queries and merge in application code."
-                end
+                handle_overlaps_mapset(left_cql, left_params, name, ms, uuid_fields, cql_types)
 
               {:overlaps, %MapSet{} = values} ->
-                vals = MapSet.to_list(values)
-
-                if length(vals) == 1 do
-                  {"#{left_cql} CONTAINS ?",
-                   left_params ++ Enum.map(vals, &typed_param(name, &1, uuid_fields, cql_types))}
-                else
-                  raise AshScylla.Error,
-                    message:
-                      "CQL does not support OR, so overlaps/2 with multiple values cannot be expressed in a single query. " <>
-                        "Found: overlaps(#{left_cql}, #{inspect(vals)}). " <>
-                        "Workaround: split into multiple queries and merge in application code."
-                end
+                handle_overlaps_mapset(
+                  left_cql,
+                  left_params,
+                  name,
+                  values,
+                  uuid_fields,
+                  cql_types
+                )
 
               {:overlaps, value} ->
                 {"#{left_cql} CONTAINS ?",
@@ -1008,52 +951,20 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     {cql_identifier(name), []}
   end
 
+  # Accept any value that could be a valid CQL parameter (everything except
+  # non-serializable types like functions, PIDs, references, ports).
+  def filter_to_cql(unknown, _uuid_fields, _cql_types)
+      when is_function(unknown) or is_pid(unknown) or is_reference(unknown) or is_port(unknown) do
+    Logger.warning("AshScylla: Unknown filter expression: #{inspect(unknown)}")
+    {:error, {:unknown_filter, unknown}}
+  end
+
   def filter_to_cql(unknown, _uuid_fields, _cql_types) do
     # Raw value — return it as a parameter placeholder so parent operators can use it
     # This handles cases like: %{operator: :eq, left: %{name: :status}, right: "active"}
     # where the right side is a raw value, not a filter expression.
     # The value is emitted raw; connection.typed_params infers the correct type.
-    case unknown do
-      nil ->
-        {"?", [nil]}
-
-      val when is_boolean(val) ->
-        {"?", [val]}
-
-      val when is_number(val) ->
-        {"?", [val]}
-
-      val when is_binary(val) ->
-        {"?", [val]}
-
-      val when is_struct(val, DateTime) ->
-        {"?", [val]}
-
-      val when is_struct(val, Date) ->
-        {"?", [val]}
-
-      val when is_struct(val, Time) ->
-        {"?", [val]}
-
-      val when is_struct(val, Decimal) ->
-        {"?", [val]}
-
-      val when is_list(val) ->
-        {"?", [val]}
-
-      val when is_map(val) ->
-        {"?", [val]}
-
-      val when is_tuple(val) ->
-        {"?", [val]}
-
-      val when is_atom(val) ->
-        {"?", [val]}
-
-      _ ->
-        Logger.warning("AshScylla: Unknown filter expression: #{inspect(unknown)}")
-        {:error, {:unknown_filter, unknown}}
-    end
+    {"?", [unknown]}
   end
 
   @spec filter_to_cql(term()) ::
@@ -1144,8 +1055,14 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   def aggregate_to_cql(:max, field), do: "MAX(#{cql_identifier(field)})"
 
   def aggregate_to_cql(kind, field) do
-    Logger.warning("AshScylla: Unsupported aggregate kind: #{kind}, falling back to COUNT")
+    unsupported_aggregate_warning(kind)
     if field, do: "COUNT(#{cql_identifier(field)})", else: "COUNT(*)"
+  end
+
+  @spec unsupported_aggregate_warning(atom()) :: :ok
+  defp unsupported_aggregate_warning(kind) do
+    Logger.warning("AshScylla: Unsupported aggregate kind: #{kind}, falling back to COUNT")
+    :ok
   end
 
   # ============================================================================
@@ -1279,6 +1196,29 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   @spec maybe_iodata_to_binary({:error, term()}) :: {:error, term()}
   defp maybe_iodata_to_binary({:error, _} = error), do: error
 
+  # Handles overlaps with MapSet values - converts to list and checks for single value
+  @spec handle_overlaps_mapset(String.t(), list(), atom(), MapSet.t(), MapSet.t(), map()) ::
+          {String.t(), list()}
+  defp handle_overlaps_mapset(left_cql, left_params, name, mapset, uuid_fields, cql_types) do
+    vals = MapSet.to_list(mapset)
+
+    if vals == [] do
+      # Empty MapSet - return a condition that never matches
+      {"#{left_cql} = ? AND #{left_cql} != ?", left_params ++ [nil, nil]}
+    else
+      if length(vals) == 1 do
+        {"#{left_cql} CONTAINS ?",
+         left_params ++ Enum.map(vals, &typed_param(name, &1, uuid_fields, cql_types))}
+      else
+        raise AshScylla.Error,
+          message:
+            "CQL does not support OR, so overlaps/2 with multiple values cannot be expressed in a single query. " <>
+              "Found: overlaps(#{left_cql}, #{inspect(vals)}). " <>
+              "Workaround: split into multiple queries and merge in application code."
+      end
+    end
+  end
+
   @spec get_filter_columns(list()) :: [atom()]
   def get_filter_columns(filters) do
     filters
@@ -1314,53 +1254,42 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     left = deeply_unwrap_expr(left)
     right = deeply_unwrap_expr(right)
 
-    Logger.debug(
-      "AshScylla: rewrite_or_to_in left: #{inspect(left, pretty: true, limit: :infinity)}"
-    )
-
-    Logger.debug(
-      "AshScylla: rewrite_or_to_in right: #{inspect(right, pretty: true, limit: :infinity)}"
-    )
+    Logger.debug("AshScylla: rewrite_or_to_in left: #{inspect(left)}, right: #{inspect(right)}")
 
     case {left, right} do
-      # Standard form: %{left: %{name: name}, operator: op, right: %{value: v}}
-      {%{left: %{name: name1}, operator: op1, right: v1},
-       %{left: %{name: name2}, operator: op2, right: v2}}
-      when name1 == name2 and name1 != nil and op1 in [:eq, :==] and op2 in [:eq, :==] ->
-        {:ok, {name1, [extract_value(v1), extract_value(v2)]}}
+      {l, r} ->
+        case {extract_eq_parts(l), extract_eq_parts(r)} do
+          {{:ok, name1, v1}, {:ok, name2, v2}} when name1 == name2 and name1 != nil ->
+            {:ok, {name1, [v1, v2]}}
 
-      # Short form with op key: %{left: %{name: name}, op: op, right: %{value: v}}
-      {%{left: %{name: name1}, op: op1, right: v1}, %{left: %{name: name2}, op: op2, right: v2}}
-      when name1 == name2 and name1 != nil and op1 in [:eq, :==] and op2 in [:eq, :==] ->
-        {:ok, {name1, [extract_value(v1), extract_value(v2)]}}
-
-      # Flat short form: %{name: name, op: op, right: %{value: v}}
-      {%{name: name1, op: op1, right: v1}, %{name: name2, op: op2, right: v2}}
-      when name1 == name2 and name1 != nil and op1 in [:eq, :==] and op2 in [:eq, :==] ->
-        {:ok, {name1, [extract_value(v1), extract_value(v2)]}}
-
-      _ ->
-        :error
+          _ ->
+            :error
+        end
     end
   end
 
+  @spec extract_eq_parts(map()) :: {:ok, atom(), term()} | :error
+  defp extract_eq_parts(%{left: %{name: name}, operator: op, right: %{value: v}})
+       when op in [:eq, :==], do: {:ok, name, v}
+
+  defp extract_eq_parts(%{left: %{name: name}, operator: op, right: v})
+       when op in [:eq, :==] and not is_map(v), do: {:ok, name, v}
+
+  defp extract_eq_parts(%{left: %{name: name}, op: op, right: %{value: v}})
+       when op in [:eq, :==], do: {:ok, name, v}
+
+  defp extract_eq_parts(%{left: %{name: name}, op: op, right: v})
+       when op in [:eq, :==] and not is_map(v), do: {:ok, name, v}
+
+  defp extract_eq_parts(%{name: name, op: op, right: %{value: v}})
+       when op in [:eq, :==], do: {:ok, name, v}
+
+  defp extract_eq_parts(%{name: name, op: op, right: v})
+       when op in [:eq, :==] and not is_map(v), do: {:ok, name, v}
+
+  defp extract_eq_parts(_), do: :error
+
   # defp unwrap_expr(%{expression: expr}), do: unwrap_expr(expr)
-  # defp unwrap_expr(other), do: other
-
-  defp deeply_unwrap_expr(%{expression: expr}), do: deeply_unwrap_expr(expr)
-
-  defp deeply_unwrap_expr(%{left: left, op: op, right: right}) do
-    %{left: deeply_unwrap_expr(left), op: op, right: deeply_unwrap_expr(right)}
-  end
-
-  defp deeply_unwrap_expr(%{left: left, operator: op, right: right}) do
-    %{left: deeply_unwrap_expr(left), operator: op, right: deeply_unwrap_expr(right)}
-  end
-
-  defp deeply_unwrap_expr(%Ash.Query.Ref{attribute: %{name: name}}), do: %{name: name}
-  defp deeply_unwrap_expr(%Ash.Query.Ref{attribute: name}) when is_atom(name), do: %{name: name}
-
-  defp deeply_unwrap_expr(%{name: _} = n), do: n
   defp deeply_unwrap_expr(%{value: _} = v), do: v
   defp deeply_unwrap_expr(other), do: other
 

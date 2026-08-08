@@ -663,6 +663,158 @@ end
 
 ---
 
+## Error Handling in Production
+
+AshScylla v1.6+ provides structured error handling with categorized error types, retryability, and actionable suggestions. This section covers production patterns.
+
+### Error Types and Retry Strategy
+
+| Error Type | Retryable? | Production Action |
+|------------|------------|-------------------|
+| `:connection_timeout` | ✅ | Retry with exponential backoff, check network |
+| `:connection_closed` | ✅ | Retry, verify node health |
+| `:overloaded` | ✅ | Retry with longer backoff, scale cluster |
+| `:timeout` | ✅ | Increase `request_timeout`, optimize query |
+| `:connection_error` | ✅ | Retry, check DNS/connectivity |
+| `:syntax_error` | ❌ | Fix CQL query (code bug) |
+| `:schema_error` | ❌ | Run migrations, verify table names |
+| `:unauthorized` | ❌ | Check credentials/permissions |
+| `:already_exists` | ❌ | Use `IF NOT EXISTS` or check first |
+| `:not_found` | ❌ | Handle gracefully (404) |
+| `:consistency_error` | ❌ | Lower consistency, check replicas |
+| `:generic_error` | ❌ | Alert, investigate logs |
+
+### Implementing Retry with Backoff
+
+```elixir
+defmodule MyApp.Database do
+  @max_retries 3
+  @base_delays %{
+    overloaded: 1000,
+    timeout: 500,
+    connection_timeout: 2000,
+    connection_closed: 1000,
+    connection_error: 2000
+  }
+
+  def execute_with_retry(operation, retries \\ 0) do
+    case operation.() do
+      {:ok, result} ->
+        {:ok, result}
+
+      {:error, %AshScylla.Error.ScyllaError{} = error} ->
+        if AshScylla.Error.retryable?(error) and retries < @max_retries do
+          delay = Map.get(@base_delays, error.type, 500)
+          sleep_time = delay * :math.pow(2, retries)
+          Process.sleep(round(sleep_time))
+          execute_with_retry(operation, retries + 1)
+        else
+          {:error, error}
+        end
+
+      {:error, error} ->
+        {:error, error}
+    end
+  end
+end
+```
+
+### Logging Errors with Context
+
+```elixir
+def handle_db_error(%AshScylla.Error.ScyllaError{} = error, context) do
+  Logger.error("""
+  ScyllaDB Error:
+  - Type: #{error.type}
+  - Message: #{error.message}
+  - Suggestion: #{error.suggestion}
+  - Operation: #{context.operation}
+  - Resource: #{context.resource}
+  - Query: #{context.query}
+  """)
+
+  {:error, error}
+end
+
+# Usage
+with {:ok, result} <- MyApp.Database.execute_with_retry(&do_query/0) do
+  {:ok, result}
+else
+  {:error, %AshScylla.Error.ScyllaError{} = error} ->
+    handle_db_error(error, %{
+      operation: "read_user",
+      resource: "User",
+      query: "SELECT * FROM users WHERE id = ?"
+    })
+end
+```
+
+### Monitoring Error Rates
+
+```elixir
+# Attach to exception telemetry
+:telemetry.attach(
+  "scylla-error-monitor",
+  [:ash_scylla, :query, :exception],
+  fn _event, _measurements, metadata, _config ->
+    error = metadata.error
+
+    if error.__struct__ == AshScylla.Error.ScyllaError do
+      # Increment Prometheus counter by error type
+      :telemetry.execute(
+        [:my_app, :scylla, :error],
+        %{count: 1},
+        %{
+          type: to_string(error.type),
+          retryable: to_string(AshScylla.Error.retryable?(error)),
+          operation: metadata.operation
+        }
+      )
+    end
+  end,
+  nil
+)
+```
+
+### Health Checks
+
+```elixir
+defmodule MyApp.Health.Checks.Scylla do
+  @moduledoc "ScyllaDB health check for Kubernetes probes."
+
+  def check do
+    case MyApp.Repo.query("SELECT now() FROM system.local") do
+      {:ok, _} ->
+        :ok
+
+      {:error, %Xandra.ConnectionError{reason: reason}} ->
+        {:error, "Connection failed: #{inspect(reason)}"}
+
+      {:error, %Xandra.Error{reason: reason}} ->
+        {:error, "Query failed: #{inspect(reason)}"}
+    end
+  end
+
+  def cluster_status do
+    {:ok, result} = MyApp.Repo.query("SELECT peer, rpc_address, data_center, rack, tokens FROM system.peers")
+
+    peers = Enum.map(result.rows, fn [peer, rpc_address, dc, rack, _tokens] ->
+      %{
+        peer: to_string(peer),
+        rpc_address: to_string(rpc_address),
+        datacenter: to_string(dc),
+        rack: to_string(rack),
+        status: if(peer != rpc_address, do: :up, :down)
+      }
+    end)
+
+    %{peers: peers, peer_count: length(peers)}
+  end
+end
+```
+
+---
+
 ## Monitoring and Observability
 
 ### Telemetry Events

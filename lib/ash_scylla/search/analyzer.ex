@@ -20,7 +20,7 @@ defmodule AshScylla.Search.Analyzer do
   indexing or query processing.
   """
 
-  alias AshScylla.Search.Analyzer.{Tokenizer, Normalizer, StopWords, Stemmer}
+  alias AshScylla.Search.Analyzer.{Normalizer, Stemmer, StopWords, Tokenizer}
 
   @doc """
   Analyzes text and returns a list of `{term, term_frequency}` tuples.
@@ -84,7 +84,9 @@ defmodule AshScylla.Search.Analyzer do
       ...> })
       [{"elixir", 2}, {"learn", 1}, {"great", 1}]
   """
-  @spec analyze_fields(%{optional(atom()) => String.t()}, keyword()) :: [{String.t(), pos_integer()}]
+  @spec analyze_fields(%{optional(atom()) => String.t()}, keyword()) :: [
+          {String.t(), pos_integer()}
+        ]
   def analyze_fields(fields, opts \\ []) when is_map(fields) do
     fields
     |> Enum.flat_map(fn {_field, text} -> analyze(text, opts) end)

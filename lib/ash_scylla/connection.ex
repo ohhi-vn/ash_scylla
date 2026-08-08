@@ -423,73 +423,104 @@ defmodule AshScylla.Connection do
     keyspace = Keyword.get(opts, :keyspace)
     nodes = Keyword.get(opts, :nodes, ["127.0.0.1:9042"])
 
-    # Parse node addresses to extract host/port tuples
     parsed_nodes = Enum.map(nodes, &parse_node/1)
-
-    # Convert tuple format nodes to "host:port" strings for Xandra
-    nodes_as_strings =
-      Enum.map(nodes, fn
-        {host, port} when is_binary(host) and is_integer(port) -> "#{host}:#{port}"
-        node when is_binary(node) -> node
-        node -> to_string(node)
-      end)
+    nodes_as_strings = convert_nodes_to_strings(nodes)
 
     xandra_opts = build_xandra_opts(opts, nodes_as_strings)
 
-    {start_fun, xandra_opts, cluster?} =
-      if length(nodes) > 1 do
-        # Check if all nodes use the same port. Xandra.Cluster uses a single
-        # autodiscovered_nodes_port for all peers, so mixed-port clusters
-        # won't work properly with Xandra.Cluster.
-        ports = Enum.map(parsed_nodes, &elem(&1, 1))
+    {start_fun, connect_opts, cluster?} =
+      determine_start_config(nodes, parsed_nodes, nodes_as_strings, xandra_opts, keyspace)
 
-        if length(Enum.uniq(ports)) == 1 do
-          # All nodes share the same port — safe to use Xandra.Cluster.
-          # Auto-detect the port from the first node.
-          xandra_opts =
-            if Keyword.has_key?(xandra_opts, :autodiscovered_nodes_port) do
-              xandra_opts
-            else
-              case parsed_nodes do
-                [{_host, port} | _] when is_integer(port) ->
-                  Keyword.put(xandra_opts, :autodiscovered_nodes_port, port)
+    Logger.debug(
+      "AshScylla: Starting #{if(cluster?, do: "cluster", else: "single-node")} connection to #{inspect(nodes_as_strings)}"
+    )
 
-                _ ->
-                  xandra_opts
-              end
-            end
+    connect_and_apply_keyspace(start_fun, connect_opts, cluster?, keyspace, nodes_as_strings)
+  end
 
-          # Use sync_connect to ensure at least one connection is established
-          # before returning. This prevents the pool from staying in :never_connected
-          # and crashing with FunctionClauseError on unhandled events.
-          xandra_opts =
-            if Keyword.has_key?(xandra_opts, :sync_connect) do
-              xandra_opts
-            else
-              Keyword.put(xandra_opts, :sync_connect, 5_000)
-            end
+  # Converts node formats (tuples or strings) to "host:port" strings for Xandra.
+  defp convert_nodes_to_strings(nodes) do
+    Enum.map(nodes, fn
+      {host, port} when is_binary(host) and is_integer(port) -> "#{host}:#{port}"
+      node when is_binary(node) -> node
+      node -> to_string(node)
+    end)
+  end
 
-          {&Xandra.Cluster.start_link/1, xandra_opts, true}
-        else
-          # Nodes have different ports — Xandra.Cluster can't handle this.
-          # Fall back to a single-node connection to the first node.
-          Logger.warning(
-            "AshScylla: Nodes have different ports (#{inspect(ports)}). " <>
-              "Xandra.Cluster requires all nodes to share the same port. " <>
-              "Falling back to single-node connection to #{inspect(hd(nodes))}."
-          )
+  # Determines whether to use Xandra.Cluster or Xandra single-node, and builds the
+  # appropriate start function and connection options.
+  defp determine_start_config(nodes, parsed_nodes, nodes_as_strings, xandra_opts, _keyspace) do
+    if length(nodes) > 1 do
+      determine_cluster_config(parsed_nodes, nodes_as_strings, xandra_opts)
+    else
+      determine_single_node_config(xandra_opts)
+    end
+  end
 
-          # Override nodes to only use the first node for single connection
-          xandra_opts = Keyword.put(xandra_opts, :nodes, [hd(nodes_as_strings)])
-          # :pool_size is only valid for Xandra.Cluster (single-node Xandra.start_link
-          # rejects it), so drop it on this fallback path.
-          {&Xandra.start_link/1, Keyword.delete(xandra_opts, :pool_size), false}
-        end
-      else
-        # Single-node: :pool_size is not accepted by Xandra.start_link, drop it.
-        {&Xandra.start_link/1, Keyword.delete(xandra_opts, :pool_size), false}
+  defp determine_cluster_config(parsed_nodes, nodes_as_strings, xandra_opts) do
+    ports = Enum.map(parsed_nodes, &elem(&1, 1))
+
+    if length(Enum.uniq(ports)) == 1 do
+      # All nodes share the same port — safe to use Xandra.Cluster.
+      xandra_opts =
+        configure_autodiscovered_port(parsed_nodes, xandra_opts)
+        |> ensure_sync_connect()
+
+      Logger.debug(
+        "AshScylla: Using Xandra.Cluster with autodiscovered port #{autodiscovered_port(parsed_nodes)}"
+      )
+
+      {&Xandra.Cluster.start_link/1, xandra_opts, true}
+    else
+      # Nodes have different ports — Xandra.Cluster can't handle this.
+      Logger.warning(
+        "AshScylla: Nodes have different ports (#{inspect(ports)}). " <>
+          "Xandra.Cluster requires all nodes to share the same port. " <>
+          "Falling back to single-node connection to #{inspect(hd(nodes_as_strings))}."
+      )
+
+      xandra_opts = Keyword.put(xandra_opts, :nodes, [hd(nodes_as_strings)])
+      {&Xandra.start_link/1, Keyword.delete(xandra_opts, :pool_size), false}
+    end
+  end
+
+  defp determine_single_node_config(xandra_opts) do
+    Logger.debug("AshScylla: Using single-node Xandra connection")
+    {&Xandra.start_link/1, Keyword.delete(xandra_opts, :pool_size), false}
+  end
+
+  defp configure_autodiscovered_port(parsed_nodes, xandra_opts) do
+    if Keyword.has_key?(xandra_opts, :autodiscovered_nodes_port) do
+      xandra_opts
+    else
+      case parsed_nodes do
+        [{_host, port} | _] when is_integer(port) ->
+          Keyword.put(xandra_opts, :autodiscovered_nodes_port, port)
+
+        _ ->
+          xandra_opts
       end
+    end
+  end
 
+  defp ensure_sync_connect(xandra_opts) do
+    if Keyword.has_key?(xandra_opts, :sync_connect) do
+      xandra_opts
+    else
+      Keyword.put(xandra_opts, :sync_connect, 5_000)
+    end
+  end
+
+  defp autodiscovered_port(parsed_nodes) do
+    case parsed_nodes do
+      [{_host, port} | _] when is_integer(port) -> port
+      _ -> "unknown"
+    end
+  end
+
+  # Connects to ScyllaDB without keyspace first, then applies keyspace best-effort.
+  # Returns GenServer init result.
+  defp connect_and_apply_keyspace(start_fun, xandra_opts, cluster?, keyspace, nodes) do
     # Connect WITHOUT the keyspace first. Xandra 0.19.x applies `USE keyspace`
     # to every pooled connection at connect time and *raises* (asynchronously,
     # inside the spawned worker process) when the keyspace doesn't exist yet.
@@ -510,18 +541,20 @@ defmodule AshScylla.Connection do
     end
     |> case do
       {:ok, conn} ->
+        Logger.debug("AshScylla: Xandra connection established to #{inspect(nodes)}")
         keyspace_used? = apply_keyspace(conn, cluster?, nodes, keyspace)
 
         {:ok,
          %__MODULE__{
            conn: conn,
            keyspace: keyspace,
-           nodes: nodes_as_strings,
+           nodes: nodes,
            keyspace_used: keyspace_used?,
            cluster?: cluster?
          }}
 
       {:error, reason} ->
+        Logger.error("AshScylla: Failed to connect to #{inspect(nodes)}: #{reason}")
         {:stop, reason}
     end
   end

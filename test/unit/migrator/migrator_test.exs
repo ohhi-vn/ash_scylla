@@ -46,6 +46,7 @@ defmodule AshScylla.MigratorTest do
 
   defp default_port do
     node = hd(@config_nodes)
+
     case String.split(node, ":") do
       [_, port] -> String.to_integer(port)
       [_host] -> 9042

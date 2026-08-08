@@ -8,7 +8,7 @@
 
 AshScylla is a comprehensive data layer for the Ash Framework that enables persistence with **ScyllaDB** or **Apache Cassandra**. It uses [Xandra](https://github.com/whatyouhide/xandra) (a native Elixir CQL driver) to communicate via CQL (Cassandra Query Language).
 
-Current version: **1.5.3**
+Current version: **1.6.2**
 
 ---
 
@@ -329,6 +329,45 @@ end
 - LIST, SET, MAP encoding for Xandra
 - CONTAINS/CONTAINS KEY filter support
 - Frozen collection support
+
+#### 14. Full-Text Search (`AshScylla.Search`)
+```elixir
+# Create search tables
+AshScylla.Search.create_tables(MyApp.Repo, "my_keyspace")
+
+# Index a document
+AshScylla.Search.index(MyApp.Repo, "my_keyspace", post_id, %{
+  title: "Learning Elixir",
+  body: "Elixir is a functional language"
+})
+
+# Search with BM25 ranking
+{:ok, results} = AshScylla.Search.search(MyApp.Repo, "my_keyspace", "elixir functional", strategy: :bm25, total_docs: 1000)
+```
+- Built-in inverted-index search engine on top of ScyllaDB's tables
+- 16-shard partition key design prevents hotspot partitions
+- Text analysis pipeline: tokenize → lowercase → NFC normalize → stop words → Porter stemmer
+- Boolean query parser: AND, OR, NOT, phrase support
+- Ranking strategies: TF, TF-IDF, BM25
+- Diff-based updates (only changed terms are written)
+- 79 unit tests covering all search components
+
+#### 15. Structured Error Handling (`AshScylla.Error`, `AshScylla.Error.ScyllaError`)
+- 11 categorized error types with retryability classification
+- Centralized error wrapping via `handle_result/1` — no raw Xandra errors leak to callers
+- User-friendly messages with actionable suggestions per error type
+- `retryable?/1` helper for implementing retry policies with backoff
+- Consistent logging with `AshScylla:` prefix across all modules
+- Eliminated double-logging between `handle_result` and `wrap_xandra_error`
+
+#### 16. Query Builder & Connection Refactoring (v1.6+)
+- `AshScylla.DataLayer.QueryBuilder.filter_to_cql/3` catch-all simplified from 11 guard clauses to 2
+- `rewrite_or_to_in/2` consolidated 3 identical clauses into single guard dispatch
+- `build_optimized_query/1` structured for maintainability
+- `AshScylla.Connection.init/1` split into 8 focused private functions
+- All modules use consistent `"AshScylla:"` log prefix with appropriate levels
+- `unknown_filter_error!/1` centralized error for untranslatable filters
+- `needs_allow_filtering?/2` shared between `destroy_query` and `do_delete`
 
 ---
 

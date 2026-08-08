@@ -15,7 +15,8 @@
 7. [Running Tests](#running-tests)
 8. [Type Mapping](#type-mapping)
 9. [Common Development Tasks](#common-development-tasks)
-10. [Troubleshooting](#troubleshooting)
+10. [Code Quality](#code-quality)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -786,6 +787,462 @@ To see the CQL that Ash generates, enable debug logging or use the
 )
 ```
 
+### Check Code Quality
+
+```bash
+mix format --check-formatted  # Formatting
+mix credo --strict            # Static analysis
+mix dialyzer                  # Type checking
+```
+
+---
+
+## Code Quality
+
+### Formatting
+
+```bash
+# Auto-format all files
+mix format
+
+# CI check (exits non-zero if changes needed)
+mix format --check-formatted
+```
+
+### Static Analysis (Credo)
+
+```bash
+# All checks with strict mode
+mix credo --strict
+
+# Categories
+mix credo --strict --only refactor    # Refactoring opportunities
+mix credo --strict --only warning     # Warnings
+mix credo --strict --only consistency # Consistency checks
+mix credo --strict --only design      # Design issues
+
+# Explain a specific check
+mix credo explain Credo.Check.Refactor.PipeChain
+```
+
+### Type Checking (Dialyzer)
+
+```bash
+# Full type check (builds PLT if needed)
+mix dialyzer
+
+# Faster subsequent runs (skip PLT check)
+mix dialyzer --no-check
+
+# Check specific modules
+mix dialyzer lib/ash_scylla/data_layer.ex lib/ash_scylla/data_layer/query_builder.ex
+```
+
+### All Quality Checks at Once
+
+```bash
+# Runs format + credo + dialyzer
+mix quality
+```
+
+### Credo Configuration
+
+Project uses `.credo.exs` with:
+- Strict mode enabled
+- Max function complexity: 12 (cyclomatic)
+- Max nesting depth: 3
+- Custom checks for `length/1` vs empty list comparison
+
+Common issues to fix:
+- **`length/1` on lists**: Use `list != []` instead of `length(list) > 0`
+- **Deep nesting**: Extract to private functions
+- **Complex functions**: Split into smaller helpers
+- **Pipe chains**: Single-step pipes should be direct calls
+
+---
+
+## Running Tests
+
+### Quick Reference
+
+```bash
+# ── Unit tests ──────────────────────────────────────────────────────────────
+# Fast, no database needed. Uses fake/mock repos.
+mix test --exclude integration
+
+# With coverage report → cover/index.html
+mix test --exclude integration --cover
+
+# ── Integration tests ────────────────────────────────────────────────────────
+# Need a running ScyllaDB instance.
+
+# Against the Podman container (dev container default):
+mix test --only integration
+
+# Against a local ScyllaDB at localhost:9042:
+SCYLLA_DIRECT=1 mix test --only integration
+
+# A single integration file:
+SCYLLA_DIRECT=1 mix test test/integration/scylla_integration_test.exs
+SCYLLA_DIRECT=1 mix test test/integration/data_layer_integration_test.exs
+SCYLLA_DIRECT=1 mix test test/integration/pipeline_integration_test.exs
+SCYLLA_DIRECT=1 mix test test/integration/type_roundtrip_integration_test.exs
+
+# ── Cluster integration tests ────────────────────────────────────────────────
+# Require a multi-node ScyllaDB (Podman or existing cluster).
+
+# Podman mode (spins up a 3-node cluster via testcontainers):
+mix test test/integration/cluster_integration_test.exs --only integration
+
+# Direct mode (connect to an existing multi-node cluster):
+TEST_CLUSTER=true SCYLLA_NODES="node1:9042,node2:9042,node3:9042" \
+  mix test test/integration/cluster_integration_test.exs --only integration
+
+# Single-node direct mode (connect to one node, multi-node tests skipped):
+SCYLLA_DIRECT=1 mix test test/integration/cluster_integration_test.exs --only integration
+
+
+# ── Benchmarks ───────────────────────────────────────────────────────────────
+mix run benchmarks/run_benchmarks.exs
+```
+
+### Unit Tests
+
+Unit tests live under `test/unit/` and are organised by feature domain. They use
+inline or fake repos — no ScyllaDB instance is required.
+
+```bash
+# All unit tests (~2000+)
+mix test --exclude integration
+
+# A specific feature domain
+mix test test/unit/data_layer/
+mix test test/unit/query_builder/
+mix test test/unit/error/
+mix test test/unit/search/
+
+# A single file
+mix test test/unit/data_layer/data_layer_error_handling_test.exs
+mix test test/unit/query/query_builder_test.exs
+```
+
+### Integration Tests
+
+Integration tests need a real ScyllaDB instance. They are tagged with `@moduletag :integration`.
+
+```bash
+# All integration tests (excludes unit tests)
+mix test --only integration
+
+# Against a pre-existing ScyllaDB at localhost:9042
+SCYLLA_DIRECT=1 mix test --only integration
+
+# A specific file
+SCYLLA_DIRECT=1 mix test test/integration/scylla_integration_test.exs
+SCYLLA_DIRECT=1 mix test test/integration/data_layer_integration_test.exs
+SCYLLA_DIRECT=1 mix test test/integration/pipeline_integration_test.exs
+SCYLLA_DIRECT=1 mix test test/integration/type_roundtrip_integration_test.exs
+```
+
+> **Tip:** When `SCYLLA_DIRECT` is set, the cluster integration test
+> (`cluster_integration_test.exs`) is automatically skipped because it requires
+> multi-node orchestration.
+
+### Cluster Integration Tests
+
+The cluster tests spin up a 3-node ScyllaDB cluster and verify cross-node reads,
+writes, and concurrent operations.
+
+```bash
+# Podman mode (default — starts containers via testcontainers)
+mix test test/integration/cluster_integration_test.exs --only integration
+
+# Direct mode (connect to an existing cluster)
+TEST_CLUSTER=true SCYLLA_NODES="node1:9042,node2:9042,node3:9042" \
+  mix test test/integration/cluster_integration_test.exs --only integration
+```
+
+### Benchmarks
+
+Benchmarks measure query-building performance (not actual database operations).
+
+```bash
+mix run benchmarks/run_benchmarks.exs
+```
+
+### Coverage Report
+
+```bash
+mix test --exclude integration --cover
+```
+
+Generates `cover/index.html` — open it in a browser to see line-by-line coverage.
+
+### Running Tests in the Dev Container
+
+The dev container includes a single-node ScyllaDB instance. All tests work out
+of the box:
+
+```bash
+# Unit tests only (fast, no database needed)
+mix test --exclude integration
+
+# Integration tests against the containerized ScyllaDB
+mix test --only integration
+```
+
+### Running Tests Against a Local ScyllaDB (No Container)
+
+```bash
+SCYLLA_DIRECT=1 mix test --only integration
+```
+
+---
+
+## Common Development Tasks
+
+### Reset the Database
+
+```bash
+# Drop and recreate the keyspace
+mix run -e '
+  MyApp.Repo.drop_keyspace()
+  MyApp.Repo.create_keyspace()
+'
+
+# Or use the Ash extension callback
+mix ash.reset AshScylla
+```
+
+### Ash Extension Callbacks
+
+AshScylla implements the full `Ash.Extension` behaviour. The `AshScylla.Extension` module provides:
+
+| Callback | Mix Task | Description |
+|----------|----------|-------------|
+| `codegen/1` | `mix ash.codegen` | Generate CQL migration files from resources |
+| `setup/1` | `mix ash.setup` | Create keyspace and run migrations |
+| `migrate/1` | `mix ash.migrate` | Run migration files |
+| `install/5` | `mix ash.install` | Install AshScylla for a resource |
+| `reset/1` | `mix ash.reset` | Drop keyspace, recreate, re-run migrations |
+| `rollback/1` | `mix ash.rollback` | Rollback to a version (logs warning - no CQL DDL rollback) |
+| `tear_down/1` | `mix ash.tear_down` | Drop the keyspace |
+
+All callbacks support `--dry-run` flag and handle missing repo gracefully.
+
+### Building CQL Queries from Ash
+
+AshScylla converts Ash queries into optimized CQL via `AshScylla.DataLayer.QueryBuilder`.
+The pipeline has three stages:
+
+```
+Ash.Resource / Ash.Query
+        │
+        ▼
+AshScylla.DataLayer          # builds the struct
+        │
+        ▼
+QueryBuilder                 # converts filters → CQL WHERE
+        │
+        ▼
+{ cql, params }              # final query + typed parameters
+```
+
+#### Stage 1 — Build the Query struct
+
+For resources, let Ash build the struct from the DSL:
+
+```elixir
+alias AshScylla.Query
+
+query = Query.from_resource(MyApp.User, MyApp.Domain)
+# %AshScylla.Query{resource: MyApp.User, repo: MyApp.Repo, table: "users", ...}
+```
+
+For ad-hoc queries (tests, scripts), build the struct manually:
+
+```elixir
+query = %AshScylla.Query{
+  resource: MyApp.User,     # or nil for resource-less queries
+  repo: MyApp.Repo,         # or nil
+  table: "users",            # required
+  filters: [],
+  sorts: [],
+  limit: nil,
+  select: nil,
+  tenant: nil
+}
+```
+
+#### Stage 2 — Add filters, sorts, limit
+
+Filters use Ash `filter/3` format. Each filter is a map with `operator`,
+`left`, and `right` keys:
+
+```elixir
+# Equality
+%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}
+
+# Comparison
+%{operator: :gt, left: %{name: :age}, right: %{value: 18}}
+%{operator: :>=, left: %{name: :age}, right: %{value: 18}}
+%{operator: :<, left: %{name: :age}, right: %{value: 65}}
+%{operator: :<=, left: %{name: :age}, right: %{value: 65}}
+
+# IN clause
+%{operator: :in, left: %{name: :status}, right: %{value: ["active", "pending"]}}
+
+# IS NULL
+%{operator: :is_nil, left: %{name: :email}, right: true}
+
+# AND / OR (nested)
+%{
+  op: :and,
+  left: %{operator: :eq, left: %{name: :status}, right: %{value: "active"}},
+  right: %{operator: :>=, left: %{name: :age}, right: %{value: 18}}
+}
+
+%{
+  op: :or,
+  left: %{operator: :eq, left: %{name: :status}, right: %{value: "active"}},
+  right: %{operator: :eq, left: %{name: :status}, right: %{value: "pending"}}
+}
+```
+
+Add to the query struct:
+
+```elixir
+query = query
+|> DataLayer.filter(%{operator: :eq, left: %{name: :status}, right: %{value: "active"}})
+|> DataLayer.filter(email == "user@example.com")   # Ash DSL syntax also works
+|> DataLayer.sort(:name, :asc)
+|> DataLayer.limit(10)
+|> DataLayer.select([:id, :name, :email])
+```
+
+#### Stage 3 — Build and inspect the CQL
+
+```elixir
+alias AshScylla.DataLayer.QueryBuilder
+
+{cql, params} = QueryBuilder.build_optimized_query(query)
+IO.puts(cql)
+# → SELECT id, name, email FROM users WHERE status = ? AND email = ? ORDER BY name ASC LIMIT ?
+IO.inspect(params)
+# → [{"text", "active"}, {"text", "user@example.com"}, {"int", 10}]
+```
+
+#### Execute the query
+
+Pass the `{cql, params}` result directly to `Xandra.execute/4`:
+
+```elixir
+{:ok, conn} = Xandra.start_link(nodes: ["127.0.0.1:9042"])
+
+{cql, params} = QueryBuilder.build_optimized_query(query)
+{:ok, %Xandra.Page{content: rows}} = Xandra.execute(conn, cql, params, consistency: :one)
+
+Xandra.stop(conn)
+```
+
+#### Common query patterns
+
+```elixir
+# ── Primary key lookup (most efficient) ────────────────────────────────────
+query = %AshScylla.Query{
+  table: "users",
+  filters: [%{operator: :eq, left: %{name: :id}, right: %{value: user_id}}]
+}
+# → SELECT * FROM users WHERE id = ?
+
+# ── Secondary index lookup ──────────────────────────────────────────────────
+query = %AshScylla.Query{
+  table: "users",
+  filters: [%{operator: :eq, left: %{name: :email}, right: %{value: "a@b.com"}}]
+}
+# → SELECT * FROM users WHERE email = ?
+
+# ── Range query on clustering columns ───────────────────────────────────────
+query = %AshScylla.Query{
+  table: "events",
+  filters: [
+    %{operator: :eq, left: %{name: :user_id}, right: %{value: user_id}},
+    %{operator: :>=, left: %{name: :event_id}, right: %{value: ~U[2024-01-01 00:00:00Z]}}
+  ]
+}
+# → SELECT * FROM events WHERE user_id = ? AND event_id >= ?
+
+# ── COUNT aggregate ────────────────────────────────────────────────────────
+query = %AshScylla.Query{
+  table: "users",
+  filters: [%{operator: :eq, left: %{name: :status}, right: %{value: "active"}}],
+  aggregates: [%{kind: :count, name: :total}]
+}
+# → SELECT COUNT(*) FROM users WHERE status = ?
+
+# ── DISTINCT on partition key ───────────────────────────────────────────────
+query = %AshScylla.Query{
+  table: "users",
+  distinct: [:status]
+}
+# → SELECT DISTINCT status FROM users
+
+# ── Token-based keyset pagination ───────────────────────────────────────────
+query = %AshScylla.Query{
+  table: "users",
+  keyset: page_token,     # opaque token from previous page
+  limit: 25
+}
+# → SELECT * FROM users LIMIT ?  (with page_state sent to Xandra)
+
+# ── IN clause ───────────────────────────────────────────────────────────────
+query = %AshScylla.Query{
+  table: "users",
+  filters: [%{operator: :in, left: %{name: :id}, right: %{value: [id1, id2, id3]}}]
+}
+# → SELECT * FROM users WHERE id IN (?, ?, ?)
+```
+
+#### Using the full Ash pipeline
+
+The most common path is through Ash actions, which handle everything:
+
+```elixir
+# Create — generates INSERT CQL internally
+{:ok, user} = Ash.create(MyApp.User, %{name: "Alice", email: "alice@example.com"})
+
+# Read with filters — generates SELECT CQL
+users =
+  MyApp.User
+  |> Ash.Query.filter(status == "active")
+  |> Ash.Query.sort(:name)
+  |> Ash.Query.limit(10)
+  |> Ash.read!()
+
+# Update — generates UPDATE CQL
+{:ok, updated} =
+  user
+  |> Ash.Changeset.for_update(:update, %{name: "Alice Smith"})
+  |> Ash.update()
+
+# Delete — generates DELETE CQL
+:ok = Ash.destroy(user)
+```
+
+To see the CQL that Ash generates, enable debug logging or use the
+`AshScylla.Telemetry` span handler:
+
+```elixir
+:telemetry.attach(
+  "ash-scylla-logger",
+  [:ash_scylla, :query, :stop],
+  fn _event, measure, _meta, _config ->
+    IO.puts("Query took #{System.convert_time_unit(measure.duration, :native, :millisecond)}ms")
+  end,
+  nil
+)
+```
+
 ### Run Benchmarks
 
 ```bash
@@ -801,6 +1258,68 @@ mix dialyzer                  # Type checking
 ```
 
 ---
+
+## Code Quality
+
+### Formatting
+
+```bash
+# Auto-format all files
+mix format
+
+# CI check (exits non-zero if changes needed)
+mix format --check-formatted
+```
+
+### Static Analysis (Credo)
+
+```bash
+# All checks with strict mode
+mix credo --strict
+
+# Categories
+mix credo --strict --only refactor    # Refactoring opportunities
+mix credo --strict --only warning     # Warnings
+mix credo --strict --only consistency # Consistency checks
+mix credo --strict --only design      # Design issues
+
+# Explain a specific check
+mix credo explain Credo.Check.Refactor.PipeChain
+```
+
+### Type Checking (Dialyzer)
+
+```bash
+# Full type check (builds PLT if needed)
+mix dialyzer
+
+# Faster subsequent runs (skip PLT check)
+mix dialyzer --no-check
+
+# Check specific modules
+mix dialyzer lib/ash_scylla/data_layer.ex lib/ash_scylla/data_layer/query_builder.ex
+```
+
+### All Quality Checks at Once
+
+```bash
+# Runs format + credo + dialyzer
+mix quality
+```
+
+### Credo Configuration
+
+Project uses `.credo.exs` with:
+- Strict mode enabled
+- Max function complexity: 12 (cyclomatic)
+- Max nesting depth: 3
+- Custom checks for `length/1` vs empty list comparison
+
+Common issues to fix:
+- **`length/1` on lists**: Use `list != []` instead of `length(list) > 0`
+- **Deep nesting**: Extract to private functions
+- **Complex functions**: Split into smaller helpers
+- **Pipe chains**: Single-step pipes should be direct calls
 
 ## Troubleshooting
 

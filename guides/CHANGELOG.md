@@ -27,6 +27,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `AshScylla.Search.Storage` — CQL schema (`search_post_terms` with sharded `(term, shard)` partition key + `search_post_fields`)
   - Unit tests for all pure search modules (79 test cases)
 
+## [1.6.2] - 2026-08-08
+
+### Changed
+- **Error handling standardization**: All DataLayer query paths (`run_query`, `update_query`, `destroy_query`, `run_aggregate_query`) now consistently route Xandra errors through centralized `handle_result/1` — no raw Xandra errors leak to callers
+- **Centralized unknown filter error**: Extracted `unknown_filter_error!/1` helper used by 4 query paths, eliminating duplicated raise logic
+- **Deduplicated ALLOW FILTERING logic**: Created `needs_allow_filtering?/2` shared between `destroy_query/4` and `do_delete/3`
+- **QueryBuilder catch-all simplified**: `filter_to_cql/3` raw value handling reduced from 11 guard clauses to 2 (non-serializable types + fallback)
+- **OR-to-IN rewrite consolidated**: `rewrite_or_to_in/2` collapsed 3 identical pattern-matching clauses into single `extract_eq_parts/1` helper with guard dispatch
+- **Aggregate warning consolidated**: `unsupported_aggregate_warning/1` helper eliminates 3 duplicate Logger.warning calls
+- **Connection init refactored**: `init/1` (105 lines) split into 8 focused private functions with debug logging at each stage
+- **Consistent log prefix**: All modules now use `"AshScylla:"` prefix; standardized levels (bulk create info→debug, eliminated double logging)
+- **handle_result deduped**: Removed redundant Logger.warning calls since `wrap_xandra_error` already logs
+
+### Added
+- `AshScylla.DataLayer.unknown_filter_error!/1` — centralized error for untranslatable filters
+- `AshScylla.DataLayer.build_where_result/3` — shared WHERE clause builder for update_query/destroy_query
+- `AshScylla.DataLayer.needs_allow_filtering?/2` — shared secondary index scan detection
+- `AshScylla.DataLayer.QueryBuilder.unsupported_aggregate_warning/1` — centralized aggregate warning
+- `AshScylla.DataLayer.QueryBuilder.extract_eq_parts/1` — OR-to-IN extraction helper
+- `AshScylla.Connection.determine_start_config/5`, `determine_cluster_config/3`, `determine_single_node_config/1`, `configure_autodiscovered_port/2`, `ensure_sync_connect/1`, `autodiscovered_port/1`, `connect_and_apply_keyspace/5`, `convert_nodes_to_strings/1` — connection init helpers
+- Test: `test/unit/data_layer/data_layer_error_handling_test.exs` (8 tests) — verifies error handling consistency
+
+### Fixed
+- `update_query/4`, `destroy_query/4`, `run_aggregate_query/3` no longer leak raw Xandra errors — all wrapped via `handle_result/1`
+- `changeset_to_update_attrs/2` uses `!= []` instead of `length/1 > 0` (Credo warning)
+- Logger.info for bulk create changed to Logger.debug for consistency
+
 ## [1.5.0]
 
 ### Changed

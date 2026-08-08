@@ -1,6 +1,6 @@
 # AshScylla Usage Guide
 
-> **Comprehensive usage guide for AshScylla**
+> **Comprehensive usage guide for AshScylla v1.6+**
 
 ---
 
@@ -1142,17 +1142,57 @@ iex> alias AshScylla.DataLayer.QueryBuilder
 iex> query = %AshScylla.DataLayer{resource: MyApp.User, repo: MyApp.Repo, table: "users", filters: [%{operator: :eq, left: %{name: :email}, right: %{value: "test@example.com"}}]}
 iex> QueryBuilder.build_optimized_query(query)
 ```
-
+ 
 ---
+ 
+## Quick Error Handling Reference
+ 
+AshScylla v1.6+ provides structured error handling with categorized error types:
+ 
+### Common Error Types
+ 
+| Error Type | Retryable? | When It Occurs |
+|------------|------------|----------------|
+| `:overloaded` | ✅ | ScyllaDB node overloaded |
+| `:timeout` | ✅ | Query timeout |
+| `:connection_timeout` | ✅ | Network issues |
+| `:connection_closed` | ✅ | Node unavailable |
+| `:schema_error` | ❌ | Table/keyspace not found |
+| `:syntax_error` | ❌ | Invalid CQL syntax |
+| `:unauthorized` | ❌ | Permission denied |
+ 
+### Basic Error Handling Pattern
+ 
+```elixir
+case Ash.read(MyApp.User) do
+  {:ok, users} -> {:ok, users}
+ 
+  {:error, %AshScylla.Error.ScyllaError{} = error} ->
+    # Check if retryable
+    if AshScylla.Error.retryable?(error) do
+      # Implement your own backoff logic
+      {:retry, error}
+    else
+      {:error, AshScylla.Error.format_error(error)}
+    end
+ 
+  {:error, error} -> {:error, error}
+end
+```
+ 
+For comprehensive error handling guide, see **[Error Handling](ERROR_HANDLING.md)**.
+ 
+---
+ 
+## Documentation
 
-## Additional Resources
-
-- **[Development Guide](DEV_GUIDE.md)** — Dev container setup and development workflow
-- **[Production Guide](PRODUCTION_GUIDE.md)** — Multi-node cluster deployment and operations
-- **[Implementation Summary](IMPLEMENTATION_SUMMARY.md)** — Technical architecture details
-- **[Error Handling](ERROR_HANDLING.md)** — Error types and handling strategies
-- **[Changelog](CHANGELOG.md)** — Version history and release notes
-- **[API Documentation](https://hexdocs.pm/ash_scylla)** — Module documentation
+| Document | Description |
+|----------|-------------|
+| **[Development Guide](DEV_GUIDE.md)** | Dev container setup, testing, type mapping, CQL query building |
+| **[Production Guide](PRODUCTION_GUIDE.md)** | Multi-node cluster deployment and operations |
+| **[Implementation Summary](IMPLEMENTATION_SUMMARY.md)** | Technical architecture details |
+| **[Error Handling](ERROR_HANDLING.md)** | Error types and handling strategies |
+| **[Changelog](CHANGELOG.md)** | Version history and release notes |
 
 ---
 

@@ -336,6 +336,82 @@ All table names, column names, keyspace names, and index names are validated bef
 
 ---
 
+## Internal Error Handling Improvements (v1.6+)
+
+Since v1.6, AshScylla includes internal refactoring to ensure consistent error handling across all query paths:
+
+### Standardized Error Wrapping
+
+All database query paths in `AshScylla.DataLayer` now consistently route through a centralized `handle_result/1` function that:
+
+1. **Wraps all Xandra errors** via `AshScylla.Error.wrap_xandra_error/1` — no raw Xandra errors leak to callers
+2. **Passes through already-wrapped** `AshScylla.Error.ScyllaError` structs unchanged
+3. **Handles unexpected errors** by logging at error level and wrapping them
+
+```elixir
+# Internal pattern used consistently across run_query, update_query, destroy_query, run_aggregate_query
+defp handle_result({:ok, _} = ok), do: ok
+defp handle_result(:ok), do: :ok
+defp handle_result({:error, %AshScylla.Error.ScyllaError{}} = error), do: error
+
+defp handle_result({:error, %Xandra.Error{} = error}) do
+  {:error, AshScylla.Error.wrap_xandra_error(error)}
+end
+
+defp handle_result({:error, %Xandra.ConnectionError{} = error}) do
+  {:error, AshScylla.Error.wrap_xandra_error(error)}
+end
+
+defp handle_result({:error, error}) do
+  Logger.error("AshScylla: Unexpected data layer error: #{inspect(error)}")
+  {:error, AshScylla.Error.wrap_xandra_error(error)}
+end
+```
+
+### Eliminated Error Path Inconsistencies
+
+Prior to v1.6, some bulk operations (`update_query/4`, `destroy_query/4`, `run_aggregate_query/3`) leaked raw `%Xandra.Error{}` tuples to callers. All paths now consistently return wrapped `AshScylla.Error.ScyllaError` structs.
+
+### Centralized Unknown Filter Error
+
+The "unable to translate filter expression to CQL" error is raised from a single helper `unknown_filter_error!/1` used by:
+- `run_query/2`
+- `update_query/4`
+- `destroy_query/4`
+- `run_aggregate_query/3`
+
+---
+
+## Logging Improvements (v1.6+)
+
+### Consistent Log Prefixes
+
+All debug/info/warning/error log messages now use the `"AshScylla:"` prefix for easy filtering:
+
+```elixir
+Logger.debug("AshScylla: Executing run_query on users")
+Logger.debug("AshScylla: Building optimized query for table users")
+Logger.warning("AshScylla: Unsupported aggregate kind: :first, falling back to COUNT")
+Logger.error("AshScylla: Unexpected data layer error: ...")
+```
+
+### Eliminated Double Logging
+
+Previously, `handle_result/1` and `AshScylla.Error.wrap_xandra_error/1` both logged Xandra errors, producing duplicate log lines. Now only `wrap_xandra_error/1` logs, reducing noise.
+
+### Structured Connection Logging
+
+`AshScylla.Connection` now provides debug-level visibility into connection lifecycle:
+
+```elixir
+Logger.debug("AshScylla: Starting cluster connection to [\"scylla-1:9042\", \"scylla-2:9042\"]")
+Logger.debug("AshScylla: Xandra connection established to [\"scylla-1:9042\", \"scylla-2:9042\"]")
+Logger.info("AshScylla: Connected to ScyllaDB at [...], keyspace: my_app")
+Logger.warning("AshScylla: Failed to connect to [...]: connection refused")
+```
+
+---
+
 ## Testing Error Handling
 
 AshScylla includes comprehensive tests for error handling:

@@ -78,8 +78,10 @@ defmodule AshScylla.Search.Query.Parser do
     |> Enum.flat_map(fn
       [_, phrase] when phrase != "" ->
         [{:phrase, phrase}]
+
       [word] ->
         classify_token(word)
+
       [word, ""] ->
         classify_token(word)
     end)
@@ -139,8 +141,12 @@ defmodule AshScylla.Search.Query.Parser do
     all_groups = groups ++ [new_group]
 
     case remaining do
-      [{:or, _} | rest] -> parse_or_clause(rest, all_groups)
-      [] -> %Group{terms: all_groups, op: :or}
+      [{:or, _} | rest] ->
+        parse_or_clause(rest, all_groups)
+
+      [] ->
+        %Group{terms: all_groups, op: :or}
+
       other ->
         remaining_group = %Group{terms: Enum.reverse(other), op: :and}
         %Group{terms: all_groups ++ [remaining_group], op: :or}
@@ -177,7 +183,8 @@ defmodule AshScylla.Search.Query.Parser do
         %Group{terms: _inner_terms, op: :and} = group ->
           group
 
-        other -> other
+        other ->
+          other
       end)
 
     %Group{terms: combined, op: :or}

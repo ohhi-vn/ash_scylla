@@ -27,6 +27,7 @@ defmodule AshScylla.Search.Indexer.UpdaterTest do
     test "returns {:error, ...} when there are new terms to add and repo fails" do
       old_terms = MapSet.new()
       new_terms = [{"hello", 1}]
+
       assert Updater.update_field(MockFailingRepo, "ks", "post-1", 0, new_terms, old_terms) ==
                {:error, :mock_error}
     end
@@ -34,6 +35,7 @@ defmodule AshScylla.Search.Indexer.UpdaterTest do
     test "returns {:error, ...} when there are terms to remove and repo fails" do
       old_terms = MapSet.new(["hello"])
       new_terms = []
+
       assert Updater.update_field(MockFailingRepo, "ks", "post-1", 0, new_terms, old_terms) ==
                {:error, :mock_error}
     end
@@ -41,6 +43,7 @@ defmodule AshScylla.Search.Indexer.UpdaterTest do
     test "returns {:error, ...} when both add and remove needed and repo fails" do
       old_terms = MapSet.new(["a", "b"])
       new_terms = [{"b", 1}, {"c", 2}]
+
       assert Updater.update_field(MockFailingRepo, "ks", "post-1", 0, new_terms, old_terms) ==
                {:error, :mock_error}
     end

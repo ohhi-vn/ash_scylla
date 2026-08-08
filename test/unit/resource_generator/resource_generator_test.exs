@@ -134,7 +134,7 @@ defmodule AshScylla.ResourceGeneratorTest do
     end
 
     test "uses default repo module when not provided" do
-      output = ResourceGenerator.render_resource(:"Elixir.MyApp.User", [name: :string])
+      output = ResourceGenerator.render_resource(:"Elixir.MyApp.User", name: :string)
       assert output =~ "repo: "
     end
   end
@@ -150,7 +150,7 @@ defmodule AshScylla.ResourceGeneratorTest do
   describe "render_create_table/3" do
     test "generates CREATE TABLE with PK" do
       statements = ResourceGenerator.render_create_table("users", [id: :uuid, name: :string], nil)
-      assert length(statements) >= 1
+      assert statements != []
       assert hd(statements) =~ "CREATE TABLE IF NOT EXISTS users"
       assert hd(statements) =~ "id UUID"
       assert hd(statements) =~ "name TEXT"

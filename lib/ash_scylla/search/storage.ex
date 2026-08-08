@@ -115,4 +115,39 @@ defmodule AshScylla.Search.Storage do
   def shard_for(term, num_shards \\ 16) when num_shards > 0 do
     rem(:erlang.phash2(term, num_shards), num_shards)
   end
+
+  @doc """
+  Fetches stored terms for a post (all fields or a specific field) from `search_post_fields`.
+
+  Returns a MapSet of terms, or an empty MapSet if no terms are found.
+  """
+  @spec fetch_terms(module(), String.t(), String.t(), non_neg_integer() | nil) ::
+          {:ok, MapSet.t()} | {:error, term()}
+  def fetch_terms(repo, keyspace, post_id, field \\ nil) do
+    ks = Identifier.quote_name(keyspace)
+    table = Identifier.quote_name("search_post_fields")
+
+    cql =
+      if field do
+        "SELECT terms FROM #{ks}.#{table} WHERE post_id = #{post_id} AND field = #{field}"
+      else
+        "SELECT terms FROM #{ks}.#{table} WHERE post_id = #{post_id}"
+      end
+
+    case repo.query(cql, []) do
+      {:ok, %{rows: []}} ->
+        {:ok, MapSet.new()}
+
+      {:ok, %{rows: rows}} ->
+        all_terms =
+          rows
+          |> Enum.flat_map(fn [terms] -> terms end)
+          |> MapSet.new()
+
+        {:ok, all_terms}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
 end

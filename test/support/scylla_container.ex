@@ -122,7 +122,8 @@ defmodule AshScylla.ScyllaContainer do
     case TestcontainerEx.start_container(tc_config) do
       {:ok, container} ->
         {:ok,
-         %{config
+         %{
+           config
            | container_id: container.container_id,
              host: TestcontainerEx.get_host(container),
              port: TestcontainerEx.get_port(container, 9042)
