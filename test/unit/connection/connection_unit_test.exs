@@ -39,6 +39,22 @@ defmodule AshScylla.ConnectionUnitTest do
   end
 
   describe "typed_params/1 with struct types" do
+    test "types scalar values" do
+      assert Connection.typed_params(["text", 42, 1.5, true, false, nil]) == [
+               {"text", "text"},
+               {"bigint", 42},
+               {"double", 1.5},
+               {"boolean", true},
+               {"boolean", false},
+               nil
+             ]
+    end
+
+    test "types decimal values" do
+      decimal = Decimal.new("12.50")
+      assert Connection.typed_params([decimal]) == [{"decimal", decimal}]
+    end
+
     test "MapSet is tagged as set<text>" do
       params = Connection.typed_params([MapSet.new(["a", "b"])])
       assert match?([{"set<text>", _}], params)
@@ -174,6 +190,43 @@ defmodule AshScylla.ConnectionUnitTest do
       assert_raise RuntimeError, ~r/No AshScylla connection found/, fn ->
         Connection.prepare!(:non_existent_name, "SELECT 1")
       end
+    end
+  end
+
+  describe "query!/4" do
+    test "raises for atom name without connection" do
+      assert_raise RuntimeError, ~r/No AshScylla connection found/, fn ->
+        Connection.query!(:non_existent_query_name, "SELECT 1", [])
+      end
+    end
+  end
+
+  describe "handle_call/3 keyspace validation" do
+    test "releases a nil keyspace as a no-op" do
+      state = %Connection{keyspace: nil}
+      assert {:reply, :ok, ^state} = Connection.handle_call(:release_keyspace, nil, state)
+    end
+
+    test "reports missing keyspace when ensuring one" do
+      state = %Connection{keyspace: nil}
+
+      assert {:reply, {:error, :no_keyspace_configured}, ^state} =
+               Connection.handle_call(:ensure_keyspace, nil, state)
+    end
+
+    test "raises while processing an invalid configured keyspace" do
+      state = %Connection{conn: nil, keyspace: "bad keyspace", cluster?: false}
+
+      assert_raise ArgumentError, ~r/Invalid CQL identifier/, fn ->
+        Connection.handle_call(:ensure_keyspace, nil, state)
+      end
+    end
+
+    test "returns the execution error for an invalid replacement keyspace" do
+      state = %Connection{conn: nil, cluster?: false}
+
+      assert {:reply, {:error, %Xandra.ConnectionError{}}, ^state} =
+               Connection.handle_call({:set_keyspace, "bad keyspace"}, nil, state)
     end
   end
 

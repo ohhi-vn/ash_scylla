@@ -8,7 +8,7 @@ defmodule MyApp.ProdRepoTest do
     end
 
     test "uses AshScylla.Repo behaviour" do
-      assert function_exported?(MyApp.ProdRepo, :__info__, 1)
+      assert function_exported?(Code.ensure_loaded!(MyApp.ProdRepo), :__info__, 1)
     end
   end
 end

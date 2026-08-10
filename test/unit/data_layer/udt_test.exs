@@ -55,6 +55,12 @@ defmodule AshScylla.DataLayer.UdtTest do
       assert cql =~ "ADD phone TEXT"
     end
 
+    test "generates ALTER TYPE RENAME with atom type name" do
+      cql = Udt.alter_type_cql(:my_type, :rename, new_name: :old_name)
+      assert cql =~ "ALTER TYPE my_type"
+      assert cql =~ "RENAME old_name TO new_name"
+    end
+
     test "generates ALTER TYPE RENAME" do
       cql = Udt.alter_type_cql("my_type", :rename, new_name: :old_name)
       assert cql =~ "ALTER TYPE my_type"

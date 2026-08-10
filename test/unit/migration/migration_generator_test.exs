@@ -210,6 +210,34 @@ defmodule AshScylla.MigrationGeneratorTest do
     end
   end
 
+  describe "migration generation across the configured test domains" do
+    test "resources from TestDomain and SecondTestDomain get distinct snapshot files" do
+      tmp = briefly_make_snapshot_dir()
+
+      AshScylla.MigrationGenerator.generate(
+        domains: [AshScylla.TestDomain, AshScylla.SecondTestDomain],
+        snapshot_path: tmp,
+        snapshots_only: true
+      )
+
+      test_repo_snapshots =
+        Path.join(tmp, "test_repo")
+        |> File.ls!()
+        |> Enum.filter(&String.ends_with?(&1, ".json"))
+
+      # All resources are written under the default repo directory (TestRepo),
+      # regardless of which domain they belong to.
+      assert length(test_repo_snapshots) == 6
+
+      names = Enum.map(test_repo_snapshots, &Path.rootname/1)
+
+      assert "ash_scylla.test_resource" in names
+      assert "ash_scylla.second_test_domain.resource" in names
+      assert "ash_scylla.second_test_domain.repo_backed_resource" in names
+      assert length(Enum.uniq(names)) == 6
+    end
+  end
+
   defp timestamp_prefix do
     {{y, m, d}, {hh, mm, ss}} = :calendar.universal_time()
     "#{y}#{pad(m)}#{pad(d)}#{pad(hh)}#{pad(mm)}#{pad(ss)}"

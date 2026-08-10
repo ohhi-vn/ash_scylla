@@ -1,7 +1,13 @@
 defmodule AshScylla.MixHelpersTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
+
+  import ExUnit.CaptureIO
 
   alias AshScylla.MixHelpers
+
+  defmodule FakeDomain do
+    def domain?, do: true
+  end
 
   describe "maybe_atomize/2" do
     test "converts string value to module atom" do
@@ -81,6 +87,23 @@ defmodule AshScylla.MixHelpersTest do
       domains = MixHelpers.project_domains()
       assert is_list(domains)
     end
+
+    test "skips configured modules that are not Ash domains" do
+      original = Application.get_env(:ash_scylla, :ash_domains)
+
+      Application.put_env(:ash_scylla, :ash_domains, [AshScylla.TestDomain, Mix])
+
+      output =
+        capture_io(fn ->
+          domains = MixHelpers.project_domains()
+          assert AshScylla.TestDomain in domains
+          refute Mix in domains
+        end)
+
+      assert output =~ "Skipping Mix: not an Ash domain"
+
+      Application.put_env(:ash_scylla, :ash_domains, original)
+    end
   end
 
   describe "ash_domain?/1" do
@@ -116,9 +139,57 @@ defmodule AshScylla.MixHelpersTest do
   end
 
   describe "find_all_resources/0" do
-    test "returns an empty list when no resources exist" do
+    test "returns a list of AshScylla resources from configured domains" do
       resources = MixHelpers.find_all_resources()
       assert is_list(resources)
+      assert AshScylla.TestResource in resources
+    end
+
+    test "falls back to scanning lib files when no domains are configured" do
+      original = Application.get_env(:ash_scylla, :ash_domains)
+
+      Application.put_env(:ash_scylla, :ash_domains, [])
+
+      resources = MixHelpers.find_all_resources()
+      assert resources == MixHelpers.scan_files_for_resources()
+
+      Application.put_env(:ash_scylla, :ash_domains, original)
+    end
+
+    test "skips domains whose resources cannot be introspected" do
+      original = Application.get_env(:ash_scylla, :ash_domains)
+
+      Application.put_env(:ash_scylla, :ash_domains, [AshScylla.TestDomain, FakeDomain])
+
+      output =
+        capture_io(fn ->
+          resources = MixHelpers.find_all_resources()
+          assert is_list(resources)
+        end)
+
+      assert output =~ "Skipping domain"
+
+      Application.put_env(:ash_scylla, :ash_domains, original)
+    end
+  end
+
+  describe "find_default_repo/0" do
+    test "returns the repo of the first discovered resource" do
+      assert MixHelpers.find_default_repo() == AshScylla.TestRepo
+    end
+
+    test "raises Mix.Error when no repos are configured" do
+      original = Application.get_env(:ash_scylla, :ash_domains)
+
+      Application.put_env(:ash_scylla, :ash_domains, [])
+
+      assert_raise Mix.Error, ~r/No repo found/, fn ->
+        capture_io(fn ->
+          MixHelpers.find_default_repo()
+        end)
+      end
+
+      Application.put_env(:ash_scylla, :ash_domains, original)
     end
   end
 

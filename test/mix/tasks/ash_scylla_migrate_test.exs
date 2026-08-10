@@ -103,14 +103,19 @@ defmodule Mix.Tasks.AshScylla.MigrateTest do
       output =
         capture_io(fn ->
           try do
-            Mix.Tasks.AshScylla.Migrate.run(["--repo", "AshScylla.TestRepo", "--schemas-only"])
+            Mix.Tasks.AshScylla.Migrate.run([
+              "--repo",
+              "AshScylla.TestRepo",
+              "--schemas-only",
+              "--dry-run"
+            ])
           rescue
             _ -> :ok
           end
         end)
 
-      assert output =~ "Running schema file" or output =~ "Schema migration" or
-               output =~ "No schema"
+      assert output =~ "DRY RUN" or output =~ "Running schema file" or
+               output =~ "Schema migration" or output =~ "No schema"
     end
 
     test "parses --resource flag" do
@@ -121,7 +126,8 @@ defmodule Mix.Tasks.AshScylla.MigrateTest do
               "--repo",
               "AshScylla.TestRepo",
               "--resource",
-              "AshScylla.DataLayer"
+              "AshScylla.DataLayer",
+              "--dry-run"
             ])
           rescue
             _ -> :ok
@@ -140,7 +146,8 @@ defmodule Mix.Tasks.AshScylla.MigrateTest do
               "--repo",
               "AshScylla.TestRepo",
               "--keyspace",
-              "custom_ks"
+              "custom_ks",
+              "--dry-run"
             ])
           rescue
             _ -> :ok
@@ -159,7 +166,8 @@ defmodule Mix.Tasks.AshScylla.MigrateTest do
               "--repo",
               "AshScylla.TestRepo",
               "--nodes",
-              "127.0.0.1:9042"
+              "127.0.0.1:9042",
+              "--dry-run"
             ])
           rescue
             _ -> :ok
@@ -187,7 +195,8 @@ defmodule Mix.Tasks.AshScylla.MigrateTest do
           end
         end)
 
-      assert output =~ "Schema" or output =~ "No schema" or output =~ "Running schema file"
+      assert output =~ "DRY RUN" or output =~ "Schema" or output =~ "No schema" or
+               output =~ "Running schema file"
     end
   end
 

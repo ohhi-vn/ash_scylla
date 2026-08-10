@@ -25,7 +25,8 @@ defmodule AshScylla.MixProject do
       test_coverage: [
         tool: Mix.Tasks.Test.Coverage,
         output: "cover",
-        summary: [threshold: 85]
+        summary: [threshold: 85],
+        ignore_modules: []
       ],
       consolidate_protocols: Mix.env() != :test,
       test_elixirc_options: [debug_info: true]

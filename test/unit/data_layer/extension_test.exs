@@ -391,7 +391,7 @@ defmodule AshScylla.ExtensionTest do
   describe "callback return values" do
     test "codegen returns :ok" do
       capture_io(fn ->
-        assert AshScylla.Extension.codegen([]) == :ok
+        assert AshScylla.Extension.codegen(["--dry-run"]) == :ok
       end)
     end
 

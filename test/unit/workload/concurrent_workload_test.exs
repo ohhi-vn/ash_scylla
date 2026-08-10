@@ -300,12 +300,34 @@ defmodule AshScylla.WorkloadTest do
 
   describe "prepared statement cache under concurrent access" do
     setup do
-      case PreparedStatementCache.start_link([]) do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
-      end
-
+      ensure_cache_started()
       :ok
+    end
+
+    # Starts the cache GenServer, retrying briefly while the previous test's
+    # instance (which is linked to that test's process and dies with it) is
+    # still being torn down. In that window `start_link/1` reports the dying
+    # pid as `:already_started`, and calling it would fail with "no process".
+    defp ensure_cache_started(attempts \\ 20) do
+      case PreparedStatementCache.start_link([]) do
+        {:ok, _pid} ->
+          :ok
+
+        {:error, {:already_started, pid}} when is_pid(pid) ->
+          if Process.alive?(pid) do
+            :ok
+          else
+            if attempts > 0 do
+              Process.sleep(10)
+              ensure_cache_started(attempts - 1)
+            else
+              :ok
+            end
+          end
+
+        {:error, _} ->
+          :ok
+      end
     end
 
     test "concurrent prepare calls don't crash" do

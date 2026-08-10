@@ -29,4 +29,36 @@ defmodule AshScylla.MigratorUnitTest do
       end
     end
   end
+
+  describe "run/3" do
+    test "returns an error tuple for unreachable single binary node" do
+      assert {:error, {1, %Xandra.ConnectionError{}}} =
+               Migrator.run("127.0.0.1:1", ["SELECT 1"], connect_timeout: 100)
+    end
+
+    test "returns an error tuple for unreachable node list" do
+      assert {:error, {1, %Xandra.ConnectionError{}}} =
+               Migrator.run(["127.0.0.1:1"], ["SELECT 1"], connect_timeout: 100)
+    end
+
+    test "returns an error tuple with keyspace option on unreachable nodes" do
+      assert {:error, {1, %Xandra.ConnectionError{}}} =
+               Migrator.run(["127.0.0.1:1"], ["SELECT 1"],
+                 keyspace: "migrator_test_ks",
+                 connect_timeout: 100
+               )
+    end
+
+    test "returns {:ok, []} for empty statements without querying" do
+      assert {:ok, []} = Migrator.run(["127.0.0.1:1"], [], connect_timeout: 100)
+    end
+  end
+
+  describe "run!/3" do
+    test "raises when a statement fails" do
+      assert_raise RuntimeError, ~r/Migration statement 1 failed/, fn ->
+        Migrator.run!(["127.0.0.1:1"], ["SELECT 1"], connect_timeout: 100)
+      end
+    end
+  end
 end

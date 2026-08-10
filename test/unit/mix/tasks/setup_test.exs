@@ -9,7 +9,7 @@ defmodule Mix.Tasks.AshScylla.SetupTest do
     end
 
     test "run/1 is exported" do
-      assert function_exported?(Mix.Tasks.AshScylla.Setup, :run, 1)
+      assert function_exported?(Code.ensure_loaded!(Mix.Tasks.AshScylla.Setup), :run, 1)
     end
   end
 end

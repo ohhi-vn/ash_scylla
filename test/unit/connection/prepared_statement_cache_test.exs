@@ -277,4 +277,40 @@ defmodule AshScylla.PreparedStatementCacheTest do
       assert PreparedStatementCache.max_cache_size() == 10_000
     end
   end
+
+  describe "GenServer callback edge cases" do
+    test "cleanup keeps an empty cache unchanged" do
+      {:ok, tid} = PreparedStatementCache.table()
+      state = %{table: tid}
+
+      assert {:noreply, ^state} = PreparedStatementCache.handle_info(:cleanup, state)
+      assert PreparedStatementCache.size() == 0
+    end
+
+    test "evict_oldest is a no-op for zero entries" do
+      {:ok, tid} = PreparedStatementCache.table()
+      assert PreparedStatementCache.evict_oldest(tid, 0) == :ok
+      assert PreparedStatementCache.evict_oldest(tid, -1) == :ok
+    end
+
+    test "evict_oldest tolerates an invalid table" do
+      assert_raise ArgumentError, fn ->
+        PreparedStatementCache.evict_oldest(:invalid_table, 1)
+      end
+    end
+
+    test "invalidates an exact repo/keyspace entry through the callback" do
+      key = {MockRepo, "SELECT 1", "ks", []}
+      assert {:ok, _} = PreparedStatementCache.prepare(MockRepo, "SELECT 1", keyspace: "ks")
+
+      assert :ok =
+               GenServer.call(
+                 PreparedStatementCache,
+                 {:invalidate, MockRepo, "SELECT 1", [keyspace: "ks"]}
+               )
+
+      {:ok, tid} = PreparedStatementCache.table()
+      assert :ets.lookup(tid, key) == []
+    end
+  end
 end

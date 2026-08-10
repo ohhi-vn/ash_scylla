@@ -1184,4 +1184,57 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
       assert String.contains?(cql, "LIMIT ?")
     end
   end
+
+  describe "select and aggregate clause edge cases" do
+    defp query_with_select_options(select, distinct, aggregates) do
+      %AshScylla.Query{
+        resource: nil,
+        repo: nil,
+        table: "users",
+        filters: [],
+        sorts: [],
+        limit: nil,
+        select: select,
+        distinct: distinct,
+        keyset: nil,
+        aggregates: aggregates,
+        group_by: []
+      }
+    end
+
+    test "uses SELECT * for nil select and aggregate options" do
+      assert {:ok, {"SELECT * FROM users", []}} =
+               QueryBuilder.build_optimized_query(query_with_select_options(nil, nil, nil))
+    end
+
+    test "uses SELECT * for an empty select list" do
+      assert {:ok, {"SELECT * FROM users", []}} =
+               QueryBuilder.build_optimized_query(query_with_select_options([], nil, nil))
+    end
+
+    test "builds distinct column selection" do
+      query = query_with_select_options(nil, %{column: :status, distinct?: true}, nil)
+      assert {:ok, {"SELECT DISTINCT status FROM users", []}} =
+               QueryBuilder.build_optimized_query(query)
+    end
+
+    test "builds distinct selection from a list" do
+      query = query_with_select_options(nil, [:status, :org_id], nil)
+      assert {:ok, {"SELECT DISTINCT status, org_id FROM users", []}} =
+               QueryBuilder.build_optimized_query(query)
+    end
+
+    test "builds average, minimum, and maximum aggregates" do
+      aggregates = [
+        %{kind: :avg, name: :average_age, field: :age},
+        %{kind: :min, name: :minimum_age, field: :age},
+        %{kind: :max, name: :maximum_age, field: :age}
+      ]
+
+      query = query_with_select_options(nil, nil, aggregates)
+      {:ok, {cql, []}} = QueryBuilder.build_optimized_query(query)
+      assert cql ==
+               "SELECT AVG(age) AS average_age, MIN(age) AS minimum_age, MAX(age) AS maximum_age FROM users"
+    end
+  end
 end
