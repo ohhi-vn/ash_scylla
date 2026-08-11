@@ -72,21 +72,13 @@ defmodule AshScylla.SchemaLoader do
   defp load_module(module, path) do
     case Code.ensure_loaded(module) do
       {:module, ^module} ->
-        if function_exported?(module, :change, 0) do
-          {:ok, module.change() |> AshScylla.Schema.flatten()}
-        else
-          {:error, :no_change_function}
-        end
+        load_loaded_module(module)
 
       {:error, :nofile} ->
         # Not yet loaded: require the file (defines the module once).
         case Code.require_file(path) do
           [{^module, _}] ->
-            if function_exported?(module, :change, 0) do
-              {:ok, module.change() |> AshScylla.Schema.flatten()}
-            else
-              {:error, :no_change_function}
-            end
+            load_loaded_module(module)
 
           [] ->
             {:error, :no_module_loaded}
@@ -97,6 +89,23 @@ defmodule AshScylla.SchemaLoader do
     end
   rescue
     error -> {:error, error}
+  end
+
+  defp load_loaded_module(module) do
+    cond do
+      not function_exported?(module, :change, 0) ->
+        {:error, :no_change_function}
+
+      not implements_schema?(module) ->
+        {:error, :not_ash_scylla_schema}
+
+      true ->
+        {:ok, module.change() |> AshScylla.Schema.flatten()}
+    end
+  end
+
+  defp implements_schema?(module) do
+    AshScylla.Schema in Keyword.get(module.module_info(:attributes), :behaviour, [])
   end
 
   # Extracts the `defmodule X do` name from a migration file's source.

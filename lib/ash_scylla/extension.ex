@@ -300,6 +300,9 @@ defmodule AshScylla.Extension do
       {:ok, statements} ->
         statements
 
+      {:error, :not_ash_scylla_schema} ->
+        []
+
       {:error, reason} ->
         Logger.warning("Failed to load migration #{file}: #{inspect(reason)}")
         []

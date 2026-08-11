@@ -17,6 +17,8 @@ defmodule Mix.Tasks.AshScylla.MigrateTest do
 
       File.write!(tmp_file, """
       defmodule AshScylla.MigrateTest.ValidSchema do
+        use AshScylla.Schema
+
         def change do
           ["CREATE TABLE IF NOT EXISTS migrate_test (id UUID PRIMARY KEY)"]
         end
@@ -67,6 +69,8 @@ defmodule Mix.Tasks.AshScylla.MigrateTest do
 
       File.write!(tmp_file, """
       defmodule AshScylla.MigrateTest.Empty do
+        use AshScylla.Schema
+
         def change do
           []
         end
@@ -255,6 +259,8 @@ defmodule Mix.Tasks.AshScylla.MigrateTest do
 
       File.write!(tmp_file, """
       defmodule AshScylla.MigrateExecTest.Schema do
+        use AshScylla.Schema
+
         def change do
           [
             "CREATE TABLE IF NOT EXISTS exec_test (id UUID PRIMARY KEY)",

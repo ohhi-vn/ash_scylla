@@ -67,6 +67,27 @@ defmodule AshScylla.SchemaLoaderTest do
       File.rm_rf!(tmp_dir)
     end
 
+    test "ignores modules for another migration schema" do
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "ash_scylla_test_#{:erlang.unique_integer([:positive])}")
+
+      tmp_file = Path.join(tmp_dir, "clickhouse_schema.ex")
+
+      File.mkdir_p!(tmp_dir)
+
+      File.write!(tmp_file, """
+      defmodule AshScylla.SchemaLoaderTest.ForeignSchema do
+        @behaviour GenServer
+
+        def change, do: ["CREATE TABLE activities (...)"]
+      end
+      """)
+
+      assert {:error, :not_ash_scylla_schema} = AshScylla.SchemaLoader.load(tmp_file)
+
+      File.rm_rf!(tmp_dir)
+    end
+
     test "returns error for non-existent file" do
       assert {:error, _} = AshScylla.SchemaLoader.load("/nonexistent/path/schema.ex")
     end
