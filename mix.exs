@@ -4,7 +4,7 @@ defmodule AshScylla.MixProject do
   def project do
     [
       app: :ash_scylla,
-      version: "1.7.1",
+      version: "1.7.2",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -69,8 +69,7 @@ defmodule AshScylla.MixProject do
         "guides/DEV_GUIDE.md",
         "guides/PRODUCTION_GUIDE.md",
         "guides/IMPLEMENTATION_SUMMARY.md",
-        "guides/ERROR_HANDLING.md",
-        "guides/CHANGELOG.md"
+        "guides/ERROR_HANDLING.md"
       ],
       groups_for_modules: [
         Core: [

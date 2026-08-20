@@ -294,13 +294,19 @@ defmodule AshScylla.DataLayer.QueryBuilder do
         {:ok, {"", []}}
 
       _ ->
-        Enum.reduce_while(filters, {:ok, {[], []}}, fn filter, {:ok, {acc_c, acc_p}} ->
-          case filter_to_cql(filter, uuid_fields, cql_types) do
+        filters
+        |> Enum.with_index()
+        |> Enum.reduce_while({:ok, {[], []}}, fn {filter, index},
+                                                 {:ok, {acc_c, acc_p}} ->
+          case split_aware(filter, List.delete_at(filters, index), uuid_fields, cql_types) do
             {:error, {:unknown_filter, unknown}} ->
               {:halt, {:error, {:unknown_filter, unknown}}}
 
             {c, p} ->
               {:cont, {:ok, {[c | acc_c], acc_p ++ p}}}
+
+            %AshScylla.Error{} = e ->
+              {:halt, {:split_error, e}}
           end
         end)
         |> case do
@@ -312,6 +318,9 @@ defmodule AshScylla.DataLayer.QueryBuilder do
               |> IO.iodata_to_binary()
 
             {:ok, {joined_clauses, params}}
+
+          {:split_error, e} ->
+            raise e
 
           {:error, _} = error ->
             error
@@ -647,6 +656,73 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     |> maybe_iodata_to_binary()
   end
 
+  # An AND combines its operands, but if one operand contains an OR that must
+  # be split into two queries, the OTHER operand must be preserved in both split
+  # branches — otherwise the AND conjunct is silently dropped and the query
+  # returns a broader (and potentially unauthorized) result set than intended.
+  def filter_to_cql(%{op: :and, left: left, right: right}, uuid_fields, cql_types) do
+    left_result = split_aware(left, right, uuid_fields, cql_types)
+    right_result = split_aware(right, left, uuid_fields, cql_types)
+
+    case {left_result, right_result} do
+      {%AshScylla.Error{} = e, _} -> raise e
+      {_, %AshScylla.Error{} = e} -> raise e
+      {{:error, _} = error, _} -> error
+      {_, {:error, _} = error} -> error
+      {{left_cql, left_params}, {right_cql, right_params}} ->
+        {[left_cql, " AND ", right_cql], left_params ++ right_params}
+    end
+    |> maybe_iodata_to_binary()
+  end
+
+  # Translates a single AND operand, augmenting any OR-split raised within it
+  # with the sibling conjunct(s) so they are not lost when the query is re-run
+  # per branch. Non-split errors pass through untouched.
+  defp split_aware(operand, siblings, uuid_fields, cql_types) when is_list(siblings) do
+    filter_to_cql(operand, uuid_fields, cql_types)
+  rescue
+    e in AshScylla.Error ->
+      case e.or_split do
+        {or_left, or_right} ->
+          %{
+            e
+            | or_split: {
+                and_with_all(siblings, or_left),
+                and_with_all(siblings, or_right)
+              }
+          }
+
+        nil ->
+          reraise e, __STACKTRACE__
+      end
+  end
+
+  defp split_aware(operand, sibling, uuid_fields, cql_types) do
+    filter_to_cql(operand, uuid_fields, cql_types)
+  rescue
+    e in AshScylla.Error ->
+      case e.or_split do
+        {or_left, or_right} ->
+          %{
+            e
+            | or_split: {
+                %{op: :and, left: sibling, right: or_left},
+                %{op: :and, left: sibling, right: or_right}
+              }
+          }
+
+        nil ->
+          reraise e, __STACKTRACE__
+      end
+  end
+
+  # Wraps an expression with each remaining conjunct, preserving left-to-right
+  # order: and_with_all([A, B], C) == A and B and C.
+  defp and_with_all([], expr), do: expr
+
+  defp and_with_all([sibling | rest], expr),
+    do: and_with_all(rest, %{op: :and, left: sibling, right: expr})
+
   def filter_to_cql(%{op: op, left: left, right: right}, uuid_fields, cql_types) do
     case filter_to_cql(left, uuid_fields, cql_types) do
       {:error, _} = error ->
@@ -659,9 +735,6 @@ defmodule AshScylla.DataLayer.QueryBuilder do
 
           {right_cql, right_params} ->
             case op do
-              :and ->
-                {[left_cql, " AND ", right_cql], left_params ++ right_params}
-
               :or ->
                 # Try to rewrite same-field OR as IN (CQL supports IN on partition/clustering keys).
                 case rewrite_or_to_in(left, right) do

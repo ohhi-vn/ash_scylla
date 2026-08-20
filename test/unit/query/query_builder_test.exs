@@ -1185,6 +1185,67 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
     end
   end
 
+  describe "OR split preserves sibling AND conjuncts" do
+    defp base_or_split_query(filters) do
+      %AshScylla.Query{
+        resource: nil,
+        repo: nil,
+        table: "game_members",
+        filters: filters,
+        sorts: [],
+        limit: nil,
+        select: nil,
+        tenant: nil
+      }
+    end
+
+    test "top-level sibling AND conjunct is preserved in both OR split branches" do
+      game_filter = %{operator: :eq, left: %{name: :game_id}, right: %{value: "game-1"}}
+      privacy_public = %{operator: :eq, left: %Ash.Query.Ref{attribute: :privacy}, right: %{value: :public}}
+      privacy_friends = %{operator: :eq, left: %Ash.Query.Ref{attribute: :privacy}, right: %{value: :friends}}
+      or_expr = %{op: :or, left: privacy_public, right: privacy_friends}
+
+      query = base_or_split_query([game_filter, or_expr])
+
+      error = assert_raise AshScylla.Error, fn ->
+        QueryBuilder.build_optimized_query(query)
+      end
+
+      assert %{or_split: {left_branch, right_branch}} = error
+      assert left_branch == %{op: :and, left: game_filter, right: privacy_public}
+      assert right_branch == %{op: :and, left: game_filter, right: privacy_friends}
+    end
+
+    test "nested AND preserves the non-OR operand in both OR split branches" do
+      game_filter = %{operator: :eq, left: %{name: :game_id}, right: %{value: "game-1"}}
+      privacy_public = %{operator: :eq, left: %Ash.Query.Ref{attribute: :privacy}, right: %{value: :public}}
+      privacy_friends = %{operator: :eq, left: %Ash.Query.Ref{attribute: :privacy}, right: %{value: :friends}}
+      or_expr = %{op: :or, left: privacy_public, right: privacy_friends}
+      and_expr = %{op: :and, left: game_filter, right: or_expr}
+
+      query = base_or_split_query([and_expr])
+
+      error = assert_raise AshScylla.Error, fn ->
+        QueryBuilder.build_optimized_query(query)
+      end
+
+      assert %{or_split: {left_branch, right_branch}} = error
+      assert left_branch == %{op: :and, left: game_filter, right: privacy_public}
+      assert right_branch == %{op: :and, left: game_filter, right: privacy_friends}
+    end
+
+    test "branch filters build correct CQL with the sibling conjunct" do
+      game_filter = %{operator: :eq, left: %{name: :game_id}, right: %{value: "game-1"}}
+      privacy_public = %{operator: :eq, left: %Ash.Query.Ref{attribute: :privacy}, right: %{value: :public}}
+      privacy_friends = %{operator: :eq, left: %Ash.Query.Ref{attribute: :privacy}, right: %{value: :friends}}
+
+      branch = %{op: :and, left: game_filter, right: privacy_public}
+      {:ok, {cql, params}} = QueryBuilder.build_optimized_query(base_or_split_query([branch]))
+      assert cql == "SELECT * FROM game_members WHERE game_id = ? AND privacy = ?"
+      assert params == ["game-1", :public]
+    end
+  end
+
   describe "select and aggregate clause edge cases" do
     defp query_with_select_options(select, distinct, aggregates) do
       %AshScylla.Query{

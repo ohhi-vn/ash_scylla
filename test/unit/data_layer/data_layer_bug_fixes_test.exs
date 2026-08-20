@@ -172,6 +172,40 @@ defmodule AshScylla.DataLayer.BugFixesTest do
              columns: ["id", "from_user_id", "to_user_id", "deleted"]
            }}
 
+        # --- selects for OR split sibling conjunct preservation (Bug 12) ---
+        "SELECT * FROM test_ks.game_members WHERE" <> _ ->
+          rows =
+            case raw_params do
+              ["game-1", :public] ->
+                [
+                  [uuid_bin("550e8400-e29b-41d4-a716-446655440001"), "game-1", "user-a", "public"]
+                ]
+
+              ["game-1", :friends] ->
+                [
+                  [uuid_bin("550e8400-e29b-41d4-a716-446655440002"), "game-1", "user-b", "friends"]
+                ]
+
+              ["game-2", :public] ->
+                [
+                  [uuid_bin("550e8400-e29b-41d4-a716-446655440003"), "game-2", "user-a", "public"]
+                ]
+
+              ["game-2", :friends] ->
+                [
+                  [uuid_bin("550e8400-e29b-41d4-a716-446655440004"), "game-2", "user-d", "friends"]
+                ]
+
+              _ ->
+                []
+            end
+
+          {:ok,
+           %Xandra.Page{
+             content: rows,
+             columns: ["id", "game_id", "user_id", "privacy"]
+           }}
+
         # --- fallback ---
         _ ->
           {:error, %Xandra.Error{reason: :overloaded, message: nil, warnings: []}}
@@ -323,6 +357,36 @@ defmodule AshScylla.DataLayer.BugFixesTest do
       attribute(:from_user_id, :uuid_v7, allow_nil?: false)
       attribute(:to_user_id, :uuid_v7, allow_nil?: false)
       attribute(:deleted, :boolean, allow_nil?: false, default: false)
+    end
+
+    actions do
+      defaults([:create, :read, :update, :destroy])
+    end
+  end
+
+  defmodule GameMemberResource do
+    @moduledoc false
+
+    use Ash.Resource,
+      domain: nil,
+      data_layer: AshScylla.DataLayer
+
+    import AshScylla.DataLayer.Dsl
+
+    scylla do
+      repo(FakeRepo)
+      table("game_members")
+      keyspace("test_ks")
+      consistency(:one)
+      secondary_index(:game_id)
+      secondary_index(:privacy)
+    end
+
+    attributes do
+      uuid_primary_key(:id)
+      attribute(:game_id, :string)
+      attribute(:user_id, :string)
+      attribute(:privacy, :atom)
     end
 
     actions do
@@ -1037,6 +1101,42 @@ defmodule AshScylla.DataLayer.BugFixesTest do
                DataLayer.bulk_create(FloatResource, changesets, return_records?: true)
 
       assert Enum.count(records) == 1
+    end
+  end
+
+  describe "Bug 12: OR split preserves sibling AND conjuncts" do
+    test "run_query merges OR branches without dropping the sibling AND filter" do
+      game_filter = %{operator: :eq, left: %{name: :game_id}, right: %{value: "game-1"}}
+      privacy_public = %{operator: :eq, left: %Ash.Query.Ref{attribute: :privacy}, right: %{value: :public}}
+      privacy_friends = %{operator: :eq, left: %Ash.Query.Ref{attribute: :privacy}, right: %{value: :friends}}
+      or_expr = %{op: :or, left: privacy_public, right: privacy_friends}
+
+      query = %AshScylla.Query{
+        resource: GameMemberResource,
+        repo: FakeRepo,
+        table: "test_ks.game_members",
+        filters: [game_filter, or_expr],
+        sorts: [],
+        limit: nil,
+        select: nil,
+        tenant: nil,
+        context: %{}
+      }
+
+      assert {:ok, records} = DataLayer.run_query(query, GameMemberResource)
+
+      # Only game-1 members; game-2 rows (which the pre-fix bug returned) are excluded.
+      assert length(records) == 2
+      assert Enum.all?(records, &(&1.game_id == "game-1"))
+      ids = Enum.map(records, & &1.id)
+      assert "550E8400-E29B-41D4-A716-446655440001" in ids
+      assert "550E8400-E29B-41D4-A716-446655440002" in ids
+      refute "550E8400-E29B-41D4-A716-446655440003" in ids
+      refute "550E8400-E29B-41D4-A716-446655440004" in ids
+
+      # Both split branches must carry the sibling game_id == "game-1" conjunct.
+      assert_received {:ash_scylla_query, _left_cql, ["game-1", :public], _opts}
+      assert_received {:ash_scylla_query, _right_cql, ["game-1", :friends], _opts}
     end
   end
 end

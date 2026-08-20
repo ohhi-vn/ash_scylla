@@ -265,7 +265,7 @@ children = [
 | **[Production Guide](guides/PRODUCTION_GUIDE.md)** | Multi-node cluster deployment, monitoring, backup, rolling upgrades |
 | **[Implementation Summary](guides/IMPLEMENTATION_SUMMARY.md)** | Technical architecture and module reference |
 | **[Error Handling](guides/ERROR_HANDLING.md)** | Error types, common scenarios |
-| **[Changelog](guides/CHANGELOG.md)** | Version history and release notes |
+| **[Changelog](CHANGELOG.md)** | Version history and release notes |
 | **[API Documentation](https://hexdocs.pm/ash_scylla)** | Module documentation (when published) |
 
 ---

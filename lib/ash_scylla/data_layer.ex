@@ -508,8 +508,13 @@ defmodule AshScylla.DataLayer do
 
           with {:ok, left_records} <- run_query(left_query, resource),
                {:ok, right_records} <- run_query(right_query, resource) do
-            # Merge and deduplicate by id
-            merged = (left_records ++ right_records) |> Enum.uniq_by(& &1.id)
+            # Merge and deduplicate by the resource's primary key
+            pkey = Ash.Resource.Info.primary_key(resource)
+
+            merged =
+              (left_records ++ right_records)
+              |> Enum.uniq_by(&Map.take(&1, pkey))
+
             {:ok, merged}
           end
 
