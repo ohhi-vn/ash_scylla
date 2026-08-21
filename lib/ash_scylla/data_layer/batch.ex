@@ -145,6 +145,10 @@ defmodule AshScylla.DataLayer.Batch do
         end,
         max_concurrency: max_concurrency,
         ordered: false,
+        # Generous per-chunk timeout: under heavy load (e.g. parallel test
+        # suites) a chunk of up to 500 statements can take a while, and the
+        # default 5s Task timeout surfaces as {:batch_execution_failed, :timeout}.
+        timeout: 30_000,
         on_timeout: :kill_task
       )
       |> Enum.reduce_while({:ok, []}, fn

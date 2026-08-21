@@ -4,7 +4,7 @@ defmodule AshScylla.MixProject do
   def project do
     [
       app: :ash_scylla,
-      version: "1.7.2",
+      version: "1.8.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -26,7 +26,14 @@ defmodule AshScylla.MixProject do
         tool: Mix.Tasks.Test.Coverage,
         output: "cover",
         summary: [threshold: 85],
-        ignore_modules: []
+        ignore_modules: [
+          AshScylla.MixHelpers,
+          ~r"^AshScylla\.Mix\.Tasks\.",
+          AshScylla.NewTemplate,
+          AshScylla.ResourceGenerator,
+          AshScylla.MigrationGenerator,
+          AshScylla.MigrationGenerator.Operation
+        ]
       ],
       consolidate_protocols: Mix.env() != :test,
       test_elixirc_options: [debug_info: true]
@@ -96,7 +103,8 @@ defmodule AshScylla.MixProject do
         ],
         "Repo Helpers": [
           AshScylla.Repo,
-          AshScylla.Release
+          AshScylla.Release,
+          AshScylla.Extension
         ],
         Performance: [
           AshScylla.PreparedStatementCache
@@ -135,7 +143,11 @@ defmodule AshScylla.MixProject do
     [
       {:ash, "~> 3.30"},
       {:xandra, "~> 0.19"},
+      # Dev/test-only pins with override to keep dependency resolution stable
+      # for credo/dialyzer tooling without affecting the published package.
       {:decimal, "~> 3.1", override: true, only: [:dev, :test]},
+      # Dev/test-only pin with override to keep dependency resolution stable
+      # for credo/dialyzer tooling without affecting the published package.
       {:hackney, "~> 4.3", override: true, only: [:dev, :test]},
       {:testcontainer_ex, "~> 0.9", only: [:test], runtime: false},
       {:benchee, "~> 1.5", only: [:dev, :test]},
@@ -156,10 +168,11 @@ defmodule AshScylla.MixProject do
       "test.unit": ["test --exclude integration"],
       "test.integration": ["test --only integration"],
       "test.integration.direct": [
+        "run --eval \"System.put_env(\\\"SCYLLA_DIRECT\\\", \\\"1\\\")\"",
         "test --only integration"
       ],
       "test.integration.apple_container": [
-        "run --eval \"System.put_env(\"CONTAINER_ENGINE\", \"apple_container\")\"",
+        "run --eval \"System.put_env(\\\"CONTAINER_ENGINE\\\", \\\"apple_container\\\")\"",
         "test --only integration"
       ],
       # Testing & Coverage

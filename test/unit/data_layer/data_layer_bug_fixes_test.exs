@@ -183,7 +183,12 @@ defmodule AshScylla.DataLayer.BugFixesTest do
 
               ["game-1", :friends] ->
                 [
-                  [uuid_bin("550e8400-e29b-41d4-a716-446655440002"), "game-1", "user-b", "friends"]
+                  [
+                    uuid_bin("550e8400-e29b-41d4-a716-446655440002"),
+                    "game-1",
+                    "user-b",
+                    "friends"
+                  ]
                 ]
 
               ["game-2", :public] ->
@@ -193,7 +198,12 @@ defmodule AshScylla.DataLayer.BugFixesTest do
 
               ["game-2", :friends] ->
                 [
-                  [uuid_bin("550e8400-e29b-41d4-a716-446655440004"), "game-2", "user-d", "friends"]
+                  [
+                    uuid_bin("550e8400-e29b-41d4-a716-446655440004"),
+                    "game-2",
+                    "user-d",
+                    "friends"
+                  ]
                 ]
 
               _ ->
@@ -1107,8 +1117,19 @@ defmodule AshScylla.DataLayer.BugFixesTest do
   describe "Bug 12: OR split preserves sibling AND conjuncts" do
     test "run_query merges OR branches without dropping the sibling AND filter" do
       game_filter = %{operator: :eq, left: %{name: :game_id}, right: %{value: "game-1"}}
-      privacy_public = %{operator: :eq, left: %Ash.Query.Ref{attribute: :privacy}, right: %{value: :public}}
-      privacy_friends = %{operator: :eq, left: %Ash.Query.Ref{attribute: :privacy}, right: %{value: :friends}}
+
+      privacy_public = %{
+        operator: :eq,
+        left: %Ash.Query.Ref{attribute: :privacy},
+        right: %{value: :public}
+      }
+
+      privacy_friends = %{
+        operator: :eq,
+        left: %Ash.Query.Ref{attribute: :privacy},
+        right: %{value: :friends}
+      }
+
       or_expr = %{op: :or, left: privacy_public, right: privacy_friends}
 
       query = %AshScylla.Query{

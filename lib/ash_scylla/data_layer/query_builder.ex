@@ -75,7 +75,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
         aggregates: aggregates,
         group_by: group_by
       }) do
-    Logger.debug("AshScylla: Building optimized query for table #{table}")
+    Logger.debug(fn -> "AshScylla: Building optimized query for table #{table}" end)
 
     # Build SELECT clause (handles select, distinct, and aggregates)
     {select_clause, agg_params} =
@@ -142,7 +142,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
         # (avoids marshaling error: Int32Type expects 4 bytes, bigint is 8)
         {query_acc, params} =
           if limit do
-            Logger.debug("AshScylla: Adding LIMIT #{limit}")
+            Logger.debug(fn -> "AshScylla: Adding LIMIT #{limit}" end)
             {[query_acc, " LIMIT ?"], params ++ [{"int", limit}]}
           else
             {query_acc, params}
@@ -161,9 +161,9 @@ defmodule AshScylla.DataLayer.QueryBuilder do
         # ScyllaDB requires ALLOW FILTERING for queries on secondary indexes.
         query_acc =
           if resource != nil and filters != [] and secondary_index_scan?(resource, filters) do
-            Logger.debug(
+            Logger.debug(fn ->
               "AshScylla: Appending ALLOW FILTERING for secondary index scan on #{table}"
-            )
+            end)
 
             [query_acc, " ALLOW FILTERING"]
           else
@@ -171,8 +171,8 @@ defmodule AshScylla.DataLayer.QueryBuilder do
           end
 
         query = IO.iodata_to_binary(query_acc)
-        Logger.debug("AshScylla: Raw query before parameterization: #{inspect(query)}")
-        Logger.debug("AshScylla: Params: #{inspect(params)}")
+        Logger.debug(fn -> "AshScylla: Raw query before parameterization: #{inspect(query)}" end)
+        Logger.debug(fn -> "AshScylla: Params: #{inspect(params)}" end)
         {:ok, {query, params}}
     end
   end
@@ -191,14 +191,24 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     {"*", []}
   end
 
-  defp build_select_clause(_table, [], nil, aggregates)
+  defp build_select_clause(_table, nil, nil, aggregates)
        when aggregates == nil or aggregates == [] do
     {"*", []}
   end
 
   defp build_select_clause(_table, columns, nil, aggregates)
        when is_list(columns) and (aggregates == nil or aggregates == []) do
-    {Enum.map_join(columns, ", ", &cql_identifier/1), []}
+    case columns do
+      [] -> {"*", []}
+      _ -> {Enum.map_join(columns, ", ", &cql_identifier/1), []}
+    end
+  end
+
+  defp build_select_clause(_table, columns, nil, aggregates)
+       when is_list(columns) and is_list(aggregates) and aggregates != [] do
+    col_clause = Enum.map_join(columns, ", ", &cql_identifier/1)
+
+    {"#{col_clause}, #{build_aggregate_clause(aggregates)}", []}
   end
 
   defp build_select_clause(_table, nil, %{column: column, distinct?: true}, _aggregates) do
@@ -215,11 +225,8 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     {build_aggregate_clause(aggregates), []}
   end
 
-  defp build_select_clause(_table, columns, nil, aggregates)
-       when is_list(columns) and is_list(aggregates) and aggregates != [] do
-    col_clause = Enum.map_join(columns, ", ", &cql_identifier/1)
-
-    {"#{col_clause}, #{build_aggregate_clause(aggregates)}", []}
+  defp build_select_clause(_table, _select, _distinct, _aggregates) do
+    {"*", []}
   end
 
   defp build_aggregate_clause(aggregates) do
@@ -249,11 +256,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     end)
   end
 
-  defp build_select_clause(_table, _select, _distinct, _aggregates) do
-    {"*", []}
-  end
-
-  # ============================================================================
+  # =============================================================================
   # WHERE clause builders
   # ============================================================================
 
@@ -296,8 +299,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
       _ ->
         filters
         |> Enum.with_index()
-        |> Enum.reduce_while({:ok, {[], []}}, fn {filter, index},
-                                                 {:ok, {acc_c, acc_p}} ->
+        |> Enum.reduce_while({:ok, {[], []}}, fn {filter, index}, {:ok, {acc_c, acc_p}} ->
           case split_aware(filter, List.delete_at(filters, index), uuid_fields, cql_types) do
             {:error, {:unknown_filter, unknown}} ->
               {:halt, {:error, {:unknown_filter, unknown}}}
@@ -567,8 +569,14 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     filter_to_cql(%{operator: :in, left: left, right: right}, uuid_fields, cql_types)
   end
 
-  # ── Ash Query Function: fragment ────────────────────────────────────────
-  # fragment("col = ?", value) → raw CQL injection via Xandra
+  def filter_to_cql(
+        %Ash.Query.Call{name: name, args: [left, right], operator?: true},
+        uuid_fields,
+        cql_types
+      ) do
+    filter_to_cql(%{operator: name, left: left, right: right}, uuid_fields, cql_types)
+  end
+
   def filter_to_cql(%{__function__?: true, name: :fragment} = func, _uuid_fields, _cql_types) do
     # Ash.Query.Function.Fragment stores args as [{:raw, str}, {:expr, arg}, ...]
     # We need to convert this into a CQL string with ? placeholders + params
@@ -584,6 +592,65 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     {IO.iodata_to_binary(cql_parts), params}
   end
 
+  def filter_to_cql(
+        %{__function__?: true, name: :starts_with, arguments: [left, right]},
+        uuid_fields,
+        cql_types
+      ) do
+    filter_to_cql(%{operator: :starts_with, left: left, right: right}, uuid_fields, cql_types)
+  end
+
+  def filter_to_cql(
+        %{__function__?: true, name: :ends_with, arguments: [left, right]},
+        uuid_fields,
+        cql_types
+      ) do
+    filter_to_cql(%{operator: :ends_with, left: left, right: right}, uuid_fields, cql_types)
+  end
+
+  # ── Function call: contains(column, value) → column LIKE %value% ───────
+  # Ash passes these as %Ash.Query.Function.Contains{__function__?: true, arguments: [...]}
+  def filter_to_cql(
+        %{__function__?: true, name: :contains, arguments: [left, right]},
+        uuid_fields,
+        cql_types
+      ) do
+    filter_to_cql(%{operator: :contains, left: left, right: right}, uuid_fields, cql_types)
+  end
+
+  # ── Plain map format: contains(column, value) (args key, legacy) ───────
+  def filter_to_cql(%{name: :contains, args: [left, right]}, uuid_fields, cql_types) do
+    filter_to_cql(%{operator: :contains, left: left, right: right}, uuid_fields, cql_types)
+  end
+
+  def filter_to_cql(%{name: :starts_with, args: [left, right]}, uuid_fields, cql_types) do
+    filter_to_cql(%{operator: :starts_with, left: left, right: right}, uuid_fields, cql_types)
+  end
+
+  def filter_to_cql(%{name: :ends_with, args: [left, right]}, uuid_fields, cql_types) do
+    filter_to_cql(%{operator: :ends_with, left: left, right: right}, uuid_fields, cql_types)
+  end
+
+  def filter_to_cql(%{op: op, name: name, right: right}, uuid_fields, cql_types) do
+    filter_to_cql(%{operator: op, left: %{name: name}, right: right}, uuid_fields, cql_types)
+  end
+
+  def filter_to_cql(%Ash.Query.Ref{attribute: attribute}, _uuid_fields, _cql_types) do
+    {cql_identifier(attribute_name(attribute)), []}
+  end
+
+  def filter_to_cql(%{value: value}, _uuid_fields, _cql_types) do
+    # Standalone value (e.g. right side of IN). No column context, so emit the
+    # raw value — connection.typed_params infers the correct type.
+    {"?", [value]}
+  end
+
+  def filter_to_cql(%{name: name}, _uuid_fields, _cql_types) do
+    {cql_identifier(name), []}
+  end
+
+  # ── Ash Query Function: fragment ────────────────────────────────────────
+  # fragment("col = ?", value) → raw CQL injection via Xandra
   # ── Ash Query Functions (eager_evaluate? = false) ────────────────────────
   # now(), today(), ago(), from_now() are evaluated client-side by Ash before
   # reaching the data layer. They arrive as raw DateTime/Date values.
@@ -642,14 +709,6 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     filter_to_cql(%{op: op, left: left, right: right}, uuid_fields, cql_types)
   end
 
-  def filter_to_cql(
-        %Ash.Query.Call{name: name, args: [left, right], operator?: true},
-        uuid_fields,
-        cql_types
-      ) do
-    filter_to_cql(%{operator: name, left: left, right: right}, uuid_fields, cql_types)
-  end
-
   def filter_to_cql(%{expression: expression}, uuid_fields, cql_types) do
     expression
     |> filter_to_cql(uuid_fields, cql_types)
@@ -665,15 +724,267 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     right_result = split_aware(right, left, uuid_fields, cql_types)
 
     case {left_result, right_result} do
-      {%AshScylla.Error{} = e, _} -> raise e
-      {_, %AshScylla.Error{} = e} -> raise e
-      {{:error, _} = error, _} -> error
-      {_, {:error, _} = error} -> error
+      {%AshScylla.Error{} = e, _} ->
+        raise e
+
+      {_, %AshScylla.Error{} = e} ->
+        raise e
+
+      {{:error, _} = error, _} ->
+        error
+
+      {_, {:error, _} = error} ->
+        error
+
       {{left_cql, left_params}, {right_cql, right_params}} ->
         {[left_cql, " AND ", right_cql], left_params ++ right_params}
     end
     |> maybe_iodata_to_binary()
   end
+
+  # ── Plain %{op: ...} expression maps (e.g. from or_split / and_with_all) ──
+  def filter_to_cql(%{op: op, left: left, right: right}, uuid_fields, cql_types) do
+    filter_to_cql(%{operator: op, left: left, right: right}, uuid_fields, cql_types)
+  end
+
+  def filter_to_cql(%{operator: op, left: left, right: right}, uuid_fields, cql_types) do
+    case filter_to_cql(left, uuid_fields, cql_types) do
+      {:error, _} = error ->
+        error
+
+      {left_cql, left_params} ->
+        name = attribute_name(left)
+
+        if op == :or do
+          # Try to rewrite same-field OR as IN (CQL supports IN on partition/clustering keys).
+          case rewrite_or_to_in(left, right) do
+            {:ok, {field_name, values}} ->
+              placeholders =
+                values
+                |> Enum.map(fn _ -> "?" end)
+                |> Enum.intersperse(", ")
+                |> IO.iodata_to_binary()
+
+              {"#{cql_identifier(field_name)} IN (#{placeholders})",
+               Enum.map(values, &typed_param(field_name, &1, uuid_fields, cql_types))}
+
+            :error ->
+              raise AshScylla.Error,
+                message:
+                  "CQL does not support OR across different fields or with non-equality operators. " <>
+                    "Found: or(#{inspect(deeply_unwrap_expr(left))}, #{inspect(deeply_unwrap_expr(right))}). " <>
+                    "Workarounds: (1) redesign the table with a canonical partition key, " <>
+                    "(2) split into two queries and merge in application code, " <>
+                    "or (3) rewrite same-field OR as IN.",
+                or_split: {left, right}
+          end
+        else
+          translate_operator(op, left, right, left_cql, left_params, name, uuid_fields, cql_types)
+        end
+    end
+    |> maybe_iodata_to_binary()
+  end
+
+  # Accept any value that could be a valid CQL parameter (everything except
+  # non-serializable types like functions, PIDs, references, ports).
+  def filter_to_cql(unknown, _uuid_fields, _cql_types)
+      when is_function(unknown) or is_pid(unknown) or is_reference(unknown) or is_port(unknown) do
+    Logger.warning("AshScylla: Unknown filter expression: #{inspect(unknown)}")
+    {:error, {:unknown_filter, unknown}}
+  end
+
+  def filter_to_cql(unknown, _uuid_fields, _cql_types) do
+    # Raw value — return it as a parameter placeholder so parent operators can use it
+    # This handles cases like: %{operator: :eq, left: %{name: :status}, right: "active"}
+    # where the right side is a raw value, not a filter expression.
+    # The value is emitted raw; connection.typed_params infers the correct type.
+    {"?", [unknown]}
+  end
+
+  defp translate_operator(op, _left, right, left_cql, left_params, name, uuid_fields, cql_types) do
+    case filter_to_cql(right, uuid_fields, cql_types) do
+      {:error, {:unknown_filter, raw_value}} ->
+        # Raw value on the right side of an operator (e.g. DateTime, string, number)
+        # Handle operators that need special CQL syntax with raw values
+        case op do
+          :in when is_list(raw_value) ->
+            build_in_clause(
+              left_cql,
+              left_params ++
+                Enum.map(raw_value, &typed_param(name, &1, uuid_fields, cql_types))
+            )
+
+          :in when is_struct(raw_value, MapSet) ->
+            raw_value
+            |> MapSet.to_list()
+            |> Enum.map(&typed_param(name, &1, uuid_fields, cql_types))
+            |> then(&build_in_clause(left_cql, left_params ++ &1))
+
+          :is_nil when raw_value in [true, false] ->
+            if raw_value,
+              do: {"#{left_cql} IS NULL", left_params},
+              else: {"#{left_cql} IS NOT NULL", left_params}
+
+          :starts_with ->
+            {"#{left_cql} LIKE ?", left_params ++ ["%" <> to_raw_string(raw_value)]}
+
+          :ends_with ->
+            {"#{left_cql} LIKE ?", left_params ++ [to_raw_string(raw_value) <> "%"]}
+
+          :contains ->
+            {"#{left_cql} LIKE ?", left_params ++ ["%" <> to_raw_string(raw_value) <> "%"]}
+
+          :contains_key ->
+            {"#{left_cql} CONTAINS KEY ?",
+             left_params ++ [typed_param(name, raw_value, uuid_fields, cql_types)]}
+
+          :exists ->
+            {"#{left_cql} IS NOT NULL", left_params}
+
+          :has ->
+            {"#{left_cql} CONTAINS ?",
+             left_params ++ [typed_param(name, raw_value, uuid_fields, cql_types)]}
+
+          :overlaps ->
+            # overlaps with a single raw value → CONTAINS
+            {"#{left_cql} CONTAINS ?",
+             left_params ++ [typed_param(name, raw_value, uuid_fields, cql_types)]}
+
+          _ ->
+            cql_op = Map.get(@operator_mapping, op, "=")
+            cql_val = Map.get(@operator_values, op, "?")
+
+            {"#{left_cql} #{cql_op} #{cql_val}",
+             left_params ++ [typed_param(name, raw_value, uuid_fields, cql_types)]}
+        end
+
+      {_right_cql, right_params} ->
+        case {op, right} do
+          {:in, %{value: values}} when is_list(values) ->
+            build_in_clause(
+              left_cql,
+              left_params ++ Enum.map(values, &typed_param(name, &1, uuid_fields, cql_types))
+            )
+
+          {:in, values} when is_list(values) ->
+            build_in_clause(
+              left_cql,
+              left_params ++ Enum.map(values, &typed_param(name, &1, uuid_fields, cql_types))
+            )
+
+          {:in, %MapSet{} = values} ->
+            values
+            |> MapSet.to_list()
+            |> Enum.map(&typed_param(name, &1, uuid_fields, cql_types))
+            |> then(&build_in_clause(left_cql, left_params ++ &1))
+
+          {:is_nil, %{value: true}} ->
+            {"#{left_cql} IS NULL", left_params}
+
+          {:is_nil, %{value: false}} ->
+            {"#{left_cql} IS NOT NULL", left_params}
+
+          {:is_nil, true} ->
+            {"#{left_cql} IS NULL", left_params}
+
+          {:is_nil, false} ->
+            {"#{left_cql} IS NOT NULL", left_params}
+
+          {:token, %{value: keys}} when is_list(keys) ->
+            build_token_clause(Enum.map(left_cql, & &1), keys)
+
+          {:token, keys} when is_list(keys) ->
+            build_token_clause(Enum.map(left_cql, & &1), keys)
+
+          {:exists, _} ->
+            {"#{left_cql} IS NOT NULL", left_params}
+
+          {:has, %{value: value}} ->
+            {"#{left_cql} CONTAINS ?",
+             left_params ++ [typed_param(name, value, uuid_fields, cql_types)]}
+
+          {:has, value} ->
+            {"#{left_cql} CONTAINS ?",
+             left_params ++ [typed_param(name, value, uuid_fields, cql_types)]}
+
+          {:overlaps, %{value: values}} when is_list(values) and length(values) == 1 ->
+            {"#{left_cql} CONTAINS ?",
+             left_params ++ Enum.map(values, &typed_param(name, &1, uuid_fields, cql_types))}
+
+          {:overlaps, %{value: values}} when is_list(values) ->
+            raise AshScylla.Error,
+              message:
+                "CQL does not support OR, so overlaps/2 with multiple values cannot be expressed in a single query. " <>
+                  "Found: overlaps(#{left_cql}, #{inspect(values)}). " <>
+                  "Workaround: split into multiple queries and merge in application code."
+
+          {:overlaps, %{value: %MapSet{} = ms}} ->
+            handle_overlaps_mapset(left_cql, left_params, name, ms, uuid_fields, cql_types)
+
+          {:overlaps, %MapSet{} = values} ->
+            handle_overlaps_mapset(
+              left_cql,
+              left_params,
+              name,
+              values,
+              uuid_fields,
+              cql_types
+            )
+
+          {:overlaps, value} ->
+            {"#{left_cql} CONTAINS ?",
+             left_params ++ [typed_param(name, value, uuid_fields, cql_types)]}
+
+          {:starts_with, %{value: value}} ->
+            {"#{left_cql} LIKE ?", left_params ++ ["%" <> to_raw_string(value)]}
+
+          {:ends_with, %{value: value}} ->
+            {"#{left_cql} LIKE ?", left_params ++ [to_raw_string(value) <> "%"]}
+
+          {:contains, %{value: value}} ->
+            {"#{left_cql} LIKE ?", left_params ++ ["%" <> to_raw_string(value) <> "%"]}
+
+          {:contains_key, %{value: value}} ->
+            {"#{left_cql} CONTAINS KEY ?",
+             left_params ++ [typed_param(name, value, uuid_fields, cql_types)]}
+
+          _ ->
+            # Handle operators that need special CQL syntax even when right side
+            # is a raw value (not a %{value: ...} map). For comparison operators
+            # on UUID columns, type the bound value via typed_param so it is
+            # converted to a 16-byte binary tagged as {"uuid", bin} (otherwise
+            # ScyllaDB rejects it with "Validation failed for uuid - got N bytes").
+            # Collection/pattern operators (LIKE, CONTAINS, has, overlaps) keep
+            # their wildcard-wrapped extra_params untouched.
+            {cql_op, cql_val, extra_params} =
+              operator_cql(op, right, right_params)
+
+            final_params =
+              if name in uuid_fields and
+                   op not in [
+                     :starts_with,
+                     :ends_with,
+                     :contains,
+                     :contains_key,
+                     :has,
+                     :overlaps
+                   ] do
+                [typed_param(name, extract_value(right), uuid_fields, cql_types)]
+              else
+                extra_params
+              end
+
+            {"#{left_cql} #{cql_op} #{cql_val}", left_params ++ final_params}
+        end
+    end
+  end
+
+  # Wraps an expression with each remaining conjunct, preserving left-to-right
+  # order: and_with_all([A, B], C) == A and B and C.
+  defp and_with_all([], expr), do: expr
+
+  defp and_with_all([sibling | rest], expr),
+    do: and_with_all(rest, %{op: :and, left: sibling, right: expr})
 
   # Translates a single AND operand, augmenting any OR-split raised within it
   # with the sibling conjunct(s) so they are not lost when the query is re-run
@@ -714,330 +1025,6 @@ defmodule AshScylla.DataLayer.QueryBuilder do
         nil ->
           reraise e, __STACKTRACE__
       end
-  end
-
-  # Wraps an expression with each remaining conjunct, preserving left-to-right
-  # order: and_with_all([A, B], C) == A and B and C.
-  defp and_with_all([], expr), do: expr
-
-  defp and_with_all([sibling | rest], expr),
-    do: and_with_all(rest, %{op: :and, left: sibling, right: expr})
-
-  def filter_to_cql(%{op: op, left: left, right: right}, uuid_fields, cql_types) do
-    case filter_to_cql(left, uuid_fields, cql_types) do
-      {:error, _} = error ->
-        error
-
-      {left_cql, left_params} ->
-        case filter_to_cql(right, uuid_fields, cql_types) do
-          {:error, _} = error ->
-            error
-
-          {right_cql, right_params} ->
-            case op do
-              :or ->
-                # Try to rewrite same-field OR as IN (CQL supports IN on partition/clustering keys).
-                case rewrite_or_to_in(left, right) do
-                  {:ok, {field_name, values}} ->
-                    placeholders =
-                      values
-                      |> Enum.map(fn _ -> "?" end)
-                      |> Enum.intersperse(", ")
-                      |> IO.iodata_to_binary()
-
-                    {["#{cql_identifier(field_name)} IN (#{placeholders})"],
-                     Enum.map(values, &typed_param(field_name, &1, uuid_fields, cql_types))}
-
-                  :error ->
-                    raise AshScylla.Error,
-                      message:
-                        "CQL does not support OR across different fields or with non-equality operators. " <>
-                          "Found: or(#{inspect(deeply_unwrap_expr(left))}, #{inspect(deeply_unwrap_expr(right))}). " <>
-                          "Workarounds: (1) redesign the table with a canonical partition key, " <>
-                          "(2) split into two queries and merge in application code, " <>
-                          "or (3) rewrite same-field OR as IN.",
-                      or_split: {left, right}
-                end
-
-              _ ->
-                filter_to_cql(%{operator: op, left: left, right: right}, uuid_fields, cql_types)
-            end
-        end
-    end
-    |> maybe_iodata_to_binary()
-  end
-
-  def filter_to_cql(%{operator: op, left: left, right: right}, uuid_fields, cql_types) do
-    case filter_to_cql(left, uuid_fields, cql_types) do
-      {:error, _} = error ->
-        error
-
-      {left_cql, left_params} ->
-        name = attribute_name(left)
-
-        case filter_to_cql(right, uuid_fields, cql_types) do
-          {:error, {:unknown_filter, raw_value}} ->
-            # Raw value on the right side of an operator (e.g. DateTime, string, number)
-            # Handle operators that need special CQL syntax with raw values
-            case op do
-              :in when is_list(raw_value) ->
-                build_in_clause(
-                  left_cql,
-                  left_params ++
-                    Enum.map(raw_value, &typed_param(name, &1, uuid_fields, cql_types))
-                )
-
-              :in when is_struct(raw_value, MapSet) ->
-                raw_value
-                |> MapSet.to_list()
-                |> Enum.map(&typed_param(name, &1, uuid_fields, cql_types))
-                |> then(&build_in_clause(left_cql, left_params ++ &1))
-
-              :is_nil when raw_value in [true, false] ->
-                if raw_value,
-                  do: {"#{left_cql} IS NULL", left_params},
-                  else: {"#{left_cql} IS NOT NULL", left_params}
-
-              :starts_with ->
-                {"#{left_cql} LIKE ?", left_params ++ ["%" <> to_raw_string(raw_value)]}
-
-              :ends_with ->
-                {"#{left_cql} LIKE ?", left_params ++ [to_raw_string(raw_value) <> "%"]}
-
-              :contains ->
-                {"#{left_cql} LIKE ?", left_params ++ ["%" <> to_raw_string(raw_value) <> "%"]}
-
-              :contains_key ->
-                {"#{left_cql} CONTAINS KEY ?",
-                 left_params ++ [typed_param(name, raw_value, uuid_fields, cql_types)]}
-
-              :exists ->
-                {"#{left_cql} IS NOT NULL", left_params}
-
-              :has ->
-                {"#{left_cql} CONTAINS ?",
-                 left_params ++ [typed_param(name, raw_value, uuid_fields, cql_types)]}
-
-              :overlaps ->
-                # overlaps with a single raw value → CONTAINS
-                {"#{left_cql} CONTAINS ?",
-                 left_params ++ [typed_param(name, raw_value, uuid_fields, cql_types)]}
-
-              _ ->
-                cql_op = Map.get(@operator_mapping, op, "=")
-                cql_val = Map.get(@operator_values, op, "?")
-
-                {"#{left_cql} #{cql_op} #{cql_val}",
-                 left_params ++ [typed_param(name, raw_value, uuid_fields, cql_types)]}
-            end
-
-          {_right_cql, right_params} ->
-            case {op, right} do
-              {:in, %{value: values}} when is_list(values) ->
-                build_in_clause(
-                  left_cql,
-                  left_params ++ Enum.map(values, &typed_param(name, &1, uuid_fields, cql_types))
-                )
-
-              {:in, values} when is_list(values) ->
-                build_in_clause(
-                  left_cql,
-                  left_params ++ Enum.map(values, &typed_param(name, &1, uuid_fields, cql_types))
-                )
-
-              {:in, %MapSet{} = values} ->
-                values
-                |> MapSet.to_list()
-                |> Enum.map(&typed_param(name, &1, uuid_fields, cql_types))
-                |> then(&build_in_clause(left_cql, left_params ++ &1))
-
-              {:is_nil, %{value: true}} ->
-                {"#{left_cql} IS NULL", left_params}
-
-              {:is_nil, %{value: false}} ->
-                {"#{left_cql} IS NOT NULL", left_params}
-
-              {:is_nil, true} ->
-                {"#{left_cql} IS NULL", left_params}
-
-              {:is_nil, false} ->
-                {"#{left_cql} IS NOT NULL", left_params}
-
-              {:token, %{value: keys}} when is_list(keys) ->
-                build_token_clause(Enum.map(left_cql, & &1), keys)
-
-              {:token, keys} when is_list(keys) ->
-                build_token_clause(Enum.map(left_cql, & &1), keys)
-
-              {:exists, _} ->
-                {"#{left_cql} IS NOT NULL", left_params}
-
-              {:has, %{value: value}} ->
-                {"#{left_cql} CONTAINS ?",
-                 left_params ++ [typed_param(name, value, uuid_fields, cql_types)]}
-
-              {:has, value} ->
-                {"#{left_cql} CONTAINS ?",
-                 left_params ++ [typed_param(name, value, uuid_fields, cql_types)]}
-
-              {:overlaps, %{value: values}} when is_list(values) and length(values) == 1 ->
-                {"#{left_cql} CONTAINS ?",
-                 left_params ++ Enum.map(values, &typed_param(name, &1, uuid_fields, cql_types))}
-
-              {:overlaps, %{value: values}} when is_list(values) ->
-                raise AshScylla.Error,
-                  message:
-                    "CQL does not support OR, so overlaps/2 with multiple values cannot be expressed in a single query. " <>
-                      "Found: overlaps(#{left_cql}, #{inspect(values)}). " <>
-                      "Workaround: split into multiple queries and merge in application code."
-
-              {:overlaps, %{value: %MapSet{} = ms}} ->
-                handle_overlaps_mapset(left_cql, left_params, name, ms, uuid_fields, cql_types)
-
-              {:overlaps, %MapSet{} = values} ->
-                handle_overlaps_mapset(
-                  left_cql,
-                  left_params,
-                  name,
-                  values,
-                  uuid_fields,
-                  cql_types
-                )
-
-              {:overlaps, value} ->
-                {"#{left_cql} CONTAINS ?",
-                 left_params ++ [typed_param(name, value, uuid_fields, cql_types)]}
-
-              {:starts_with, %{value: value}} ->
-                {"#{left_cql} LIKE ?", left_params ++ ["%" <> to_raw_string(value)]}
-
-              {:ends_with, %{value: value}} ->
-                {"#{left_cql} LIKE ?", left_params ++ [to_raw_string(value) <> "%"]}
-
-              {:contains, %{value: value}} ->
-                {"#{left_cql} LIKE ?", left_params ++ ["%" <> to_raw_string(value) <> "%"]}
-
-              {:contains_key, %{value: value}} ->
-                {"#{left_cql} CONTAINS KEY ?",
-                 left_params ++ [typed_param(name, value, uuid_fields, cql_types)]}
-
-              _ ->
-                # Handle operators that need special CQL syntax even when right side
-                # is a raw value (not a %{value: ...} map). For comparison operators
-                # on UUID columns, type the bound value via typed_param so it is
-                # converted to a 16-byte binary tagged as {"uuid", bin} (otherwise
-                # ScyllaDB rejects it with "Validation failed for uuid - got N bytes").
-                # Collection/pattern operators (LIKE, CONTAINS, has, overlaps) keep
-                # their wildcard-wrapped extra_params untouched.
-                {cql_op, cql_val, extra_params} =
-                  operator_cql(op, right, right_params)
-
-                final_params =
-                  if name in uuid_fields and
-                       op not in [
-                         :starts_with,
-                         :ends_with,
-                         :contains,
-                         :contains_key,
-                         :has,
-                         :overlaps
-                       ] do
-                    [typed_param(name, extract_value(right), uuid_fields, cql_types)]
-                  else
-                    extra_params
-                  end
-
-                {"#{left_cql} #{cql_op} #{cql_val}", left_params ++ final_params}
-            end
-        end
-    end
-    |> maybe_iodata_to_binary()
-  end
-
-  # ── Function call: contains(column, value) → column LIKE %value% ───────
-  # Ash passes these as %Ash.Query.Function.Contains{__function__?: true, arguments: [...]}
-  def filter_to_cql(
-        %{__function__?: true, name: :contains, arguments: [left, right]},
-        uuid_fields,
-        cql_types
-      ) do
-    filter_to_cql(%{operator: :contains, left: left, right: right}, uuid_fields, cql_types)
-  end
-
-  def filter_to_cql(
-        %{__function__?: true, name: :starts_with, arguments: [left, right]},
-        uuid_fields,
-        cql_types
-      ) do
-    filter_to_cql(%{operator: :starts_with, left: left, right: right}, uuid_fields, cql_types)
-  end
-
-  def filter_to_cql(
-        %{__function__?: true, name: :ends_with, arguments: [left, right]},
-        uuid_fields,
-        cql_types
-      ) do
-    filter_to_cql(%{operator: :ends_with, left: left, right: right}, uuid_fields, cql_types)
-  end
-
-  # ── Plain map format: contains(column, value) (arguments key) ──────────
-  def filter_to_cql(%{name: :contains, arguments: [left, right]}, uuid_fields, cql_types) do
-    filter_to_cql(%{operator: :contains, left: left, right: right}, uuid_fields, cql_types)
-  end
-
-  def filter_to_cql(%{name: :starts_with, arguments: [left, right]}, uuid_fields, cql_types) do
-    filter_to_cql(%{operator: :starts_with, left: left, right: right}, uuid_fields, cql_types)
-  end
-
-  def filter_to_cql(%{name: :ends_with, arguments: [left, right]}, uuid_fields, cql_types) do
-    filter_to_cql(%{operator: :ends_with, left: left, right: right}, uuid_fields, cql_types)
-  end
-
-  # ── Plain map format: contains(column, value) (args key, legacy) ───────
-  def filter_to_cql(%{name: :contains, args: [left, right]}, uuid_fields, cql_types) do
-    filter_to_cql(%{operator: :contains, left: left, right: right}, uuid_fields, cql_types)
-  end
-
-  def filter_to_cql(%{name: :starts_with, args: [left, right]}, uuid_fields, cql_types) do
-    filter_to_cql(%{operator: :starts_with, left: left, right: right}, uuid_fields, cql_types)
-  end
-
-  def filter_to_cql(%{name: :ends_with, args: [left, right]}, uuid_fields, cql_types) do
-    filter_to_cql(%{operator: :ends_with, left: left, right: right}, uuid_fields, cql_types)
-  end
-
-  def filter_to_cql(%{op: op, name: name, right: right}, uuid_fields, cql_types) do
-    filter_to_cql(%{operator: op, left: %{name: name}, right: right}, uuid_fields, cql_types)
-  end
-
-  def filter_to_cql(%Ash.Query.Ref{attribute: attribute}, _uuid_fields, _cql_types) do
-    {cql_identifier(attribute_name(attribute)), []}
-  end
-
-  def filter_to_cql(%{value: value}, _uuid_fields, _cql_types) do
-    # Standalone value (e.g. right side of IN). No column context, so emit the
-    # raw value — connection.typed_params infers the correct type.
-    {"?", [value]}
-  end
-
-  def filter_to_cql(%{name: name}, _uuid_fields, _cql_types) do
-    {cql_identifier(name), []}
-  end
-
-  # Accept any value that could be a valid CQL parameter (everything except
-  # non-serializable types like functions, PIDs, references, ports).
-  def filter_to_cql(unknown, _uuid_fields, _cql_types)
-      when is_function(unknown) or is_pid(unknown) or is_reference(unknown) or is_port(unknown) do
-    Logger.warning("AshScylla: Unknown filter expression: #{inspect(unknown)}")
-    {:error, {:unknown_filter, unknown}}
-  end
-
-  def filter_to_cql(unknown, _uuid_fields, _cql_types) do
-    # Raw value — return it as a parameter placeholder so parent operators can use it
-    # This handles cases like: %{operator: :eq, left: %{name: :status}, right: "active"}
-    # where the right side is a raw value, not a filter expression.
-    # The value is emitted raw; connection.typed_params infers the correct type.
-    {"?", [unknown]}
   end
 
   @spec filter_to_cql(term()) ::
@@ -1327,7 +1314,9 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     left = deeply_unwrap_expr(left)
     right = deeply_unwrap_expr(right)
 
-    Logger.debug("AshScylla: rewrite_or_to_in left: #{inspect(left)}, right: #{inspect(right)}")
+    Logger.debug(fn ->
+      "AshScylla: rewrite_or_to_in left: #{inspect(left)}, right: #{inspect(right)}"
+    end)
 
     case {left, right} do
       {l, r} ->

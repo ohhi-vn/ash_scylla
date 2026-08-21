@@ -1201,15 +1201,27 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
     test "top-level sibling AND conjunct is preserved in both OR split branches" do
       game_filter = %{operator: :eq, left: %{name: :game_id}, right: %{value: "game-1"}}
-      privacy_public = %{operator: :eq, left: %Ash.Query.Ref{attribute: :privacy}, right: %{value: :public}}
-      privacy_friends = %{operator: :eq, left: %Ash.Query.Ref{attribute: :privacy}, right: %{value: :friends}}
+
+      privacy_public = %{
+        operator: :eq,
+        left: %Ash.Query.Ref{attribute: :privacy},
+        right: %{value: :public}
+      }
+
+      privacy_friends = %{
+        operator: :eq,
+        left: %Ash.Query.Ref{attribute: :privacy},
+        right: %{value: :friends}
+      }
+
       or_expr = %{op: :or, left: privacy_public, right: privacy_friends}
 
       query = base_or_split_query([game_filter, or_expr])
 
-      error = assert_raise AshScylla.Error, fn ->
-        QueryBuilder.build_optimized_query(query)
-      end
+      error =
+        assert_raise AshScylla.Error, fn ->
+          QueryBuilder.build_optimized_query(query)
+        end
 
       assert %{or_split: {left_branch, right_branch}} = error
       assert left_branch == %{op: :and, left: game_filter, right: privacy_public}
@@ -1218,16 +1230,28 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
     test "nested AND preserves the non-OR operand in both OR split branches" do
       game_filter = %{operator: :eq, left: %{name: :game_id}, right: %{value: "game-1"}}
-      privacy_public = %{operator: :eq, left: %Ash.Query.Ref{attribute: :privacy}, right: %{value: :public}}
-      privacy_friends = %{operator: :eq, left: %Ash.Query.Ref{attribute: :privacy}, right: %{value: :friends}}
+
+      privacy_public = %{
+        operator: :eq,
+        left: %Ash.Query.Ref{attribute: :privacy},
+        right: %{value: :public}
+      }
+
+      privacy_friends = %{
+        operator: :eq,
+        left: %Ash.Query.Ref{attribute: :privacy},
+        right: %{value: :friends}
+      }
+
       or_expr = %{op: :or, left: privacy_public, right: privacy_friends}
       and_expr = %{op: :and, left: game_filter, right: or_expr}
 
       query = base_or_split_query([and_expr])
 
-      error = assert_raise AshScylla.Error, fn ->
-        QueryBuilder.build_optimized_query(query)
-      end
+      error =
+        assert_raise AshScylla.Error, fn ->
+          QueryBuilder.build_optimized_query(query)
+        end
 
       assert %{or_split: {left_branch, right_branch}} = error
       assert left_branch == %{op: :and, left: game_filter, right: privacy_public}
@@ -1236,8 +1260,18 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
     test "branch filters build correct CQL with the sibling conjunct" do
       game_filter = %{operator: :eq, left: %{name: :game_id}, right: %{value: "game-1"}}
-      privacy_public = %{operator: :eq, left: %Ash.Query.Ref{attribute: :privacy}, right: %{value: :public}}
-      privacy_friends = %{operator: :eq, left: %Ash.Query.Ref{attribute: :privacy}, right: %{value: :friends}}
+
+      privacy_public = %{
+        operator: :eq,
+        left: %Ash.Query.Ref{attribute: :privacy},
+        right: %{value: :public}
+      }
+
+      privacy_friends = %{
+        operator: :eq,
+        left: %Ash.Query.Ref{attribute: :privacy},
+        right: %{value: :friends}
+      }
 
       branch = %{op: :and, left: game_filter, right: privacy_public}
       {:ok, {cql, params}} = QueryBuilder.build_optimized_query(base_or_split_query([branch]))
@@ -1275,12 +1309,14 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
     test "builds distinct column selection" do
       query = query_with_select_options(nil, %{column: :status, distinct?: true}, nil)
+
       assert {:ok, {"SELECT DISTINCT status FROM users", []}} =
                QueryBuilder.build_optimized_query(query)
     end
 
     test "builds distinct selection from a list" do
       query = query_with_select_options(nil, [:status, :org_id], nil)
+
       assert {:ok, {"SELECT DISTINCT status, org_id FROM users", []}} =
                QueryBuilder.build_optimized_query(query)
     end
@@ -1294,6 +1330,7 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
 
       query = query_with_select_options(nil, nil, aggregates)
       {:ok, {cql, []}} = QueryBuilder.build_optimized_query(query)
+
       assert cql ==
                "SELECT AVG(age) AS average_age, MIN(age) AS minimum_age, MAX(age) AS maximum_age FROM users"
     end

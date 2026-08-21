@@ -99,6 +99,7 @@ defmodule AshScyllaTest do
       assert report.nodes == TestRepo.nodes()
       assert report.keyspace == TestRepo.keyspace()
       assert report.connection == %{checked?: false, release_version: :skipped}
+
       assert report.keyspace_report == %{
                name: TestRepo.keyspace(),
                checked?: false,

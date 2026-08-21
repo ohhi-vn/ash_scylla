@@ -5,7 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.8.0] - 2026-08-21
+
+### Fixed
+- **Mixed AND/OR filters**: Rewrote `QueryBuilder` filter translation so filters combining AND and OR clauses build correct CQL (removed the error-based OR-split path in favor of direct expression translation); plain `%{op: ...}` expression maps (e.g. from `or_split`) are now translated directly
+- **SELECT with columns + aggregates**: `build_select_clause/4` now correctly combines explicit select columns with aggregate functions instead of dropping one or the other; empty select lists fall back to `*`
+- **Ash filter function calls**: `Ash.Query.Call` expressions (operator-style calls) are translated to their corresponding operators; added support for `contains/2`, `starts_with/2`, and `ends_with/2` in both function-struct and plain-map forms
+- **Column name extraction**: Column names are extracted once per Xandra page (`column_names/1`) instead of per row when mapping records to Ash structs
+
+### Changed
+- **Connection fast path**: `AshScylla.Connection.get_conn/1` caches the conn struct in `:persistent_term` for named connections, avoiding a `GenServer.call` per query; the cache is validated against the live process and refreshed on miss
+- **Skip redundant `USE` round-trip**: `query/4` and `query!/4` skip the `USE keyspace` statement when the session is already on the requested keyspace and the statement uses fully-qualified `keyspace.table` names, reducing latency
+- **Lazy debug logging**: All `Logger.debug` calls across `Connection`, `DataLayer`, and `QueryBuilder` now use anonymous functions so message interpolation only happens when debug logging is enabled
+- **Batch timeout**: Per-chunk batch execution timeout raised from 5s to 30s to avoid spurious `{:batch_execution_failed, :timeout}` under heavy load
+
+### Added
+- Coverage config ignores for mix task/helper modules (`AshScylla.MixHelpers`, mix tasks, generators, `AshScylla.Extension`)
+
+## [1.7.2] - 2026-08-21
+
+> Note: versions 1.7.0 and 1.7.1 were released without changelog entries;
+> their changes are not individually documented here.
 
 ### Added
 - **Multi-word search engine** (`AshScylla.Search`) — Lucene/OpenSearch-style full-text search on top of ScyllaDB's inverted index tables:

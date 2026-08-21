@@ -105,20 +105,57 @@ defmodule AshScylla.Connection do
     }
   end
 
+  # Cache key for :persistent_term fast-path reads of the conn struct.
+  @persistent_key_prefix {__MODULE__, :conn_struct}
+
+  defp persistent_key(name), do: {@persistent_key_prefix, name}
+
+  # Caches the conn struct in :persistent_term so get_conn/1 avoids a
+  # GenServer.call per query. Only meaningful for named connections.
+  defp cache_conn(%__MODULE__{} = state) do
+    case Process.info(self(), :registered_name) do
+      {:registered_name, name} when is_atom(name) ->
+        :persistent_term.put(persistent_key(name), state)
+
+      _ ->
+        :ok
+    end
+
+    state
+  end
+
+  defp erase_cached_conn do
+    case Process.info(self(), :registered_name) do
+      {:registered_name, name} when is_atom(name) ->
+        :persistent_term.erase(persistent_key(name))
+
+      _ ->
+        :ok
+    end
+
+    :ok
+  end
+
   @doc "Returns the connection struct by name (local or global)."
   @spec get_conn(module() | atom()) :: t() | nil
   def get_conn(name \\ __MODULE__) do
     case name do
       name when is_atom(name) ->
-        case Process.whereis(name) do
-          nil ->
-            case :global.whereis_name(name) do
-              :undefined -> nil
-              pid -> do_get_conn(pid)
+        # Fast path: read from :persistent_term, avoiding a GenServer.call
+        # per query. Fall back to the GenServer when the cache is missing
+        # or the process is no longer alive.
+        case :persistent_term.get(persistent_key(name), :missing) do
+          %__MODULE__{} = conn ->
+            case Process.whereis(name) do
+              pid when is_pid(pid) and pid == conn.conn ->
+                if Process.alive?(pid), do: conn, else: do_get_conn(pid, name)
+
+              _ ->
+                do_get_conn(nil, name)
             end
 
-          pid ->
-            do_get_conn(pid)
+          _ ->
+            do_get_conn(nil, name)
         end
 
       _ ->
@@ -130,10 +167,31 @@ defmodule AshScylla.Connection do
     _, _ -> nil
   end
 
-  defp do_get_conn(pid) do
-    case Process.alive?(pid) do
-      true -> GenServer.call(pid, :get_conn_struct, 5_000)
-      false -> nil
+  defp do_get_conn(pid, name) do
+    pid = pid || whereis_pid(name)
+
+    case pid && Process.alive?(pid) do
+      true ->
+        case GenServer.call(pid, :get_conn_struct, 5_000) do
+          %__MODULE__{} = state -> cache_conn(state)
+          other -> other
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp whereis_pid(name) do
+    case Process.whereis(name) do
+      nil ->
+        case :global.whereis_name(name) do
+          :undefined -> nil
+          pid -> pid
+        end
+
+      pid ->
+        pid
     end
   end
 
@@ -147,7 +205,12 @@ defmodule AshScylla.Connection do
   @spec query(t() | module(), String.t(), list(), keyword()) :: {:ok, term()} | {:error, term()}
   def query(conn_or_name, query, params, opts \\ [])
 
-  def query(%__MODULE__{conn: conn, cluster?: cluster?}, query, params, opts) do
+  def query(
+        %__MODULE__{conn: conn, cluster?: cluster?} = conn_struct,
+        query,
+        params,
+        opts
+      ) do
     case Keyword.pop(opts, :keyspace) do
       {nil, opts} ->
         execute_module(cluster?).execute(conn, query, typed_params(params), opts)
@@ -155,24 +218,32 @@ defmodule AshScylla.Connection do
       {keyspace, opts} ->
         validate_keyspace!(keyspace)
 
-        # Try USE first, but if it fails (e.g. keyspace doesn't exist yet),
-        # still attempt the actual statement. Statements like CREATE KEYSPACE
-        # don't require keyspace context; if the statement itself needs a
-        # keyspace, it will fail with its own descriptive error.
-        case execute_module(cluster?).execute(
-               conn,
-               "USE #{AshScylla.Identifier.quote_name(keyspace)}",
-               []
-             ) do
-          {:ok, _} ->
-            execute_module(cluster?).execute(conn, query, typed_params(params), opts)
+        if skip_use?(conn_struct, keyspace, query) do
+          # The connection's session is already on the requested keyspace and
+          # the statement uses fully-qualified `keyspace.table` names, so the
+          # extra `USE` round-trip adds no correctness — only latency.
+          execute_module(cluster?).execute(conn, query, typed_params(params), opts)
+        else
+          # Try USE first, but if it fails (e.g. keyspace doesn't exist yet),
+          # still attempt the actual statement. Statements like CREATE KEYSPACE
+          # don't require keyspace context; if the statement itself needs a
+          # keyspace, it will fail with its own descriptive error.
+          case execute_module(cluster?).execute(
+                 conn,
+                 "USE #{AshScylla.Identifier.quote_name(keyspace)}",
+                 []
+               ) do
+            {:ok, _} ->
+              execute_module(cluster?).execute(conn, query, typed_params(params), opts)
 
-          {:error, _} ->
-            execute_module(cluster?).execute(conn, query, typed_params(params), opts)
+            {:error, _} ->
+              execute_module(cluster?).execute(conn, query, typed_params(params), opts)
+          end
         end
     end
   end
 
+  @doc false
   def query(name, query, params, opts) when is_atom(name) do
     case get_conn(name) do
       nil ->
@@ -200,6 +271,8 @@ defmodule AshScylla.Connection do
             opts = put_connection_keyspace(opts, updated_conn.keyspace)
 
             query(updated_conn, query, params, opts)
+            # NOTE: the struct clause skips the USE round-trip when the
+            # statement already uses qualified `keyspace.table` names.
         end
     end
   end
@@ -241,7 +314,12 @@ defmodule AshScylla.Connection do
   @spec query!(t() | module(), String.t(), list(), keyword()) :: term() | no_return()
   def query!(conn_or_name, query, params, opts \\ [])
 
-  def query!(%__MODULE__{conn: conn, cluster?: cluster?}, query, params, opts) do
+  def query!(
+        %__MODULE__{conn: conn, cluster?: cluster?} = conn_struct,
+        query,
+        params,
+        opts
+      ) do
     case Keyword.pop(opts, :keyspace) do
       {nil, opts} ->
         execute_module(cluster?).execute!(conn, query, typed_params(params), opts)
@@ -249,16 +327,23 @@ defmodule AshScylla.Connection do
       {keyspace, opts} ->
         validate_keyspace!(keyspace)
 
-        case execute_module(cluster?).execute(
-               conn,
-               "USE #{AshScylla.Identifier.quote_name(keyspace)}",
-               []
-             ) do
-          {:ok, _} ->
-            execute_module(cluster?).execute!(conn, query, typed_params(params), opts)
+        if skip_use?(conn_struct, keyspace, query) do
+          # See query/4 struct clause: skip the redundant USE round-trip when
+          # the session is already on the keyspace and the statement is fully
+          # qualified.
+          execute_module(cluster?).execute!(conn, query, typed_params(params), opts)
+        else
+          case execute_module(cluster?).execute(
+                 conn,
+                 "USE #{AshScylla.Identifier.quote_name(keyspace)}",
+                 []
+               ) do
+            {:ok, _} ->
+              execute_module(cluster?).execute!(conn, query, typed_params(params), opts)
 
-          {:error, _} ->
-            execute_module(cluster?).execute!(conn, query, typed_params(params), opts)
+            {:error, _} ->
+              execute_module(cluster?).execute!(conn, query, typed_params(params), opts)
+          end
         end
     end
   end
@@ -307,6 +392,18 @@ defmodule AshScylla.Connection do
         prepare(conn, query, opts)
     end
   end
+
+  # Skips the redundant `USE keyspace` round-trip only when we can be sure the
+  # session is already on the requested keyspace (it matches the connection's
+  # configured keyspace and the keyspace was successfully applied) AND the
+  # statement already references a fully-qualified `keyspace.table` name.
+  # When in doubt, we keep issuing `USE` (the previous behavior).
+  defp skip_use?(%__MODULE__{keyspace: keyspace, keyspace_used: true}, keyspace, query)
+       when is_binary(keyspace) do
+    :nomatch != :binary.match(query, keyspace <> ".")
+  end
+
+  defp skip_use?(_, _, _), do: false
 
   @doc "Prepares a CQL statement, raising on error."
   @spec prepare!(t() | module(), String.t(), keyword()) :: Xandra.Prepared.t() | no_return()
@@ -431,9 +528,9 @@ defmodule AshScylla.Connection do
     {start_fun, connect_opts, cluster?} =
       determine_start_config(nodes, parsed_nodes, nodes_as_strings, xandra_opts, keyspace)
 
-    Logger.debug(
+    Logger.debug(fn ->
       "AshScylla: Starting #{if(cluster?, do: "cluster", else: "single-node")} connection to #{inspect(nodes_as_strings)}"
-    )
+    end)
 
     connect_and_apply_keyspace(start_fun, connect_opts, cluster?, keyspace, nodes_as_strings)
   end
@@ -466,9 +563,9 @@ defmodule AshScylla.Connection do
         configure_autodiscovered_port(parsed_nodes, xandra_opts)
         |> ensure_sync_connect()
 
-      Logger.debug(
+      Logger.debug(fn ->
         "AshScylla: Using Xandra.Cluster with autodiscovered port #{autodiscovered_port(parsed_nodes)}"
-      )
+      end)
 
       {&Xandra.Cluster.start_link/1, xandra_opts, true}
     else
@@ -485,7 +582,7 @@ defmodule AshScylla.Connection do
   end
 
   defp determine_single_node_config(xandra_opts) do
-    Logger.debug("AshScylla: Using single-node Xandra connection")
+    Logger.debug(fn -> "AshScylla: Using single-node Xandra connection" end)
     {&Xandra.start_link/1, Keyword.delete(xandra_opts, :pool_size), false}
   end
 
@@ -541,17 +638,17 @@ defmodule AshScylla.Connection do
     end
     |> case do
       {:ok, conn} ->
-        Logger.debug("AshScylla: Xandra connection established to #{inspect(nodes)}")
+        Logger.debug(fn -> "AshScylla: Xandra connection established to #{inspect(nodes)}" end)
         keyspace_used? = apply_keyspace(conn, cluster?, nodes, keyspace)
 
         {:ok,
-         %__MODULE__{
+         cache_conn(%__MODULE__{
            conn: conn,
            keyspace: keyspace,
            nodes: nodes,
            keyspace_used: keyspace_used?,
            cluster?: cluster?
-         }}
+         })}
 
       {:error, reason} ->
         Logger.error("AshScylla: Failed to connect to #{inspect(nodes)}: #{reason}")
@@ -658,7 +755,7 @@ defmodule AshScylla.Connection do
          ) do
       {:ok, _} ->
         Logger.info("AshScylla: Released keyspace '#{keyspace}' (switched to system)")
-        {:reply, :ok, %{state | keyspace_used: false}}
+        {:reply, :ok, cache_conn(%{state | keyspace_used: false})}
 
       {:error, reason} ->
         Logger.warning("AshScylla: Failed to release keyspace '#{keyspace}': #{inspect(reason)}")
@@ -692,7 +789,7 @@ defmodule AshScylla.Connection do
          ) do
       {:ok, _} ->
         Logger.info("AshScylla: Keyspace '#{keyspace}' is now active")
-        {:reply, {:ok, :set}, %{state | keyspace_used: true}}
+        {:reply, {:ok, :set}, cache_conn(%{state | keyspace_used: true})}
 
       {:error, reason} ->
         Logger.warning("AshScylla: Failed to set keyspace '#{keyspace}': #{inspect(reason)}")
@@ -716,7 +813,8 @@ defmodule AshScylla.Connection do
     case execute_module(cluster?).execute(conn, "USE #{new_keyspace}", []) do
       {:ok, _} ->
         Logger.info("AshScylla: Keyspace set to '#{new_keyspace}'")
-        {:reply, {:ok, :set}, %{state | keyspace: new_keyspace, keyspace_used: true}}
+
+        {:reply, {:ok, :set}, cache_conn(%{state | keyspace: new_keyspace, keyspace_used: true})}
 
       {:error, reason} ->
         Logger.warning("AshScylla: Failed to set keyspace '#{new_keyspace}': #{inspect(reason)}")
@@ -752,6 +850,7 @@ defmodule AshScylla.Connection do
       _, _ -> :ok
     end
 
+    erase_cached_conn()
     :ok
   end
 

@@ -220,11 +220,15 @@ defmodule AshScylla.Release do
     # In a release `eval` context the project app is *loaded* (via
     # `Application.load/1`) but not *started*, so `started_applications/0`
     # would miss it and yield zero resources. Scan loaded apps instead.
+    #
+    # Only check `function_exported?/3` — every candidate module in a loaded
+    # app's module list is already compiled, so `Code.ensure_compiled/1` adds
+    # no value but can block on the code server for seconds when many apps
+    # are loaded (observed ~5s in test environments with 65+ apps).
     apps = Application.loaded_applications()
 
     for {app, _, _} <- apps,
         module <- get_app_modules(app),
-        Code.ensure_compiled(module) == {:module, module},
         function_exported?(module, :__ash_scylla__, 1),
         do: module
   rescue

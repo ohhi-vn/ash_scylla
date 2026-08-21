@@ -23,7 +23,7 @@
 
 AshScylla enables you to use **ScyllaDB** or **Apache Cassandra** as a persistence layer for your [Ash Framework](https://ash-hq.org/) resources. It implements the `Ash.DataLayer` behaviour using [Xandra](https://github.com/whatyouhide/xandra) (a native Elixir CQL driver) to communicate via CQL (Cassandra Query Language).
 
-Current version: **1.7.0**
+Current version: **1.7.2**
 
 ### Key Benefits
 
@@ -131,7 +131,6 @@ For a complete step-by-step guide, see the **[Usage Guide](guides/USAGE_GUIDE.md
 | Sort | ✅ | ORDER BY on clustering columns (within partition) |
 | Keyset pagination | ✅ | Token-based pagination via paging_state (default mode) |
 | Limit | ✅ | LIMIT is natively supported |
-
 | Select | ✅ | Select specific fields |
 | Multitenancy | ✅ | Keyspace-based multitenancy |
 | Bulk Create | ✅ | Batch INSERT operations |
@@ -246,6 +245,9 @@ AshScylla emits standard `:telemetry` events for all query and batch operations:
 **Events:** `[:ash_scylla, :query, :start|stop|exception]`, `[:ash_scylla, :batch, :start|stop]`
 
 ### Prepared Statement Caching
+
+The cache is started automatically with the Repo when possible; manual
+supervision-tree addition is only needed for advanced setups.
 
 ```elixir
 children = [

@@ -473,8 +473,8 @@ defmodule AshScylla.DataLayer do
     %Query{repo: repo, table: table, tenant: tenant, filters: filters, sorts: sorts} =
       data_layer_query
 
-    Logger.debug("AshScylla: Data Layer query #{inspect(data_layer_query)}")
-    Logger.debug("AshScylla: Filter query: #{inspect(filters)}")
+    Logger.debug(fn -> "AshScylla: Data Layer query #{inspect(data_layer_query)}" end)
+    Logger.debug(fn -> "AshScylla: Filter query: #{inspect(filters)}" end)
 
     # Validate filters to prevent ALLOW FILTERING anti-pattern
     FilterValidator.validate_filters(resource, filters)
@@ -544,16 +544,17 @@ defmodule AshScylla.DataLayer do
 
     opts = build_query_opts(resource, tenant)
 
-    Logger.debug("AshScylla: Executing run_query on #{table}")
-    Logger.debug("AshScylla: Final query: #{inspect(query)}")
-    Logger.debug("AshScylla: Final params: #{inspect(params)}")
+    Logger.debug(fn -> "AshScylla: Executing run_query on #{table}" end)
+    Logger.debug(fn -> "AshScylla: Final query: #{inspect(query)}" end)
+    Logger.debug(fn -> "AshScylla: Final params: #{inspect(params)}" end)
 
     result =
       Telemetry.span(resource, :read, query, fn ->
         case repo.query(query, params, opts) do
           {:ok, %Xandra.Page{content: content, columns: columns}} when columns != nil ->
             rows = content || []
-            records = Enum.map(rows, &to_ash_record(&1, resource, columns))
+            names = column_names(columns)
+            records = Enum.map(rows, &to_ash_record(&1, resource, names))
             records = maybe_apply_in_memory_sort(records, sorts, order_dropped?)
             {:ok, records}
 
@@ -759,7 +760,7 @@ defmodule AshScylla.DataLayer do
       []
       |> maybe_put(:consistency, consistency)
 
-    Logger.debug("AshScylla: Bulk creating records in table #{source(resource)}")
+    Logger.debug(fn -> "AshScylla: Bulk creating records in table #{source(resource)}" end)
 
     result =
       statements
@@ -889,9 +890,9 @@ defmodule AshScylla.DataLayer do
       {:ok, {where_clause, where_params}} ->
         # CQL does not allow UPDATE without a SET clause — skip when no attrs changed.
         if set_clauses == [] do
-          Logger.debug(
+          Logger.debug(fn ->
             "AshScylla: update_query: no attribute changes, skipping UPDATE and returning existing records"
-          )
+          end)
 
           run_query(data_layer_query, resource)
         else
@@ -905,7 +906,7 @@ defmodule AshScylla.DataLayer do
               where_clause
             ])
 
-          Logger.debug("AshScylla: Executing bulk UPDATE on #{sanitized_table}")
+          Logger.debug(fn -> "AshScylla: Executing bulk UPDATE on #{sanitized_table}" end)
 
           with {:ok, _} <- handle_result(repo.query(query, set_values ++ where_params, opts)) do
             run_query(data_layer_query, resource)
@@ -940,7 +941,7 @@ defmodule AshScylla.DataLayer do
             if(needs_allow_filtering, do: " ALLOW FILTERING", else: "")
           ])
 
-        Logger.debug("AshScylla: Executing bulk DELETE on #{sanitized_table}")
+        Logger.debug(fn -> "AshScylla: Executing bulk DELETE on #{sanitized_table}" end)
 
         with {:ok, _} <- handle_result(repo.query(query, where_params, opts)), do: :ok
     end
@@ -1509,7 +1510,7 @@ defmodule AshScylla.DataLayer do
         if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
       ])
 
-    Logger.debug("AshScylla: Executing UPSERT: #{query} with params #{inspect(values)}")
+    Logger.debug(fn -> "AshScylla: Executing UPSERT: #{query} with params #{inspect(values)}" end)
 
     case repo.query(query, values, opts) do
       {:ok, %Xandra.Page{content: [[true]]}} ->
@@ -1652,9 +1653,9 @@ defmodule AshScylla.DataLayer do
     attrs = changeset.attributes
 
     if map_size(attrs) > 0 do
-      Logger.debug(
+      Logger.debug(fn ->
         "AshScylla: changeset_to_update_attrs: using changeset.attributes with #{map_size(attrs)} keys: #{inspect(Map.keys(attrs))}"
-      )
+      end)
 
       attrs
     else
@@ -1685,9 +1686,9 @@ defmodule AshScylla.DataLayer do
 
         filtered = Map.filter(simple_atomics, fn {k, _v} -> k in resource_attr_names end)
 
-        Logger.debug(
+        Logger.debug(fn ->
           "AshScylla: changeset_to_update_attrs: using atomics with #{map_size(filtered)} keys: #{inspect(Map.keys(filtered))}"
-        )
+        end)
 
         filtered
       else
@@ -1701,9 +1702,9 @@ defmodule AshScylla.DataLayer do
         casted = Map.get(changeset, :casted_attributes, %{})
         filtered = Map.filter(casted, fn {k, _v} -> k in resource_attr_names end)
 
-        Logger.debug(
+        Logger.debug(fn ->
           "AshScylla: changeset_to_update_attrs: using casted_attributes with #{map_size(filtered)} keys: #{inspect(Map.keys(filtered))}"
-        )
+        end)
 
         filtered
       end
@@ -1771,7 +1772,7 @@ defmodule AshScylla.DataLayer do
         if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
       ])
 
-    Logger.debug("AshScylla: Executing INSERT on #{sanitized_table}")
+    Logger.debug(fn -> "AshScylla: Executing INSERT on #{sanitized_table}" end)
 
     with {:ok, _} <- repo.query(query, values, opts),
          pk <- get_primary_key(%{attributes: attrs}, resource),
@@ -1786,9 +1787,9 @@ defmodule AshScylla.DataLayer do
     # If there are no changed attributes (e.g. only relationships touched),
     # skip the UPDATE entirely — generating UPDATE table SET WHERE ... is invalid CQL.
     if map_size(attrs) == 0 do
-      Logger.debug(
+      Logger.debug(fn ->
         "do_update: no changed attributes, skipping UPDATE and fetching existing record"
-      )
+      end)
 
       pk = get_primary_key(changeset, resource)
 
@@ -1824,7 +1825,7 @@ defmodule AshScylla.DataLayer do
         lwt_suffix
       ])
 
-    Logger.debug("AshScylla: Executing UPDATE on #{sanitized_table}")
+    Logger.debug(fn -> "AshScylla: Executing UPDATE on #{sanitized_table}" end)
 
     case repo.query(query, values ++ pk_values, opts) do
       {:ok, %Xandra.Page{content: [[false]]}} ->
@@ -1865,7 +1866,7 @@ defmodule AshScylla.DataLayer do
         if(needs_allow_filtering, do: " ALLOW FILTERING", else: "")
       ])
 
-    Logger.debug("AshScylla: Executing DELETE on #{sanitized_table}")
+    Logger.debug(fn -> "AshScylla: Executing DELETE on #{sanitized_table}" end)
 
     # Use LWT IF EXISTS for conditional delete when LWT is enabled
     lwt? = Dsl.lwt(resource)
@@ -1906,7 +1907,9 @@ defmodule AshScylla.DataLayer do
         " LIMIT 1"
       ])
 
-    Logger.debug("AshScylla: Executing SELECT: #{query} with params #{inspect(pk_values)}")
+    Logger.debug(fn ->
+      "AshScylla: Executing SELECT: #{query} with params #{inspect(pk_values)}"
+    end)
 
     case repo.query(query, pk_values) do
       {:ok, %Xandra.Page{content: [row | _], columns: columns}} when columns != nil ->
@@ -2007,6 +2010,18 @@ defmodule AshScylla.DataLayer do
     Map.merge(pk_from_data, pk_from_attrs_non_nil)
   end
 
+  # Extract column names once per page. Xandra columns can be 4-tuples:
+  # {keyspace, table, column_name, type}, 3-tuples: {keyspace, table, column_name}
+  # (some Xandra versions), or plain strings (some test fakes).
+  @spec column_names(list()) :: [String.t()]
+  defp column_names(columns) when is_list(columns) do
+    Enum.map(columns, fn
+      {_, _, name, _} when is_binary(name) -> name
+      {_, _, name} when is_binary(name) -> name
+      name when is_binary(name) -> name
+    end)
+  end
+
   @spec to_ash_record(term(), module(), list() | nil) :: struct()
   defp to_ash_record(record, resource, columns \\ nil)
 
@@ -2014,20 +2029,20 @@ defmodule AshScylla.DataLayer do
     to_ash_record(row, resource, columns)
   end
 
-  defp to_ash_record(record, resource, columns) when is_list(record) and is_list(columns) do
-    # Convert positional list from Xandra to a map using column metadata names.
-    # Xandra columns can be 4-tuples: {keyspace, table, column_name, type}
-    # or 3-tuples: {keyspace, table, column_name} (some Xandra versions)
-    # or plain strings (some test fakes).
+  defp to_ash_record(record, resource, names) when is_list(record) and is_list(names) do
+    # Convert positional list from Xandra to a map using precomputed column names.
+    # Column entries may be plain names (strings) or Xandra column tuples
+    # ({keyspace, table, name[, type]}) — extract the name in both cases.
     record_map =
       record
-      |> Enum.zip(columns)
+      |> Enum.zip(names)
       |> Enum.reduce(%{}, fn {value, col}, acc ->
         col_name =
           case col do
             {_, _, name, _} when is_binary(name) -> name
             {_, _, name} when is_binary(name) -> name
             name when is_binary(name) -> name
+            other -> other
           end
 
         Map.put(acc, col_name, value)
