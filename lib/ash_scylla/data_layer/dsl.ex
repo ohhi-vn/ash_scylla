@@ -179,6 +179,8 @@ defmodule AshScylla.DataLayer.Dsl do
   - **Multitenancy** - Context-based and attribute-based strategies (Ash 3.0)
   """
 
+  alias AshScylla.DataLayer.SecondaryIndex
+
   @doc """
   Macro for configuring ScyllaDB options in Ash resources.
 
@@ -257,292 +259,61 @@ defmodule AshScylla.DataLayer.Dsl do
         end
       end
   """
+  # Registry mapping DSL option names to their AST-transformer handlers.
+  # Handlers return the replacement node, or the node unchanged when its
+  # argument shape does not match (mirroring fall-through to the catch-all).
+  @handlers %{
+    table: :set_option,
+    keyspace: :set_option,
+    consistency: :set_option,
+    ttl: :set_option,
+    pagination: :set_option,
+    per_action_consistency: :set_option,
+    lwt: :set_option,
+    repo: :set_option,
+    migrate: :set_option,
+    base_filter: :set_option,
+    default_context: :set_option,
+    description: :set_option,
+    secondary_index: :secondary_index,
+    materialized_view: :materialized_view,
+    identity: :identity,
+    aggregate: :aggregate,
+    calculation: :calculation,
+    preparation: :single_field_adder,
+    change: :single_field_adder,
+    validation: :single_field_adder,
+    pipeline: :single_field_adder,
+    multitenancy: :multitenancy,
+    code_interface: :code_interface,
+    relationship: :relationship,
+    action: :action
+  }
+
+  @setter_funs %{
+    table: :__set_table__,
+    keyspace: :__set_keyspace__,
+    consistency: :__set_consistency__,
+    ttl: :__set_ttl__,
+    pagination: :__set_pagination__,
+    per_action_consistency: :__set_per_action_consistency__,
+    lwt: :__set_lwt__,
+    repo: :__set_repo__,
+    migrate: :__set_migrate__,
+    base_filter: :__set_base_filter__,
+    default_context: :__set_default_context__,
+    description: :__set_description__
+  }
+
   @spec scylla(keyword()) :: Macro.t()
   defmacro scylla(do: block) do
     transformed =
       Macro.prewalk(block, fn
-        # ── Existing ScyllaDB options ──
+        {name, _, _} = node when is_atom(name) and is_map_key(@handlers, name) ->
+          dispatch_handler(Map.fetch!(@handlers, name), node)
 
-        {:table, meta, [value]} ->
-          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_table__]},
-           meta, [{:__MODULE__, [], nil}, value]}
-
-        {:keyspace, meta, [value]} ->
-          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_keyspace__]},
-           meta, [{:__MODULE__, [], nil}, value]}
-
-        {:consistency, meta, [value]} ->
-          {{:., meta,
-            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_consistency__]}, meta,
-           [{:__MODULE__, [], nil}, value]}
-
-        {:ttl, meta, [value]} ->
-          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_ttl__]}, meta,
-           [{:__MODULE__, [], nil}, value]}
-
-        {:secondary_index, meta, args} ->
-          index_config =
-            case args do
-              [column] when is_atom(column) ->
-                quote do: AshScylla.DataLayer.Dsl.parse_secondary_index(unquote(column))
-
-              [columns] when is_list(columns) ->
-                quote do: AshScylla.DataLayer.Dsl.parse_secondary_index(unquote(columns))
-
-              [{column, opts}] when is_atom(column) ->
-                quote do:
-                        AshScylla.DataLayer.Dsl.parse_secondary_index(
-                          {unquote(column), unquote(opts)}
-                        )
-
-              [column, opts] when is_atom(column) and is_list(opts) ->
-                quote do:
-                        AshScylla.DataLayer.Dsl.parse_secondary_index(
-                          {unquote(column), unquote(opts)}
-                        )
-            end
-
-          {{:., meta,
-            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__add_secondary_index__]},
-           meta, [{:__MODULE__, [], nil}, index_config]}
-
-        {:materialized_view, meta, [{view_name, view_config}]} when is_atom(view_name) ->
-          view_map =
-            quote do: %{
-                    name: unquote(view_name),
-                    config: unquote(view_config)
-                  }
-
-          {{:., meta,
-            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__add_materialized_view__]},
-           meta, [{:__MODULE__, [], nil}, view_map]}
-
-        {:materialized_view, meta, [view_name, view_config]}
-        when is_atom(view_name) and is_list(view_config) ->
-          view_map =
-            quote do: %{
-                    name: unquote(view_name),
-                    config: unquote(view_config)
-                  }
-
-          {{:., meta,
-            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__add_materialized_view__]},
-           meta, [{:__MODULE__, [], nil}, view_map]}
-
-        {:materialized_view, _meta, [view_config]} when is_list(view_config) ->
-          raise "materialized_view requires a name, e.g. materialized_view :view_name, primary_key: [...]"
-
-        {:pagination, meta, [value]} ->
-          {{:., meta,
-            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_pagination__]}, meta,
-           [{:__MODULE__, [], nil}, value]}
-
-        {:per_action_consistency, meta, [value]} ->
-          {{:., meta,
-            [
-              {:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]},
-              :__set_per_action_consistency__
-            ]}, meta, [{:__MODULE__, [], nil}, value]}
-
-        {:lwt, meta, [value]} ->
-          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_lwt__]}, meta,
-           [{:__MODULE__, [], nil}, value]}
-
-        {:repo, meta, [value]} ->
-          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_repo__]},
-           meta, [{:__MODULE__, [], nil}, value]}
-
-        {:migrate, meta, [value]} ->
-          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_migrate__]},
-           meta, [{:__MODULE__, [], nil}, value]}
-
-        # ── Ash 3.0+ resource-level options ──
-
-        {:base_filter, meta, [value]} ->
-          {{:., meta,
-            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_base_filter__]}, meta,
-           [{:__MODULE__, [], nil}, value]}
-
-        {:default_context, meta, [value]} ->
-          {{:., meta,
-            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_default_context__]},
-           meta, [{:__MODULE__, [], nil}, value]}
-
-        {:description, meta, [value]} ->
-          {{:., meta,
-            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_description__]}, meta,
-           [{:__MODULE__, [], nil}, value]}
-
-        # ── Identity DSL ──
-
-        {:identity, meta, [name | rest]} when is_atom(name) ->
-          {columns, opts} =
-            case rest do
-              [columns] when is_list(columns) -> {columns, []}
-              [columns, opts] when is_list(columns) and is_list(opts) -> {columns, opts}
-              _ -> raise "identity requires columns list, e.g. identity :unique_email, [:email]"
-            end
-
-          identity_map =
-            quote do: %{
-                    name: unquote(name),
-                    columns: unquote(columns),
-                    options: unquote(opts)
-                  }
-
-          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__add_identity__]},
-           meta, [{:__MODULE__, [], nil}, identity_map]}
-
-        # ── Aggregate DSL ──
-
-        {:aggregate, meta, [type, name | rest]} when is_atom(type) and is_atom(name) ->
-          {field, opts} =
-            case rest do
-              [] -> {nil, []}
-              [opts] when is_list(opts) -> {nil, opts}
-              [{field, opts}] when is_list(opts) -> {field, opts}
-              [field] when is_atom(field) -> {field, []}
-              _ -> {nil, []}
-            end
-
-          aggregate_map =
-            quote do: %{
-                    type: unquote(type),
-                    name: unquote(name),
-                    field: unquote(field),
-                    options: unquote(opts)
-                  }
-
-          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__add_aggregate__]},
-           meta, [{:__MODULE__, [], nil}, aggregate_map]}
-
-        # ── Calculation DSL ──
-
-        {:calculation, meta, [name, type, expression | rest]} when is_atom(name) and is_atom(type) ->
-          calc_opts =
-            case rest do
-              [] -> []
-              [opts] when is_list(opts) -> opts
-              _ -> []
-            end
-
-          calc_map =
-            quote do: %{
-                    name: unquote(name),
-                    type: unquote(type),
-                    expression: unquote(expression),
-                    options: unquote(calc_opts)
-                  }
-
-          {{:., meta,
-            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__add_calculation__]}, meta,
-           [{:__MODULE__, [], nil}, calc_map]}
-
-        # ── Preparation DSL ──
-
-        {:preparation, meta, [value]} ->
-          prep_map = quote do: %{preparation: unquote(value)}
-
-          {{:., meta,
-            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__add_preparation__]}, meta,
-           [{:__MODULE__, [], nil}, prep_map]}
-
-        # ── Change DSL ──
-
-        {:change, meta, [value]} ->
-          change_map = quote do: %{change: unquote(value)}
-
-          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__add_change__]},
-           meta, [{:__MODULE__, [], nil}, change_map]}
-
-        # ── Validation DSL ──
-
-        {:validation, meta, [value]} ->
-          validation_map = quote do: %{validation: unquote(value)}
-
-          {{:., meta,
-            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__add_validation__]}, meta,
-           [{:__MODULE__, [], nil}, validation_map]}
-
-        # ── Pipeline DSL ──
-
-        {:pipeline, meta, [value]} ->
-          pipeline_map = quote do: %{pipeline: unquote(value)}
-
-          {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__add_pipeline__]},
-           meta, [{:__MODULE__, [], nil}, pipeline_map]}
-
-        # ── Multitenancy DSL ──
-
-        {:multitenancy, meta, [value]} when is_list(value) ->
-          strategy = value[:strategy] || :context
-          attribute = value[:attribute]
-
-          mt_map =
-            quote do: %{
-                    strategy: unquote(strategy),
-                    attribute: unquote(attribute)
-                  }
-
-          {{:., meta,
-            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_multitenancy__]}, meta,
-           [{:__MODULE__, [], nil}, mt_map]}
-
-        # ── Code Interface DSL ──
-
-        {:code_interface, meta, [value]} when is_list(value) ->
-          ci_map = quote do: %{definitions: unquote(value)}
-
-          {{:., meta,
-            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__set_code_interface__]},
-           meta, [{:__MODULE__, [], nil}, ci_map]}
-
-        # ── Relationship DSL ──
-
-        {:relationship, meta, [type, name, target | rest]}
-        when is_atom(type) and is_atom(name) ->
-          rel_opts =
-            case rest do
-              [] -> []
-              [opts] when is_list(opts) -> opts
-              _ -> []
-            end
-
-          rel_map =
-            quote do: %{
-                    type: unquote(type),
-                    name: unquote(name),
-                    target: unquote(target),
-                    options: unquote(rel_opts)
-                  }
-
-          {{:., meta,
-            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__add_relationship__]}, meta,
-           [{:__MODULE__, [], nil}, rel_map]}
-
-        # ── Action DSL (extended) ──
-
-        {:action, meta, [type, name | rest]} when is_atom(type) and is_atom(name) ->
-          action_config =
-            case rest do
-              [] -> []
-              [opts] when is_list(opts) -> opts
-              _ -> []
-            end
-
-          action_map =
-            quote do: %{
-                    type: unquote(type),
-                    name: unquote(name),
-                    options: unquote(action_config)
-                  }
-
-          {{:., meta,
-            [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, :__add_action_config__]}, meta,
-           [{:__MODULE__, [], nil}, action_map]}
-
-        other ->
-          other
+        node ->
+          node
       end)
 
     quote do
@@ -633,14 +404,244 @@ defmodule AshScylla.DataLayer.Dsl do
   end
 
   # ============================================================================
+  # scylla/1 AST transformers
+  #
+  # Each handler receives the DSL node ({name, meta, args}) and returns its
+  # replacement AST, or the node unchanged when its shape does not match.
+  # ============================================================================
+
+  defp dispatch_handler(:set_option, node), do: transform_set_option(node)
+  defp dispatch_handler(:secondary_index, node), do: transform_secondary_index(node)
+  defp dispatch_handler(:materialized_view, node), do: transform_materialized_view(node)
+  defp dispatch_handler(:identity, node), do: transform_identity(node)
+  defp dispatch_handler(:aggregate, node), do: transform_aggregate(node)
+  defp dispatch_handler(:calculation, node), do: transform_calculation(node)
+  defp dispatch_handler(:single_field_adder, node), do: transform_single_field_adder(node)
+  defp dispatch_handler(:multitenancy, node), do: transform_multitenancy(node)
+  defp dispatch_handler(:code_interface, node), do: transform_code_interface(node)
+  defp dispatch_handler(:relationship, node), do: transform_relationship(node)
+  defp dispatch_handler(:action, node), do: transform_action(node)
+
+  # Builds an AST calling AshScylla.DataLayer.Dsl.<fun>(__MODULE__, <arg>).
+  # The __aliases__ form is intentional: it resolves in the *resource* module
+  # when the generated code is expanded.
+  defp dsl_call(fun, meta, arg_ast) do
+    {{:., meta, [{:__aliases__, meta, [:AshScylla, :DataLayer, :Dsl]}, fun]}, meta,
+     [{:__MODULE__, [], nil}, arg_ast]}
+  end
+
+  defp transform_set_option({name, meta, [value]}) do
+    setter = Map.fetch!(@setter_funs, name)
+    dsl_call(setter, meta, value)
+  end
+
+  defp transform_set_option(node), do: node
+
+  defp transform_secondary_index({:secondary_index, meta, args}) do
+    index_config =
+      case args do
+        [column] when is_atom(column) ->
+          quote do: AshScylla.DataLayer.Dsl.parse_secondary_index(unquote(column))
+
+        [columns] when is_list(columns) ->
+          quote do: AshScylla.DataLayer.Dsl.parse_secondary_index(unquote(columns))
+
+        [{column, opts}] when is_atom(column) ->
+          quote do:
+                  AshScylla.DataLayer.Dsl.parse_secondary_index({unquote(column), unquote(opts)})
+
+        [column, opts] when is_atom(column) and is_list(opts) ->
+          quote do:
+                  AshScylla.DataLayer.Dsl.parse_secondary_index({unquote(column), unquote(opts)})
+      end
+
+    dsl_call(:__add_secondary_index__, meta, index_config)
+  end
+
+  defp transform_secondary_index(node), do: node
+
+  defp transform_materialized_view({:materialized_view, meta, [{view_name, view_config}]})
+       when is_atom(view_name) do
+    materialized_view_call(meta, view_name, view_config)
+  end
+
+  defp transform_materialized_view({:materialized_view, meta, [view_name, view_config]})
+       when is_atom(view_name) and is_list(view_config) do
+    materialized_view_call(meta, view_name, view_config)
+  end
+
+  defp transform_materialized_view({:materialized_view, _meta, [view_config]})
+       when is_list(view_config) do
+    raise "materialized_view requires a name, e.g. materialized_view :view_name, primary_key: [...]"
+  end
+
+  defp transform_materialized_view(node), do: node
+
+  defp materialized_view_call(meta, view_name, view_config) do
+    view_map =
+      quote do: %{
+              name: unquote(view_name),
+              config: unquote(view_config)
+            }
+
+    dsl_call(:__add_materialized_view__, meta, view_map)
+  end
+
+  defp transform_identity({:identity, meta, [identity_name | rest]})
+       when is_atom(identity_name) do
+    {columns, opts} =
+      case rest do
+        [columns] when is_list(columns) -> {columns, []}
+        [columns, opts] when is_list(columns) and is_list(opts) -> {columns, opts}
+        _ -> raise "identity requires columns list, e.g. identity :unique_email, [:email]"
+      end
+
+    identity_map =
+      quote do: %{
+              name: unquote(identity_name),
+              columns: unquote(columns),
+              options: unquote(opts)
+            }
+
+    dsl_call(:__add_identity__, meta, identity_map)
+  end
+
+  defp transform_identity(node), do: node
+
+  defp transform_aggregate({:aggregate, meta, [type, aggregate_name | rest]})
+       when is_atom(type) and is_atom(aggregate_name) do
+    {field, opts} =
+      case rest do
+        [] -> {nil, []}
+        [opts] when is_list(opts) -> {nil, opts}
+        [{field, opts}] when is_list(opts) -> {field, opts}
+        [field] when is_atom(field) -> {field, []}
+        _ -> {nil, []}
+      end
+
+    aggregate_map =
+      quote do: %{
+              type: unquote(type),
+              name: unquote(aggregate_name),
+              field: unquote(field),
+              options: unquote(opts)
+            }
+
+    dsl_call(:__add_aggregate__, meta, aggregate_map)
+  end
+
+  defp transform_aggregate(node), do: node
+
+  defp transform_calculation({:calculation, meta, [calc_name, type, expression | rest]})
+       when is_atom(calc_name) and is_atom(type) do
+    calc_opts =
+      case rest do
+        [] -> []
+        [opts] when is_list(opts) -> opts
+        _ -> []
+      end
+
+    calc_map =
+      quote do: %{
+              name: unquote(calc_name),
+              type: unquote(type),
+              expression: unquote(expression),
+              options: unquote(calc_opts)
+            }
+
+    dsl_call(:__add_calculation__, meta, calc_map)
+  end
+
+  defp transform_calculation(node), do: node
+
+  # preparation/change/validation/pipeline each wrap their single argument in a
+  # map keyed by the option name.
+  defp transform_single_field_adder({name, meta, [value]}) do
+    item_map = quote do: %{unquote(name) => unquote(value)}
+    dsl_call(adder_fun(name), meta, item_map)
+  end
+
+  defp transform_single_field_adder(node), do: node
+
+  defp adder_fun(:preparation), do: :__add_preparation__
+  defp adder_fun(:change), do: :__add_change__
+  defp adder_fun(:validation), do: :__add_validation__
+  defp adder_fun(:pipeline), do: :__add_pipeline__
+
+  defp transform_multitenancy({:multitenancy, meta, [value]}) when is_list(value) do
+    strategy = value[:strategy] || :context
+    attribute = value[:attribute]
+
+    mt_map =
+      quote do: %{
+              strategy: unquote(strategy),
+              attribute: unquote(attribute)
+            }
+
+    dsl_call(:__set_multitenancy__, meta, mt_map)
+  end
+
+  defp transform_multitenancy(node), do: node
+
+  defp transform_code_interface({:code_interface, meta, [value]}) when is_list(value) do
+    ci_map = quote do: %{definitions: unquote(value)}
+    dsl_call(:__set_code_interface__, meta, ci_map)
+  end
+
+  defp transform_code_interface(node), do: node
+
+  defp transform_relationship({:relationship, meta, [type, rel_name, target | rest]})
+       when is_atom(type) and is_atom(rel_name) do
+    rel_opts =
+      case rest do
+        [] -> []
+        [opts] when is_list(opts) -> opts
+        _ -> []
+      end
+
+    rel_map =
+      quote do: %{
+              type: unquote(type),
+              name: unquote(rel_name),
+              target: unquote(target),
+              options: unquote(rel_opts)
+            }
+
+    dsl_call(:__add_relationship__, meta, rel_map)
+  end
+
+  defp transform_relationship(node), do: node
+
+  defp transform_action({:action, meta, [action_type, action_name | rest]})
+       when is_atom(action_type) and is_atom(action_name) do
+    action_opts =
+      case rest do
+        [] -> []
+        [opts] when is_list(opts) -> opts
+        _ -> []
+      end
+
+    action_map =
+      quote do: %{
+              type: unquote(action_type),
+              name: unquote(action_name),
+              options: unquote(action_opts)
+            }
+
+    dsl_call(:__add_action_config__, meta, action_map)
+  end
+
+  defp transform_action(node), do: node
+
+  # ============================================================================
   # Parse helpers
   # ============================================================================
 
   @doc false
   @spec parse_secondary_index(atom() | list(atom()) | {atom(), keyword()}) ::
-          AshScylla.DataLayer.SecondaryIndex.t()
+          SecondaryIndex.t()
   def parse_secondary_index(input) do
-    AshScylla.DataLayer.SecondaryIndex.parse(input)
+    SecondaryIndex.parse(input)
   end
 
   # ============================================================================

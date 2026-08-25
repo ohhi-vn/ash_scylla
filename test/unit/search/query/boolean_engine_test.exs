@@ -93,4 +93,59 @@ defmodule AshScylla.Search.Query.BooleanEngineTest do
       assert length(result) == 2
     end
   end
+
+  describe "intersect_scored/1" do
+    test "intersects sorted scored lists and sums scores" do
+      result =
+        BooleanEngine.intersect_scored([
+          [{"a", 2}, {"b", 1}, {"c", 3}],
+          [{"b", 4}, {"c", 1}, {"d", 2}]
+        ])
+
+      assert result == [{"b", 5}, {"c", 4}]
+    end
+
+    test "sorts unsorted input before intersecting" do
+      result =
+        BooleanEngine.intersect_scored([
+          [{"c", 3}, {"a", 2}, {"b", 1}],
+          [{"d", 2}, {"c", 1}, {"b", 4}]
+        ])
+
+      assert result == [{"b", 5}, {"c", 4}]
+    end
+
+    test "handles empty and single lists" do
+      assert BooleanEngine.intersect_scored([]) == []
+      assert BooleanEngine.intersect_scored([[{"a", 1}]]) == [{"a", 1}]
+      assert BooleanEngine.intersect_scored([[]]) == []
+    end
+
+    test "intersects more than two lists" do
+      result =
+        BooleanEngine.intersect_scored([
+          [{"a", 1}, {"b", 1}],
+          [{"a", 1}, {"b", 1}],
+          [{"a", 1}, {"c", 1}]
+        ])
+
+      assert result == [{"a", 3}]
+    end
+  end
+
+  describe "union_scored/1" do
+    test "unions lists summing duplicate posts" do
+      result =
+        BooleanEngine.union_scored([
+          [{"a", 1}, {"b", 2}],
+          [{"b", 4}, {"c", 1}]
+        ])
+
+      assert result == [{"a", 1}, {"b", 6}, {"c", 1}]
+    end
+
+    test "handles empty input" do
+      assert BooleanEngine.union_scored([]) == []
+    end
+  end
 end

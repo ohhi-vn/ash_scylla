@@ -153,7 +153,8 @@ defmodule AshScylla.DataLayer.Batch do
       )
       |> Enum.reduce_while({:ok, []}, fn
         {:ok, {:ok, chunk_results}}, {:ok, acc} ->
-          {:cont, {:ok, acc ++ chunk_results}}
+          # Prepend instead of appending: O(1) per chunk, reversed once below.
+          {:cont, {:ok, Enum.reverse(chunk_results, acc)}}
 
         {:ok, {:error, reason}}, _acc ->
           {:halt, {:error, reason}}
@@ -163,7 +164,7 @@ defmodule AshScylla.DataLayer.Batch do
       end)
 
     case results do
-      {:ok, acc} -> {:ok, acc}
+      {:ok, acc} -> {:ok, Enum.reverse(acc)}
       {:error, _} = error -> error
     end
   end

@@ -2,27 +2,24 @@ defmodule AshScylla.Search.Indexer.Builder do
   @moduledoc """
   Builds the inverted index for a document.
 
-  Takes the analyzed terms and writes them to the `search_post_terms` table
-  and the raw terms set to `search_post_fields` for later diff-based updates.
+  Writes document-level postings — one row per `(term, post_id)` with the
+  term's total frequency across all fields — to `search_post_terms`, and each
+  field's term/frequency map to `search_post_fields` for later diff-based
+  updates.
 
-  Uses `UNLOGGED BATCH` for efficient bulk writes.
-
-  ## Usage
-
-      Indexer.Builder.index(repo, keyspace, post_id, field_num, [
-        {"phoenix", 2},
-        {"elixir", 1}
-      ])
+  A document is written in a single `UNLOGGED BATCH`.
   """
 
   alias AshScylla.Identifier
   alias AshScylla.Search.Storage
 
-  @doc """
-  Indexes the analyzed terms for a single field of a post.
+  @batch_max_bytes 1_000_000
 
-  Writes term → post_id mappings to `search_post_terms` and stores
-  the set of unique terms in `search_post_fields` for future diffing.
+  @doc """
+  Indexes analyzed terms for every field of a post.
+
+  Takes `%{"field_name" => [{term, tf}]}`; aggregates the per-field maps into
+  document-level postings and writes everything in one batch.
 
   Returns `:ok` on success or `{:error, reason}` on failure.
   """
@@ -30,59 +27,103 @@ defmodule AshScylla.Search.Indexer.Builder do
           module(),
           String.t(),
           String.t(),
-          non_neg_integer(),
-          [{String.t(), pos_integer()}]
+          %{String.t() => [{String.t(), pos_integer()}]}
         ) :: :ok | {:error, term()}
-  def index(repo, keyspace, post_id, field, terms) when is_list(terms) and terms != [] do
-    cql = build_batch_cql(keyspace, post_id, field, terms)
-    execute_batch(repo, cql)
+  def index(repo, keyspace, post_id, fields_terms)
+
+  def index(_repo, _keyspace, _post_id, fields_terms) when fields_terms == %{} do
+    :ok
+  end
+
+  def index(repo, keyspace, post_id, fields_terms) when is_map(fields_terms) do
+    with {:ok, uuid} <- Identifier.validate_uuid(post_id),
+         {:ok, cql} <- build_batch_cql(keyspace, uuid, fields_terms) do
+      execute_batch(repo, cql)
+    end
   end
 
   @doc """
-  Indexes analyzed terms across multiple fields for a post.
+  Builds the UNLOGGED BATCH statement that inserts document-level postings
+  plus one `search_post_fields` row per non-empty field.
 
-  Accepts a map of `%{field_num => [{term, tf}]}` and writes all rows.
+  Values are interpolated only after validation/escaping: `post_id` must be a
+  UUID, and terms/field names become escaped CQL string literals.
   """
-  @spec index_fields(
-          module(),
-          String.t(),
-          String.t(),
-          %{non_neg_integer() => [{String.t(), pos_integer()}]}
-        ) :: :ok | {:error, term()}
-  def index_fields(repo, keyspace, post_id, fields_map) when is_map(fields_map) do
-    fields_map
-    |> Enum.reduce_while(:ok, fn {field, terms}, :ok ->
-      case index(repo, keyspace, post_id, field, terms) do
-        :ok -> {:cont, :ok}
-        {:error, _} = error -> {:halt, error}
-      end
-    end)
-  end
-
-  defp build_batch_cql(keyspace, post_id, field, terms) do
+  @spec build_batch_cql(String.t(), String.t(), %{String.t() => [{String.t(), pos_integer()}]}) ::
+          {:ok, String.t()} | {:error, :batch_too_large}
+  def build_batch_cql(keyspace, post_id, fields_terms) when is_map(fields_terms) do
     ks = Identifier.quote_name(keyspace)
-    table_terms = Identifier.quote_name("search_post_terms")
     table_fields = Identifier.quote_name("search_post_fields")
 
-    statement =
-      terms
-      |> Enum.map_join(";", fn {term, tf} ->
-        shard = Storage.shard_for(term)
+    posting_inserts =
+      fields_terms
+      |> Storage.sum_field_maps()
+      |> Enum.map_join(";", &posting_insert(keyspace, post_id, &1))
 
-        "INSERT INTO #{ks}.#{table_terms} (term, shard, post_id, field, tf) " <>
-          "VALUES (#{cql_string(term)}, #{shard}, #{post_id}, #{field}, #{tf})"
+    field_inserts =
+      fields_terms
+      |> Enum.reject(fn {_field, terms} -> terms == [] end)
+      |> Enum.map_join(";", fn {field, terms} ->
+        map_literal = terms_map_literal(terms)
+
+        "INSERT INTO #{ks}.#{table_fields} (post_id, field, terms) " <>
+          "VALUES (#{post_id}, #{cql_string(field)}, {#{map_literal}})"
       end)
 
-    unique_terms =
-      terms
-      |> Enum.map_join(", ", fn {term, _} -> cql_string(term) end)
+    full = posting_inserts <> ";" <> field_inserts
 
-    fields_insert =
-      "INSERT INTO #{ks}.#{table_fields} (post_id, field, terms) " <>
-        "VALUES (#{post_id}, #{field}, {#{unique_terms}})"
+    case validate_cql_length(full) do
+      :ok ->
+        {:ok, "BEGIN UNLOGGED BATCH\n#{posting_inserts};\n#{field_inserts};\nAPPLY BATCH;"}
 
-    validate_cql_length!(statement <> ";" <> fields_insert)
-    "BEGIN UNLOGGED BATCH\n#{statement};\n#{fields_insert};\nAPPLY BATCH;"
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  @doc """
+  Builds an UNLOGGED BATCH that upserts document-level posting rows only
+  (no `search_post_fields` writes). Used by the updater.
+  """
+  @spec build_postings_batch_cql(String.t(), String.t(), [{String.t(), pos_integer()}]) ::
+          {:ok, String.t()} | {:error, :batch_too_large}
+  def build_postings_batch_cql(keyspace, post_id, terms) when is_list(terms) do
+    inserts = posting_inserts(keyspace, post_id, terms)
+
+    case validate_cql_length(inserts) do
+      :ok ->
+        {:ok, "BEGIN UNLOGGED BATCH\n#{inserts};\nAPPLY BATCH;"}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp posting_inserts(keyspace, post_id, terms) do
+    Enum.map_join(terms, ";", &posting_insert(keyspace, post_id, &1))
+  end
+
+  defp posting_insert(keyspace, post_id, {term, tf}) do
+    ks = Identifier.quote_name(keyspace)
+    table_terms = Identifier.quote_name("search_post_terms")
+    shard = Storage.shard_for(term)
+
+    "INSERT INTO #{ks}.#{table_terms} (term, shard, post_id, tf) " <>
+      "VALUES (#{cql_string(term)}, #{shard}, #{post_id}, #{tf})"
+  end
+
+  @doc false
+  @spec cql_string(term()) :: String.t()
+  def cql_string(value) when is_binary(value) do
+    escaped = String.replace(value, "'", "''")
+    "'#{escaped}'"
+  end
+
+  defp terms_map_literal(terms) do
+    terms
+    |> Map.new(fn {term, tf} -> {term, tf} end)
+    |> Enum.sort_by(&elem(&1, 0))
+    |> Enum.map_join(", ", fn {term, tf} -> "#{cql_string(term)}: #{tf}" end)
   end
 
   defp execute_batch(repo, cql) do
@@ -92,13 +133,8 @@ defmodule AshScylla.Search.Indexer.Builder do
     end
   end
 
-  defp cql_string(value) when is_binary(value) do
-    escaped = String.replace(value, "'", "''")
-    "'#{escaped}'"
-  end
+  defp validate_cql_length(cql) when byte_size(cql) > @batch_max_bytes,
+    do: {:error, :batch_too_large}
 
-  defp validate_cql_length!(cql) when byte_size(cql) > 50_000_000,
-    do: raise("CQL batch too large")
-
-  defp validate_cql_length!(_cql), do: :ok
+  defp validate_cql_length(_cql), do: :ok
 end

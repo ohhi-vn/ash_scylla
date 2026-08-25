@@ -49,20 +49,6 @@ defmodule AshScylla.Search.AnalyzerTest do
     end
   end
 
-  describe "analyze_fields/1" do
-    test "merges term frequencies across fields" do
-      result =
-        Analyzer.analyze_fields(%{
-          title: "Elixir Phoenix",
-          body: "Phoenix is great for Elixir"
-        })
-
-      assert {"elixir", 2} in result
-      assert {"phoenix", 2} in result
-      assert {"great", 1} in result
-    end
-  end
-
   describe "analyze_query/1" do
     test "analyzes query terms for searching" do
       result = Analyzer.analyze_query("learning phoenix framework")
@@ -76,9 +62,23 @@ defmodule AshScylla.Search.AnalyzerTest do
       assert "elixir" in result
     end
 
+    test "removes stop words regardless of casing or punctuation" do
+      assert Analyzer.analyze_query("The") == []
+      assert Analyzer.analyze_query("THE.") == []
+      assert Analyzer.analyze_query("The Phoenix") == ["phoenix"]
+    end
+
     test "respects :stem option" do
       assert Analyzer.analyze_query("running", stem: false) == ["running"]
       assert Analyzer.analyze_query("running", stem: true) == ["run"]
+    end
+
+    test "applies the same pipeline as document analysis" do
+      text = "The Running Cats"
+      analyzed = Analyzer.analyze(text)
+      queried = Analyzer.analyze_query(text)
+
+      assert Enum.map(analyzed, &elem(&1, 0)) == queried |> Enum.uniq() |> Enum.sort()
     end
   end
 end

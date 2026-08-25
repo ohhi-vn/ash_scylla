@@ -1,120 +1,96 @@
 defmodule AshScylla.Search.Indexer.Updater do
   @moduledoc """
-  Updates the inverted index when a document's text changes.
+  Applies aggregate-level index diffs for a document.
 
-  Computes the diff between old and new terms:
-    1. Fetches the old term set from `search_post_fields`
-    2. Analyzes the new text to get new terms
-    3. Removes terms present in old but not new
-    4. Adds terms present in new but not old
+  Postings are stored at document level (one row per term with total
+  frequency), while `search_post_fields` keeps per-field maps. An update:
 
-  This avoids re-indexing unchanged terms.
+    1. Computes the new merged document totals from the stored field maps and
+       the newly analyzed fields
+    2. Deletes posting rows whose total dropped to zero
+    3. Upserts posting rows whose total changed
+    4. Rewrites the `search_post_fields` rows of every updated field
+
+  This keeps multi-field documents correct even when a term is shared across
+  fields (removing it from one field only lowers the total).
   """
 
   alias AshScylla.Identifier
+  alias AshScylla.Search.Indexer.Builder
+  alias AshScylla.Search.Indexer.Deleter
 
   @doc """
-  Updates the index for a single field of a post.
+  Applies a precomputed diff between merged old and new document totals.
 
-  Takes the repo, keyspace, post_id, field number, and the new text.
-  Reads the old terms from `search_post_fields`, computes the diff,
-  and applies only the necessary inserts and deletes.
+    * `upserts` — `[{"term", new_total}]` postings that are new or changed
+    * `deletes` — `["term"]` postings removed entirely
+    * `field_maps` — `%{"field" => [{term, tf}]}` analyzed maps of the fields
+      being updated; fields with an empty list have their stored row deleted
 
   Returns `:ok` on success or `{:error, reason}` on failure.
   """
-  @spec update_field(
+  @spec apply_diff(
           module(),
           String.t(),
           String.t(),
-          non_neg_integer(),
           [{String.t(), pos_integer()}],
-          MapSet.t()
+          [String.t()],
+          %{String.t() => [{String.t(), pos_integer()}]}
         ) :: :ok | {:error, term()}
-  def update_field(repo, keyspace, post_id, field, new_terms, old_term_set) do
-    new_term_set =
-      new_terms
-      |> Enum.map(&elem(&1, 0))
-      |> MapSet.new()
-
-    to_remove = MapSet.difference(old_term_set, new_term_set)
-    to_add = MapSet.difference(new_term_set, old_term_set)
-
-    add_entries =
-      new_terms
-      |> Enum.filter(fn {term, _} -> MapSet.member?(to_add, term) end)
-
-    case maybe_delete_terms(repo, keyspace, post_id, field, to_remove) do
-      :ok -> maybe_insert_terms(repo, keyspace, post_id, field, add_entries)
-      {:error, reason} -> {:error, reason}
+  def apply_diff(repo, keyspace, post_id, upserts, deletes, field_maps) do
+    with {:ok, uuid} <- Identifier.validate_uuid(post_id) do
+      with :ok <- delete_postings(repo, keyspace, uuid, deletes),
+           :ok <- upsert_postings(repo, keyspace, uuid, upserts) do
+        write_fields(repo, keyspace, uuid, field_maps)
+      end
     end
   end
 
-  @doc """
-  Fetches the stored term set for a post field from `search_post_fields`.
-
-  Returns an empty `MapSet` if no terms are found.
-  """
-  @spec fetch_old_terms(module(), String.t(), String.t(), non_neg_integer()) ::
-          {:ok, MapSet.t()} | {:error, term()}
-  def fetch_old_terms(repo, keyspace, post_id, field) do
-    AshScylla.Search.Storage.fetch_terms(repo, keyspace, post_id, field)
+  defp delete_postings(repo, keyspace, uuid, terms) do
+    Deleter.delete_postings(repo, keyspace, uuid, terms)
   end
 
-  defp maybe_delete_terms(repo, keyspace, post_id, field, to_remove) do
-    if MapSet.size(to_remove) == 0 do
-      :ok
-    else
-      ks = Identifier.quote_name(keyspace)
-      table = Identifier.quote_name("search_post_terms")
+  defp upsert_postings(_repo, _keyspace, _uuid, []), do: :ok
 
-      Enum.reduce_while(to_remove, :ok, fn term, :ok ->
-        shard = AshScylla.Search.Storage.shard_for(term)
-        escaped = String.replace(term, "'", "''")
-
-        query =
-          "DELETE FROM #{ks}.#{table} WHERE term = '#{escaped}' AND shard = #{shard} AND post_id = #{post_id} AND field = #{field}"
-
-        case repo.query(query, []) do
-          {:ok, _} -> {:cont, :ok}
-          {:error, reason} -> {:halt, {:error, reason}}
-        end
-      end)
+  defp upsert_postings(repo, keyspace, uuid, upserts) do
+    with {:ok, cql} <- Builder.build_postings_batch_cql(keyspace, uuid, Enum.sort(upserts)) do
+      case repo.query(cql, []) do
+        {:ok, _} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
-  defp maybe_insert_terms(_repo, _keyspace, _post_id, _field, []) do
-    :ok
-  end
-
-  defp maybe_insert_terms(repo, keyspace, post_id, field, add_entries) do
+  # Full-map overwrite per updated field: additions, frequency changes, and
+  # removals are all reflected, so stale entries can never accumulate.
+  defp write_fields(repo, keyspace, uuid, field_maps) do
     ks = Identifier.quote_name(keyspace)
-    table_terms = Identifier.quote_name("search_post_terms")
-    table_fields = Identifier.quote_name("search_post_fields")
+    table = Identifier.quote_name("search_post_fields")
 
-    inserts =
-      Enum.map_join(add_entries, ";", fn {term, tf} ->
-        shard = AshScylla.Search.Storage.shard_for(term)
-        escaped = String.replace(term, "'", "''")
+    Enum.reduce_while(field_maps, :ok, fn {field, terms}, :ok ->
+      result =
+        if terms == [] do
+          repo.query("DELETE FROM #{ks}.#{table} WHERE post_id = ? AND field = ?", [
+            uuid,
+            field
+          ])
+        else
+          map_literal =
+            terms
+            |> Map.new(fn {term, tf} -> {term, tf} end)
+            |> Enum.sort_by(&elem(&1, 0))
+            |> Enum.map_join(", ", fn {term, tf} -> "#{Builder.cql_string(term)}: #{tf}" end)
 
-        "INSERT INTO #{ks}.#{table_terms} (term, shard, post_id, field, tf) " <>
-          "VALUES ('#{escaped}', #{shard}, #{post_id}, #{field}, #{tf})"
-      end)
+          cql =
+            "UPDATE #{ks}.#{table} SET terms = {#{map_literal}} WHERE post_id = ? AND field = ?"
 
-    all_terms_set =
-      add_entries
-      |> Enum.map_join(", ", fn {term, _} ->
-        "'#{String.replace(term, "'", "''")}'"
-      end)
+          repo.query(cql, [uuid, field])
+        end
 
-    update_fields =
-      "UPDATE #{ks}.#{table_fields} SET terms = terms + {#{all_terms_set}} " <>
-        "WHERE post_id = #{post_id} AND field = #{field}"
-
-    cql = "BEGIN UNLOGGED BATCH\n#{inserts};\n#{update_fields};\nAPPLY BATCH;"
-
-    case repo.query(cql, []) do
-      {:ok, _} -> :ok
-      {:error, reason} -> {:error, reason}
-    end
+      case result do
+        {:ok, _} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
   end
 end

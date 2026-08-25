@@ -9,6 +9,16 @@ defmodule AshScylla.SearchTest do
     end
   end
 
+  # In-memory inverted index served by term, rows in Xandra shape.
+  defmodule IndexedRepo do
+    @postings %{
+      "phoenix" => [["p1", 2], ["p2", 1]],
+      "framework" => [["p2", 1]]
+    }
+
+    def query(_cql, [term]), do: {:ok, %{rows: Map.get(@postings, term, [])}}
+  end
+
   describe "search/4" do
     test "returns {:error, :empty_query} for empty query" do
       assert Search.search(nil, "ks", "") == {:error, :empty_query}
@@ -34,10 +44,37 @@ defmodule AshScylla.SearchTest do
     test "accepts num_shards option" do
       assert {:ok, _page} = Search.search(MockLookupRepo, "ks", "hello", num_shards: 8)
     end
+
+    test "full pipeline applies exclusions and ranks by tf" do
+      assert {:ok, page} = Search.search(IndexedRepo, "ks", "phoenix -framework")
+      assert page.entries == [{"p1", 2.0}]
+      assert page.total_count == 1
+
+      assert {:ok, page} = Search.search(IndexedRepo, "ks", "phoenix NOT framework")
+      assert page.entries == [{"p1", 2.0}]
+    end
+
+    test "full pipeline errors on pure negative query" do
+      assert Search.search(IndexedRepo, "ks", "-phoenix") == {:error, :missing_positive_term}
+    end
+
+    test "capitalized stop words are treated like any other stop word" do
+      assert {:ok, page} = Search.search(IndexedRepo, "ks", "The phoenix")
+      assert page.entries == [{"p1", 2.0}, {"p2", 1.0}]
+    end
+
+    test "bm25 derives usable stats when none are supplied" do
+      {:ok, page} = Search.search(IndexedRepo, "ks", "phoenix OR framework", strategy: :bm25)
+
+      assert Enum.all?(page.entries, fn {_id, score} -> score > 0.0 end)
+    end
   end
+
+  @post_id "550e8400-e29b-41d4-a716-446655440000"
 
   describe "delegated functions" do
     defmodule MockStorageRepo do
+      def query("SELECT" <> _, _params), do: {:ok, %{rows: []}}
       def query(_cql, _params), do: {:ok, %{rows: []}}
     end
 
@@ -50,15 +87,19 @@ defmodule AshScylla.SearchTest do
     end
 
     test "index/5 delegates to Indexer" do
-      assert Search.index(MockStorageRepo, "ks", "post-1", %{title: "hello"}) == :ok
+      assert Search.index(MockStorageRepo, "ks", @post_id, %{title: "hello"}) == :ok
     end
 
     test "update/5 delegates to Indexer" do
-      assert Search.update(MockStorageRepo, "ks", "post-1", %{title: "updated"}) == :ok
+      assert Search.update(MockStorageRepo, "ks", @post_id, %{title: "updated"}) == :ok
     end
 
     test "delete/3 delegates to Indexer" do
-      assert Search.delete(MockStorageRepo, "ks", "post-1") == :ok
+      assert Search.delete(MockStorageRepo, "ks", @post_id) == :ok
+    end
+
+    test "index/5 rejects invalid post ids" do
+      assert {:error, _} = Search.index(MockStorageRepo, "ks", "not-a-uuid", %{title: "x"})
     end
   end
 

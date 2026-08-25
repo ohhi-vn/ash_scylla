@@ -28,13 +28,17 @@ defmodule AshScylla.Search.Query.PaginatorTest do
       assert page.has_prev? == true
     end
 
-    test "clamps page number to valid range" do
+    test "returns empty entries for pages beyond the range" do
       results = Enum.map(1..5, fn i -> {"post#{i}", 10.0 - i} end)
 
       {:ok, page} = Paginator.paginate(results, page: 99, page_size: 10)
 
-      assert page.page_number == 1
-      assert length(page.entries) == 5
+      assert page.page_number == 99
+      assert page.entries == []
+      assert page.total_count == 5
+      assert page.total_pages == 1
+      assert page.has_next? == false
+      assert page.has_prev? == true
     end
 
     test "handles empty results" do

@@ -310,6 +310,83 @@ defmodule AshScylla.Connection do
   defp type_struct(%Decimal{} = d), do: {"decimal", d}
   defp type_struct(other), do: {"text", to_string(other)}
 
+  @doc """
+  Executes a CQL query and drains **all** result pages.
+
+  Regular `query/4` returns a single `%Xandra.Page{}`; result sets larger than
+  one page (server default ~5000 rows) are silently truncated unless callers
+  follow `paging_state` themselves. `query_all/4` follows every page and
+  returns the accumulated rows as a plain map:
+
+      {:ok, %{rows: rows}} | {:error, reason}
+
+  Intended for bounded reads that must observe complete result sets, such as
+  inverted-index posting-list lookups.
+  """
+  @spec query_all(t() | module(), String.t(), list(), keyword()) ::
+          {:ok, %{rows: list()}} | {:error, term()}
+  def query_all(conn_or_name, cql, params, opts \\ [])
+
+  def query_all(%__MODULE__{} = conn_struct, cql, params, opts) do
+    case query(conn_struct, cql, params, opts) do
+      {:ok, %Xandra.Page{content: content, paging_state: nil}} ->
+        {:ok, %{rows: List.wrap(content)}}
+
+      {:ok, %Xandra.Page{} = page} ->
+        drain_pages(
+          conn_struct.conn,
+          conn_struct.cluster?,
+          cql,
+          typed_params(params),
+          opts,
+          List.wrap(page.content),
+          page.paging_state
+        )
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  def query_all(name, cql, params, opts) when is_atom(name) do
+    case get_conn(name) do
+      nil ->
+        {:error, :not_connected}
+
+      %__MODULE__{} = conn ->
+        ensure_keyspace!(conn, name)
+        updated_conn = get_conn(name) || conn
+        opts = put_connection_keyspace(opts, updated_conn.keyspace)
+
+        query_all(updated_conn, cql, params, opts)
+    end
+  end
+
+  # Accumulates rows in reverse so each page is prepended in O(1) and the
+  # final result is reversed once, instead of `acc ++ page` per page (quadratic).
+  defp drain_pages(conn, cluster?, cql, params, opts, rows_acc, paging_state) do
+    execute_opts = Keyword.put(opts, :paging_state, paging_state)
+
+    case execute_module(cluster?).execute(conn, cql, params, execute_opts) do
+      {:ok, %Xandra.Page{content: content, paging_state: nil}} ->
+        {:ok, %{rows: Enum.reverse(rows_acc, List.wrap(content))}}
+
+      {:ok, %Xandra.Page{content: content, paging_state: next}} ->
+        drain_pages(
+          conn,
+          cluster?,
+          cql,
+          params,
+          opts,
+          Enum.reverse(List.wrap(content), rows_acc),
+          next
+        )
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
   @doc "Executes a simple or prepared query, raising on error."
   @spec query!(t() | module(), String.t(), list(), keyword()) :: term() | no_return()
   def query!(conn_or_name, query, params, opts \\ [])
@@ -775,25 +852,24 @@ defmodule AshScylla.Connection do
         _from,
         %__MODULE__{conn: conn, keyspace: keyspace, cluster?: cluster?} = state
       ) do
-    try do
-      validate_keyspace!(keyspace)
-    rescue
-      ArgumentError ->
-        {:reply, {:error, :invalid_keyspace}, state}
-    end
+    case validated_keyspace(keyspace) do
+      {:error, :invalid_keyspace} = error ->
+        {:reply, error, state}
 
-    case execute_module(cluster?).execute(
-           conn,
-           "USE #{AshScylla.Identifier.quote_name(keyspace)}",
-           []
-         ) do
-      {:ok, _} ->
-        Logger.info("AshScylla: Keyspace '#{keyspace}' is now active")
-        {:reply, {:ok, :set}, cache_conn(%{state | keyspace_used: true})}
+      :ok ->
+        case execute_module(cluster?).execute(
+               conn,
+               "USE #{AshScylla.Identifier.quote_name(keyspace)}",
+               []
+             ) do
+          {:ok, _} ->
+            Logger.info("AshScylla: Keyspace '#{keyspace}' is now active")
+            {:reply, {:ok, :set}, cache_conn(%{state | keyspace_used: true})}
 
-      {:error, reason} ->
-        Logger.warning("AshScylla: Failed to set keyspace '#{keyspace}': #{inspect(reason)}")
-        {:reply, {:error, reason}, state}
+          {:error, reason} ->
+            Logger.warning("AshScylla: Failed to set keyspace '#{keyspace}': #{inspect(reason)}")
+            {:reply, {:error, reason}, state}
+        end
     end
   end
 
@@ -803,23 +879,39 @@ defmodule AshScylla.Connection do
         _from,
         %__MODULE__{conn: conn, cluster?: cluster?} = state
       ) do
-    try do
-      validate_keyspace!(new_keyspace)
-    rescue
-      ArgumentError ->
-        {:reply, {:error, :invalid_keyspace}, state}
+    case validated_keyspace(new_keyspace) do
+      {:error, :invalid_keyspace} = error ->
+        {:reply, error, state}
+
+      :ok ->
+        case execute_module(cluster?).execute(
+               conn,
+               "USE #{AshScylla.Identifier.quote_name(new_keyspace)}",
+               []
+             ) do
+          {:ok, _} ->
+            Logger.info("AshScylla: Keyspace set to '#{new_keyspace}'")
+
+            {:reply, {:ok, :set},
+             cache_conn(%{state | keyspace: new_keyspace, keyspace_used: true})}
+
+          {:error, reason} ->
+            Logger.warning(
+              "AshScylla: Failed to set keyspace '#{new_keyspace}': #{inspect(reason)}"
+            )
+
+            {:reply, {:error, reason}, state}
+        end
     end
+  end
 
-    case execute_module(cluster?).execute(conn, "USE #{new_keyspace}", []) do
-      {:ok, _} ->
-        Logger.info("AshScylla: Keyspace set to '#{new_keyspace}'")
-
-        {:reply, {:ok, :set}, cache_conn(%{state | keyspace: new_keyspace, keyspace_used: true})}
-
-      {:error, reason} ->
-        Logger.warning("AshScylla: Failed to set keyspace '#{new_keyspace}': #{inspect(reason)}")
-        {:reply, {:error, reason}, state}
-    end
+  # Validates a keyspace name for USE handling, converting ArgumentError into a
+  # reply-friendly error tuple.
+  defp validated_keyspace(keyspace) do
+    validate_keyspace!(keyspace)
+    :ok
+  rescue
+    ArgumentError -> {:error, :invalid_keyspace}
   end
 
   @doc false

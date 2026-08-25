@@ -95,11 +95,7 @@ defmodule Mix.Tasks.AshScylla.Gen.Repo do
   defp resolve_repo_module(opts, otp_app) do
     case Keyword.get(opts, :repo) do
       nil ->
-        otp_app
-        |> Atom.to_string()
-        |> Macro.camelize()
-        |> Kernel.<>(".Repo")
-        |> String.to_atom()
+        Module.concat([otp_app |> Atom.to_string() |> Macro.camelize(), "Repo"])
 
       repo_str ->
         repo_str
@@ -149,8 +145,9 @@ defmodule Mix.Tasks.AshScylla.Gen.Repo do
     Path.join(dir, file_name <> ".ex")
   end
 
-  defp render_repo(repo_module, otp_app, _keyspace, _nodes) do
+  defp render_repo(repo_module, otp_app, keyspace, nodes) do
     module_name = repo_module |> Module.split() |> Enum.join(".")
+    nodes_inspected = inspect(nodes)
 
     """
     defmodule #{module_name} do
@@ -162,6 +159,18 @@ defmodule Mix.Tasks.AshScylla.Gen.Repo do
 
       use AshScylla.Repo,
         otp_app: :#{otp_app}
+
+      # Defaults from `mix ash_scylla.gen.repo`; per-environment values belong
+      # in config: config :#{otp_app}, #{inspect(repo_module)}, nodes: ..., keyspace: ...
+      @impl true
+      def config do
+        defaults = [nodes: #{nodes_inspected}, keyspace: #{inspect(keyspace)}]
+
+        case Application.get_env(:#{otp_app}, __MODULE__) do
+          nil -> defaults
+          config when is_list(config) -> Keyword.merge(defaults, config)
+        end
+      end
     end
     """
   end

@@ -18,6 +18,10 @@ defmodule AshScylla.Search.Query.Paginator do
   @doc """
   Paginates a list of results.
 
+  Pages beyond the available results return an empty `:entries` list at the
+  requested page number, with `:total_count`/`:total_pages` still describing
+  the full result set.
+
   ## Options
     * `:page` — page number, starting at 1 (default: `1`)
     * `:page_size` — number of results per page (default: `20`)
@@ -34,16 +38,12 @@ defmodule AshScylla.Search.Query.Paginator do
     else
       total_count = length(results)
       total_pages = max(1, ceil(total_count / page_size))
-
-      page_number =
-        if page_number > total_pages do
-          total_pages
-        else
-          page_number
-        end
-
       offset = (page_number - 1) * page_size
-      entries = results |> Enum.drop(offset) |> Enum.take(page_size)
+
+      entries =
+        results
+        |> Enum.drop(offset)
+        |> Enum.take(page_size)
 
       {:ok,
        %{
@@ -52,7 +52,7 @@ defmodule AshScylla.Search.Query.Paginator do
          page_size: page_size,
          total_count: total_count,
          total_pages: total_pages,
-         has_next?: page_number < total_pages,
+         has_next?: page_number < total_pages and length(entries) == page_size,
          has_prev?: page_number > 1
        }}
     end

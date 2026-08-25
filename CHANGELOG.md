@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0]
+
+### Fixed
+- **`token/2` filters crashed** with `Protocol.UndefinedError`: the filter translator passed a binary column name through `Enum.map/2` before building the `TOKEN(...)` clause. Token equality filters now render `TOKEN(col) = TOKEN(?, ...)` correctly
+- **`mix ash_scylla.migrate --migrations-only` behaved inverted**: it skipped migration *files* and still ran auto-schema (the opposite of its documentation). It now runs only migration files; `--schemas-only` remains its symmetric counterpart, and passing both raises instead of silently doing nothing
+- **`mix ash_scylla.migrate --nodes` was parsed but ignored**: both execution paths read nodes from the repo config only. The flag now overrides the node list for migration-file execution and the auto-schema connection
+- **`AshScylla.SchemaLoader.discover/0` crashed on umbrella projects** (`Protocol.UndefinedError`): a comprehension applied `Enum.sort/1` to each individual file path instead of the collected list. It also returned `[]` for single (non-umbrella) projects; it now scans `priv/repo/migrations` of the current project and returns sorted paths
+- **Search parser crashed on dangling operators**: `"elixir NOT"`, `"a OR b NOT"`, and similar queries raised `FunctionClauseError`. Dangling `NOT` tokens are now dropped, matching how bare `AND`/`OR` tokens are already tolerated
+- **Connection keyspace validation results were discarded**: `handle_call(:set_keyspace)` / `(::ensure_keyspace)` caught invalid-keyspace `ArgumentError`s but fell through and attempted `USE` anyway, so callers got a connection error instead of `{:error, :invalid_keyspace}` (and an unquoted identifier reached CQL). Invalid keyspaces now short-circuit before any statement runs, and all `USE` statements quote their keyspace consistently
+
+### Changed
+- **Prepared-statement cache hits are lock-free**: cache reads no longer round-trip through the cache GenServer (which serialized every lookup behind one process). Hits are served by a direct ETS read published via `:persistent_term`; misses, writes, invalidation, and eviction remain serialized server-side
+- **`query_all/4` page draining is linear**: rows accumulate by prepending and reversing once instead of `acc ++ page` per page, which was quadratic in page count
+- **Bulk batch result accumulation is linear**: chunk results are prepended and reversed once instead of `acc ++ chunk_results` per chunk
+- **Search index corruption on partial updates**: fields were identified by positional numbers derived from map iteration order, so any change to the field set between `index/5` and `update/5` renumbered fields and made updates diff/write the wrong field. Fields are now identified by **name** (`search_post_terms.field` and `search_post_fields.field` are `text`); partial updates target exactly the fields present in the map
+- **Inverted NOT semantics in search**: `Planner` executed `NOT term` / `-term` as a *positive* term inside AND groups, so `phoenix NOT framework` returned documents matching **both** words. Exclusions are now applied as a set difference after intersecting the positive terms
+- **Phrase queries returned no results**: `"phoenix framework"` was hardcoded to an empty posting list in `Planner`. Phrases now match documents containing all of their analyzed words (unordered — the index does not store token positions)
+- **Capitalized stop words broke queries**: the query pipeline stop-word-filtered *before* normalization while the document pipeline normalized first, so `"The phoenix"` looked up an unindexed `the` posting list and returned zero results. Both pipelines now apply the same order (tokenize → normalize → stop words → stem)
+- **Updater ignored frequency changes**: diffs compared term sets only, so changing a word's frequency emitted no writes and ranking kept stale TFs forever. The diff is now frequency-aware (changed terms are re-upserted) and the stored `search_post_fields` map is rewritten to the exact final state — removed terms can no longer linger as ghosts; `delete_field/4` also clears its stored map row
+- **TF-IDF/BM25 term attribution**: `Planner.group_results/1` collapsed every matched term into a synthetic `"_all"` entry, so per-term `:doc_freqs` lookups never matched. The planner now returns real `{term, tf}` scores per document
+- **Pure negative queries** (e.g. `-framework`) returned the excluded documents themselves; they now fail explicitly with `{:error, :missing_positive_term}`, as do queries whose terms are all stop words
+
+### Changed
+- **Schema v3 — document-level postings** *(breaking)*: `search_post_terms` now stores one row per `(term, shard, post_id)` with the term's total frequency summed across fields; the `field` column is gone. Queries fetch F× fewer rows (F = number of fields per document), which dominates read cost on large corpora. `Indexer.index/5` writes a whole document in one batch with aggregated totals; updates recompute totals from the per-field maps in `search_post_fields`, so a term shared across fields lowers its total instead of vanishing when removed from one field. Drop/recreate both tables and re-index to upgrade
+- **Full CQL paging for search reads**: `Connection.query_all/4` and the new `Repo` `query_all/3` callback follow every result page; the planner uses it when available. Previously posting-list reads returned a single `%Xandra.Page{}` — hot terms larger than one page (~5000 rows) were silently truncated, and the planner's row pattern did not even match real page structs
+- **Concurrent term lookups**: independent posting-list fetches within AND/OR groups run concurrently (capped at 8), so multi-term query latency tracks the slowest lookup instead of their sum
+- **Search planner performance at scale** (benchmarked at 100k-document corpora): AND intersections are now driven from the smallest posting map instead of allocating key sets for every list; per-document score merging uses a single map pass; OR unions short-circuit single branches. Combined ~4–8x lower planning CPU on large OR/NOT/phrase queries
+- **`BooleanEngine.union_scored/1`**: single-pass merge into one map plus tuple sort, replacing the flatten/group_by pipeline (~2–3x faster on 100k-entry unions)
+- **Search shard lookups**: posting-list fetches issue one multi-partition query (`shard IN (0..n-1)`) with a bound term parameter instead of 16 sequential interpolated queries per term, cutting round trips ~16x and removing manual CQL escaping on user input
+- **Parameterized CQL across the search write path**: single-statement reads/deletes/writes in `Storage`, `Updater`, and `Deleter` bind `post_id`, `field`, and `term` values; post IDs are validated as UUIDs up front (`{:error, reason}` instead of malformed CQL). Batch statements interpolate only validated UUIDs and analyzer-produced, escaped terms
+- **Ranking statistics are optional**: `:total_docs`, `:doc_freqs`, and `:avg_doc_length` are derived from the matched result set when omitted (previously defaulted to values that produced meaningless or negative scores with `:tfidf`/`:bm25`); explicit user-supplied values still win. IDF contributions are clamped at zero for inconsistent inputs
+- **BM25 length normalization**: new `:doc_lengths` option accepts `%{post_id => length}`; without it, lengths are approximated from matched-term frequencies (documented limitation)
+- **Paginator**: pages beyond the result range return an empty entries list at the requested page number instead of silently clamping to the last page
+- **BooleanEngine**: added `intersect_scored/1` and `union_scored/1` operating on `{post_id, tf}` pairs; triple-based `and_intersect/1`, `or_union/1`, and `not_difference/2` delegate to them
+- **Parser**: supports Lucene-style `-term` exclusion prefix; bare `-` remains a regular word
+- **Builder batch size limit**: oversized UNLOGGED BATCHes now return `{:error, :batch_too_large}` instead of raising, with a practical 1 MB cap
+- Removed unused public helpers `Analyzer.analyze_fields/2` and `Tokenizer.tokenize_fields/1`
+- Removed accidentally committed generator output under `lib/my_app/` that collided with its `test/support` counterparts and intermittently broke test compilation
+- **`mix ash_scylla.gen.repo`**: the default (no-args) invocation crashed building the repo module name (`:"AshScylla.Repo"` instead of `AshScylla.Repo`); `--keyspace` and `--nodes` were accepted but never written into the generated repo — the generated module now carries them as overridable defaults in `config/0`
+- **Generator test isolation**: gen.repo tests wrote generated files into the project's own `lib/` directory on every run; they now run inside per-test temp dirs
+
+### Breaking (search schema v2)
+- Search tables now use `field text` (field names) instead of `field tinyint`, and `search_post_fields.terms` is a `map<text, smallint>` instead of `set<text>`. Existing installations must drop/recreate both tables via `AshScylla.Search.drop_tables/2` + `create_tables/2` and re-index documents (the index is derived data)
+
 ## [1.8.0] - 2026-08-21
 
 ### Fixed

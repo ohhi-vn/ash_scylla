@@ -21,8 +21,9 @@ defmodule AshScylla.PreparedStatementCache do
   impactful for high-throughput workloads where the same queries are executed
   repeatedly.
 
-  All ETS operations are routed through the GenServer to avoid race
-  conditions when multiple processes access the cache concurrently.
+  Cache hits are served directly from ETS by the calling process (lock-free,
+  no GenServer hop); only misses, invalidations, and eviction go through the
+  GenServer so that writes remain serialized and race-free.
 
   ## Usage
 
@@ -54,6 +55,7 @@ defmodule AshScylla.PreparedStatementCache do
 
   @cleanup_interval :timer.minutes(5)
   @max_cache_size 10_000
+  @persistent_table_key {__MODULE__, :table}
 
   @doc """
   Starts the prepared statement cache.
@@ -110,11 +112,37 @@ defmodule AshScylla.PreparedStatementCache do
   @doc """
   Prepares a CQL statement, using the cache if available.
 
+  Cache hits are read straight from ETS by the calling process; misses fall
+  back to the GenServer, which prepares the statement and caches it.
+
   Returns `{:ok, stmt}` on success or `{:error, reason}` on failure.
   """
   @spec prepare(module(), String.t(), keyword()) :: {:ok, term()} | {:error, term()}
   def prepare(repo, cql, opts \\ []) do
-    GenServer.call(server_name(), {:prepare, repo, cql, opts}, 30_000)
+    key = cache_key(repo, cql, opts)
+
+    case cached_statement(key) do
+      {:ok, _} = hit ->
+        hit
+
+      :miss ->
+        GenServer.call(server_name(), {:prepare, repo, cql, opts}, 30_000)
+    end
+  end
+
+  defp cached_statement(key) do
+    case :persistent_term.get(@persistent_table_key, nil) do
+      nil ->
+        :miss
+
+      tid ->
+        case :ets.lookup(tid, key) do
+          [{^key, stmt}] -> {:ok, stmt}
+          [] -> :miss
+        end
+    end
+  rescue
+    ArgumentError -> :miss
   end
 
   @doc """
@@ -162,8 +190,29 @@ defmodule AshScylla.PreparedStatementCache do
         write_concurrency: true
       ])
 
+    publish_table_for_fast_reads(tid)
     schedule_cleanup()
     {:ok, %{table: tid}}
+  end
+
+  @impl GenServer
+  def terminate(_reason, _state) do
+    :persistent_term.erase(@persistent_table_key)
+    :ok
+  end
+
+  # Publishes the table tid so callers can read cache hits without a
+  # GenServer round-trip. Only the default singleton publishes: concurrently
+  # running custom-named instances keep going through the server, which keeps
+  # reads strictly scoped to the instance the caller addressed.
+  defp publish_table_for_fast_reads(tid) do
+    case Process.info(self(), :registered_name) do
+      {:registered_name, name} when name == __MODULE__ ->
+        :persistent_term.put(@persistent_table_key, tid)
+
+      _ ->
+        :ok
+    end
   end
 
   @impl GenServer

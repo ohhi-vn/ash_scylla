@@ -37,17 +37,4 @@ defmodule AshScylla.Search.Analyzer.TokenizerTest do
       assert Tokenizer.tokenize("a bb ccc dddd", min_length: 3) == ["ccc", "dddd"]
     end
   end
-
-  describe "tokenize_fields/1" do
-    test "merges tokens from multiple fields" do
-      result =
-        Tokenizer.tokenize_fields(%{
-          title: "Learning Elixir",
-          body: "Phoenix Framework"
-        })
-
-      assert Enum.sort(result) ==
-               Enum.sort(["Learning", "Elixir", "Phoenix", "Framework"])
-    end
-  end
 end

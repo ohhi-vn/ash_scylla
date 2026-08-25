@@ -40,6 +40,7 @@ defmodule AshScylla.DataLayer.QueryBuilder do
 
   require Logger
 
+  alias Ash.Resource.Info
   alias AshScylla.DataLayer
   alias AshScylla.DataLayer.Dsl
   alias AshScylla.DataLayer.Types
@@ -92,88 +93,85 @@ defmodule AshScylla.DataLayer.QueryBuilder do
         error
 
       {:ok, {where_clause, params}} ->
-        # Use IO list for efficient query assembly
-        query_acc = [base_query]
-
-        query_acc =
-          if where_clause != "" do
-            [query_acc, " WHERE ", where_clause]
-          else
-            query_acc
-          end
-
-        # Build GROUP BY clause for aggregate queries
         {group_clause, group_params} = build_group_by(group_by)
-
-        query_acc =
-          if group_clause != "" do
-            [query_acc, " GROUP BY ", group_clause]
-          else
-            query_acc
-          end
-
-        params = params ++ agg_params ++ group_params
 
         # Detect secondary index scan — ScyllaDB does NOT support ORDER BY
         # when querying via a secondary index. Strip the order clause and warn.
-        {order_clause, order_params} =
-          if resource != nil and sorts != [] and sorts != nil and
-               secondary_index_scan?(resource, filters) do
-            Logger.warning(
-              "AshScylla: ScyllaDB does not support ORDER BY with secondary index scans; " <>
-                "dropping ORDER BY for query on #{table}"
-            )
-
-            {"", []}
-          else
-            build_order_by(sorts)
-          end
+        {order_clause, order_params} = build_order_clause(resource, sorts, filters, table)
 
         query_acc =
-          if order_clause != "" do
-            [query_acc, " ORDER BY ", order_clause]
-          else
-            query_acc
-          end
+          [base_query]
+          |> append_clause(" WHERE ", where_clause)
+          |> append_clause(" GROUP BY ", group_clause)
+          |> append_clause(" ORDER BY ", order_clause)
 
-        params = params ++ order_params
+        params = params ++ agg_params ++ group_params ++ order_params
 
         # Add LIMIT — tag as {"int", limit} to match ScyllaDB's INT type
         # (avoids marshaling error: Int32Type expects 4 bytes, bigint is 8)
-        {query_acc, params} =
-          if limit do
-            Logger.debug(fn -> "AshScylla: Adding LIMIT #{limit}" end)
-            {[query_acc, " LIMIT ?"], params ++ [{"int", limit}]}
-          else
-            {query_acc, params}
-          end
+        {query_acc, params} = add_limit(query_acc, params, limit)
 
         # Add keyset pagination (token-based)
-        {query_acc, params} =
-          if keyset do
-            {keyset_clause, keyset_params} = build_keyset_clause(keyset)
-            {[query_acc, " ", keyset_clause], params ++ keyset_params}
-          else
-            {query_acc, params}
-          end
+        {query_acc, params} = add_keyset(query_acc, params, keyset)
 
         # Append ALLOW FILTERING when doing a secondary index scan.
         # ScyllaDB requires ALLOW FILTERING for queries on secondary indexes.
-        query_acc =
-          if resource != nil and filters != [] and secondary_index_scan?(resource, filters) do
-            Logger.debug(fn ->
-              "AshScylla: Appending ALLOW FILTERING for secondary index scan on #{table}"
-            end)
+        query = IO.iodata_to_binary([query_acc, allow_filtering_suffix(resource, filters, table)])
 
-            [query_acc, " ALLOW FILTERING"]
-          else
-            query_acc
-          end
-
-        query = IO.iodata_to_binary(query_acc)
         Logger.debug(fn -> "AshScylla: Raw query before parameterization: #{inspect(query)}" end)
         Logger.debug(fn -> "AshScylla: Params: #{inspect(params)}" end)
         {:ok, {query, params}}
+    end
+  end
+
+  defp append_clause(query_acc, _suffix, ""), do: query_acc
+  defp append_clause(query_acc, suffix, clause), do: [query_acc, suffix, clause]
+
+  defp add_limit(query_acc, params, nil), do: {query_acc, params}
+
+  defp add_limit(query_acc, params, limit) do
+    Logger.debug(fn -> "AshScylla: Adding LIMIT #{limit}" end)
+    {[query_acc, " LIMIT ?"], params ++ [{"int", limit}]}
+  end
+
+  defp add_keyset(query_acc, params, nil), do: {query_acc, params}
+
+  defp add_keyset(query_acc, params, keyset) do
+    {keyset_clause, keyset_params} = build_keyset_clause(keyset)
+    {[query_acc, " ", keyset_clause], params ++ keyset_params}
+  end
+
+  # Detect secondary index scan — ScyllaDB does NOT support ORDER BY when
+  # querying via a secondary index. Strip the order clause and warn.
+  defp build_order_clause(resource, sorts, filters, table) do
+    index_scan? =
+      resource != nil and sorts != [] and sorts != nil and
+        secondary_index_scan?(resource, filters)
+
+    if index_scan? do
+      Logger.warning(
+        "AshScylla: ScyllaDB does not support ORDER BY with secondary index scans; " <>
+          "dropping ORDER BY for query on #{table}"
+      )
+
+      {"", []}
+    else
+      build_order_by(sorts)
+    end
+  end
+
+  # ScyllaDB requires ALLOW FILTERING for queries on secondary indexes.
+  defp allow_filtering_suffix(resource, filters, table) do
+    index_scan? = resource != nil and filters != [] and secondary_index_scan?(resource, filters)
+
+    if index_scan? do
+      Logger.debug(fn ->
+        "AshScylla: Appending ALLOW FILTERING for secondary index scan on #{table}"
+      end)
+
+      " ALLOW FILTERING"
+    else
+      []
     end
   end
 
@@ -755,32 +753,16 @@ defmodule AshScylla.DataLayer.QueryBuilder do
       {left_cql, left_params} ->
         name = attribute_name(left)
 
-        if op == :or do
-          # Try to rewrite same-field OR as IN (CQL supports IN on partition/clustering keys).
-          case rewrite_or_to_in(left, right) do
-            {:ok, {field_name, values}} ->
-              placeholders =
-                values
-                |> Enum.map(fn _ -> "?" end)
-                |> Enum.intersperse(", ")
-                |> IO.iodata_to_binary()
-
-              {"#{cql_identifier(field_name)} IN (#{placeholders})",
-               Enum.map(values, &typed_param(field_name, &1, uuid_fields, cql_types))}
-
-            :error ->
-              raise AshScylla.Error,
-                message:
-                  "CQL does not support OR across different fields or with non-equality operators. " <>
-                    "Found: or(#{inspect(deeply_unwrap_expr(left))}, #{inspect(deeply_unwrap_expr(right))}). " <>
-                    "Workarounds: (1) redesign the table with a canonical partition key, " <>
-                    "(2) split into two queries and merge in application code, " <>
-                    "or (3) rewrite same-field OR as IN.",
-                or_split: {left, right}
-          end
-        else
-          translate_operator(op, left, right, left_cql, left_params, name, uuid_fields, cql_types)
-        end
+        translate_operator_clause(
+          op,
+          left,
+          right,
+          left_cql,
+          left_params,
+          name,
+          uuid_fields,
+          cql_types
+        )
     end
     |> maybe_iodata_to_binary()
   end
@@ -801,182 +783,367 @@ defmodule AshScylla.DataLayer.QueryBuilder do
     {"?", [unknown]}
   end
 
+  defp translate_operator_clause(
+         :or,
+         left,
+         right,
+         _left_cql,
+         _left_params,
+         _name,
+         uuid_fields,
+         cql_types
+       ) do
+    # Try to rewrite same-field OR as IN (CQL supports IN on partition/clustering keys).
+    case rewrite_or_to_in(left, right) do
+      {:ok, {field_name, values}} ->
+        placeholders =
+          values
+          |> Enum.map(fn _ -> "?" end)
+          |> Enum.intersperse(", ")
+          |> IO.iodata_to_binary()
+
+        {"#{cql_identifier(field_name)} IN (#{placeholders})",
+         Enum.map(values, &typed_param(field_name, &1, uuid_fields, cql_types))}
+
+      :error ->
+        raise AshScylla.Error,
+          message:
+            "CQL does not support OR across different fields or with non-equality operators. " <>
+              "Found: or(#{inspect(deeply_unwrap_expr(left))}, #{inspect(deeply_unwrap_expr(right))}). " <>
+              "Workarounds: (1) redesign the table with a canonical partition key, " <>
+              "(2) split into two queries and merge in application code, " <>
+              "or (3) rewrite same-field OR as IN.",
+          or_split: {left, right}
+    end
+  end
+
+  defp translate_operator_clause(
+         op,
+         left,
+         right,
+         left_cql,
+         left_params,
+         name,
+         uuid_fields,
+         cql_types
+       ) do
+    translate_operator(op, left, right, left_cql, left_params, name, uuid_fields, cql_types)
+  end
+
   defp translate_operator(op, _left, right, left_cql, left_params, name, uuid_fields, cql_types) do
     case filter_to_cql(right, uuid_fields, cql_types) do
       {:error, {:unknown_filter, raw_value}} ->
         # Raw value on the right side of an operator (e.g. DateTime, string, number)
-        # Handle operators that need special CQL syntax with raw values
-        case op do
-          :in when is_list(raw_value) ->
-            build_in_clause(
-              left_cql,
-              left_params ++
-                Enum.map(raw_value, &typed_param(name, &1, uuid_fields, cql_types))
-            )
-
-          :in when is_struct(raw_value, MapSet) ->
-            raw_value
-            |> MapSet.to_list()
-            |> Enum.map(&typed_param(name, &1, uuid_fields, cql_types))
-            |> then(&build_in_clause(left_cql, left_params ++ &1))
-
-          :is_nil when raw_value in [true, false] ->
-            if raw_value,
-              do: {"#{left_cql} IS NULL", left_params},
-              else: {"#{left_cql} IS NOT NULL", left_params}
-
-          :starts_with ->
-            {"#{left_cql} LIKE ?", left_params ++ ["%" <> to_raw_string(raw_value)]}
-
-          :ends_with ->
-            {"#{left_cql} LIKE ?", left_params ++ [to_raw_string(raw_value) <> "%"]}
-
-          :contains ->
-            {"#{left_cql} LIKE ?", left_params ++ ["%" <> to_raw_string(raw_value) <> "%"]}
-
-          :contains_key ->
-            {"#{left_cql} CONTAINS KEY ?",
-             left_params ++ [typed_param(name, raw_value, uuid_fields, cql_types)]}
-
-          :exists ->
-            {"#{left_cql} IS NOT NULL", left_params}
-
-          :has ->
-            {"#{left_cql} CONTAINS ?",
-             left_params ++ [typed_param(name, raw_value, uuid_fields, cql_types)]}
-
-          :overlaps ->
-            # overlaps with a single raw value → CONTAINS
-            {"#{left_cql} CONTAINS ?",
-             left_params ++ [typed_param(name, raw_value, uuid_fields, cql_types)]}
-
-          _ ->
-            cql_op = Map.get(@operator_mapping, op, "=")
-            cql_val = Map.get(@operator_values, op, "?")
-
-            {"#{left_cql} #{cql_op} #{cql_val}",
-             left_params ++ [typed_param(name, raw_value, uuid_fields, cql_types)]}
-        end
+        translate_raw_operator(op, raw_value, left_cql, left_params, name, uuid_fields, cql_types)
 
       {_right_cql, right_params} ->
-        case {op, right} do
-          {:in, %{value: values}} when is_list(values) ->
-            build_in_clause(
-              left_cql,
-              left_params ++ Enum.map(values, &typed_param(name, &1, uuid_fields, cql_types))
-            )
-
-          {:in, values} when is_list(values) ->
-            build_in_clause(
-              left_cql,
-              left_params ++ Enum.map(values, &typed_param(name, &1, uuid_fields, cql_types))
-            )
-
-          {:in, %MapSet{} = values} ->
-            values
-            |> MapSet.to_list()
-            |> Enum.map(&typed_param(name, &1, uuid_fields, cql_types))
-            |> then(&build_in_clause(left_cql, left_params ++ &1))
-
-          {:is_nil, %{value: true}} ->
-            {"#{left_cql} IS NULL", left_params}
-
-          {:is_nil, %{value: false}} ->
-            {"#{left_cql} IS NOT NULL", left_params}
-
-          {:is_nil, true} ->
-            {"#{left_cql} IS NULL", left_params}
-
-          {:is_nil, false} ->
-            {"#{left_cql} IS NOT NULL", left_params}
-
-          {:token, %{value: keys}} when is_list(keys) ->
-            build_token_clause(Enum.map(left_cql, & &1), keys)
-
-          {:token, keys} when is_list(keys) ->
-            build_token_clause(Enum.map(left_cql, & &1), keys)
-
-          {:exists, _} ->
-            {"#{left_cql} IS NOT NULL", left_params}
-
-          {:has, %{value: value}} ->
-            {"#{left_cql} CONTAINS ?",
-             left_params ++ [typed_param(name, value, uuid_fields, cql_types)]}
-
-          {:has, value} ->
-            {"#{left_cql} CONTAINS ?",
-             left_params ++ [typed_param(name, value, uuid_fields, cql_types)]}
-
-          {:overlaps, %{value: values}} when is_list(values) and length(values) == 1 ->
-            {"#{left_cql} CONTAINS ?",
-             left_params ++ Enum.map(values, &typed_param(name, &1, uuid_fields, cql_types))}
-
-          {:overlaps, %{value: values}} when is_list(values) ->
-            raise AshScylla.Error,
-              message:
-                "CQL does not support OR, so overlaps/2 with multiple values cannot be expressed in a single query. " <>
-                  "Found: overlaps(#{left_cql}, #{inspect(values)}). " <>
-                  "Workaround: split into multiple queries and merge in application code."
-
-          {:overlaps, %{value: %MapSet{} = ms}} ->
-            handle_overlaps_mapset(left_cql, left_params, name, ms, uuid_fields, cql_types)
-
-          {:overlaps, %MapSet{} = values} ->
-            handle_overlaps_mapset(
-              left_cql,
-              left_params,
-              name,
-              values,
-              uuid_fields,
-              cql_types
-            )
-
-          {:overlaps, value} ->
-            {"#{left_cql} CONTAINS ?",
-             left_params ++ [typed_param(name, value, uuid_fields, cql_types)]}
-
-          {:starts_with, %{value: value}} ->
-            {"#{left_cql} LIKE ?", left_params ++ ["%" <> to_raw_string(value)]}
-
-          {:ends_with, %{value: value}} ->
-            {"#{left_cql} LIKE ?", left_params ++ [to_raw_string(value) <> "%"]}
-
-          {:contains, %{value: value}} ->
-            {"#{left_cql} LIKE ?", left_params ++ ["%" <> to_raw_string(value) <> "%"]}
-
-          {:contains_key, %{value: value}} ->
-            {"#{left_cql} CONTAINS KEY ?",
-             left_params ++ [typed_param(name, value, uuid_fields, cql_types)]}
-
-          _ ->
-            # Handle operators that need special CQL syntax even when right side
-            # is a raw value (not a %{value: ...} map). For comparison operators
-            # on UUID columns, type the bound value via typed_param so it is
-            # converted to a 16-byte binary tagged as {"uuid", bin} (otherwise
-            # ScyllaDB rejects it with "Validation failed for uuid - got N bytes").
-            # Collection/pattern operators (LIKE, CONTAINS, has, overlaps) keep
-            # their wildcard-wrapped extra_params untouched.
-            {cql_op, cql_val, extra_params} =
-              operator_cql(op, right, right_params)
-
-            final_params =
-              if name in uuid_fields and
-                   op not in [
-                     :starts_with,
-                     :ends_with,
-                     :contains,
-                     :contains_key,
-                     :has,
-                     :overlaps
-                   ] do
-                [typed_param(name, extract_value(right), uuid_fields, cql_types)]
-              else
-                extra_params
-              end
-
-            {"#{left_cql} #{cql_op} #{cql_val}", left_params ++ final_params}
-        end
+        translate_expr_operator(
+          op,
+          right,
+          right_params,
+          left_cql,
+          left_params,
+          name,
+          uuid_fields,
+          cql_types
+        )
     end
+  end
+
+  # ── Raw right-hand values ────────────────────────────────────────────────
+
+  defp translate_raw_operator(:in, raw_value, left_cql, left_params, name, uuid_fields, cql_types) do
+    case in_clause_values(raw_value) do
+      nil ->
+        raw_comparison_cql(:in, raw_value, left_cql, left_params, name, uuid_fields, cql_types)
+
+      values ->
+        build_in_clause(
+          left_cql,
+          left_params ++ Enum.map(values, &typed_param(name, &1, uuid_fields, cql_types))
+        )
+    end
+  end
+
+  defp translate_raw_operator(
+         :is_nil,
+         raw_value,
+         left_cql,
+         left_params,
+         _name,
+         _uuid_fields,
+         _cql_types
+       )
+       when raw_value in [true, false] do
+    null_check(raw_value, left_cql, left_params)
+  end
+
+  # LIKE operators: embed wildcards in the parameter value, not in the CQL string.
+  defp translate_raw_operator(
+         op,
+         raw_value,
+         left_cql,
+         left_params,
+         _name,
+         _uuid_fields,
+         _cql_types
+       )
+       when op in [:starts_with, :ends_with, :contains] do
+    {"#{left_cql} LIKE ?", left_params ++ [like_pattern(op, raw_value)]}
+  end
+
+  defp translate_raw_operator(
+         :contains_key,
+         raw_value,
+         left_cql,
+         left_params,
+         name,
+         uuid_fields,
+         cql_types
+       ) do
+    {"#{left_cql} CONTAINS KEY ?",
+     left_params ++ [typed_param(name, raw_value, uuid_fields, cql_types)]}
+  end
+
+  defp translate_raw_operator(
+         :exists,
+         _raw_value,
+         left_cql,
+         left_params,
+         _name,
+         _uuid_fields,
+         _cql_types
+       ) do
+    {"#{left_cql} IS NOT NULL", left_params}
+  end
+
+  # has and overlaps with a single raw value → CONTAINS
+  defp translate_raw_operator(op, raw_value, left_cql, left_params, name, uuid_fields, cql_types)
+       when op in [:has, :overlaps] do
+    {"#{left_cql} CONTAINS ?",
+     left_params ++ [typed_param(name, raw_value, uuid_fields, cql_types)]}
+  end
+
+  defp translate_raw_operator(op, raw_value, left_cql, left_params, name, uuid_fields, cql_types) do
+    raw_comparison_cql(op, raw_value, left_cql, left_params, name, uuid_fields, cql_types)
+  end
+
+  defp raw_comparison_cql(op, raw_value, left_cql, left_params, name, uuid_fields, cql_types) do
+    cql_op = Map.get(@operator_mapping, op, "=")
+    cql_val = Map.get(@operator_values, op, "?")
+
+    {"#{left_cql} #{cql_op} #{cql_val}",
+     left_params ++ [typed_param(name, raw_value, uuid_fields, cql_types)]}
+  end
+
+  # Values usable in an IN clause: plain lists, %{value: list} or MapSets.
+  defp in_clause_values(%{value: values}) when is_list(values), do: values
+  defp in_clause_values(values) when is_list(values), do: values
+  defp in_clause_values(%MapSet{} = mapset), do: MapSet.to_list(mapset)
+  defp in_clause_values(_other), do: nil
+
+  defp null_check(true, left_cql, left_params), do: {"#{left_cql} IS NULL", left_params}
+  defp null_check(false, left_cql, left_params), do: {"#{left_cql} IS NOT NULL", left_params}
+
+  defp like_pattern(:starts_with, value), do: "%" <> to_raw_string(value)
+  defp like_pattern(:ends_with, value), do: to_raw_string(value) <> "%"
+  defp like_pattern(:contains, value), do: "%" <> to_raw_string(value) <> "%"
+
+  # ── Expression right-hand sides (%{value: …} or nested expressions) ──────
+
+  defp translate_expr_operator(
+         :in,
+         right,
+         right_params,
+         left_cql,
+         left_params,
+         name,
+         uuid_fields,
+         cql_types
+       ) do
+    case in_clause_values(right) do
+      nil ->
+        uuid_typed_default(
+          :in,
+          right,
+          right_params,
+          left_cql,
+          left_params,
+          name,
+          uuid_fields,
+          cql_types
+        )
+
+      values ->
+        build_in_clause(
+          left_cql,
+          left_params ++ Enum.map(values, &typed_param(name, &1, uuid_fields, cql_types))
+        )
+    end
+  end
+
+  defp translate_expr_operator(:is_nil, right, right_params, left_cql, left_params, name, uf, ct) do
+    case extract_value(right) do
+      value when value in [true, false] ->
+        null_check(value, left_cql, left_params)
+
+      _other ->
+        uuid_typed_default(:is_nil, right, right_params, left_cql, left_params, name, uf, ct)
+    end
+  end
+
+  defp translate_expr_operator(:token, right, right_params, left_cql, left_params, name, uf, ct) do
+    case right do
+      %{value: keys} when is_list(keys) ->
+        build_token_clause(left_cql, keys)
+
+      keys when is_list(keys) ->
+        build_token_clause(left_cql, keys)
+
+      _other ->
+        uuid_typed_default(:token, right, right_params, left_cql, left_params, name, uf, ct)
+    end
+  end
+
+  defp translate_expr_operator(:exists, _right, _rp, left_cql, left_params, _n, _uf, _ct) do
+    {"#{left_cql} IS NOT NULL", left_params}
+  end
+
+  defp translate_expr_operator(
+         :has,
+         right,
+         _rp,
+         left_cql,
+         left_params,
+         name,
+         uuid_fields,
+         cql_types
+       ) do
+    {"#{left_cql} CONTAINS ?",
+     left_params ++ [typed_param(name, extract_value(right), uuid_fields, cql_types)]}
+  end
+
+  defp translate_expr_operator(:overlaps, right, _rp, left_cql, left_params, name, uf, ct) do
+    case right do
+      %{value: %MapSet{} = ms} ->
+        handle_overlaps_mapset(left_cql, left_params, name, ms, uf, ct)
+
+      %MapSet{} = mapset ->
+        handle_overlaps_mapset(left_cql, left_params, name, mapset, uf, ct)
+
+      %{value: values} when is_list(values) and length(values) == 1 ->
+        {"#{left_cql} CONTAINS ?",
+         left_params ++ Enum.map(values, &typed_param(name, &1, uf, ct))}
+
+      %{value: values} when is_list(values) ->
+        raise AshScylla.Error,
+          message:
+            "CQL does not support OR, so overlaps/2 with multiple values cannot be expressed in a single query. " <>
+              "Found: overlaps(#{left_cql}, #{inspect(values)}). " <>
+              "Workaround: split into multiple queries and merge in application code."
+
+      value ->
+        {"#{left_cql} CONTAINS ?", left_params ++ [typed_param(name, value, uf, ct)]}
+    end
+  end
+
+  # LIKE operators: only reachable with %{value: v} here — raw scalars are
+  # handled by translate_raw_operator.
+  defp translate_expr_operator(op, right, right_params, left_cql, left_params, name, uf, ct)
+       when op in [:starts_with, :ends_with, :contains] do
+    case right do
+      %{value: value} ->
+        {"#{left_cql} LIKE ?", left_params ++ [like_pattern(op, value)]}
+
+      _other ->
+        uuid_typed_default(op, right, right_params, left_cql, left_params, name, uf, ct)
+    end
+  end
+
+  defp translate_expr_operator(
+         :contains_key,
+         right,
+         right_params,
+         left_cql,
+         left_params,
+         name,
+         uf,
+         ct
+       ) do
+    case right do
+      %{value: value} ->
+        {"#{left_cql} CONTAINS KEY ?", left_params ++ [typed_param(name, value, uf, ct)]}
+
+      _other ->
+        uuid_typed_default(
+          :contains_key,
+          right,
+          right_params,
+          left_cql,
+          left_params,
+          name,
+          uf,
+          ct
+        )
+    end
+  end
+
+  # Handle operators that need special CQL syntax even when right side is a raw
+  # value (not a %{value: ...} map). For comparison operators on UUID columns,
+  # type the bound value via typed_param so it is converted to a 16-byte binary
+  # tagged as {"uuid", bin} (otherwise ScyllaDB rejects it with "Validation
+  # failed for uuid - got N bytes"). Collection/pattern operators (LIKE,
+  # CONTAINS, has, overlaps) keep their wildcard-wrapped extra_params untouched.
+  defp translate_expr_operator(
+         op,
+         right,
+         right_params,
+         left_cql,
+         left_params,
+         name,
+         uuid_fields,
+         cql_types
+       ) do
+    uuid_typed_default(
+      op,
+      right,
+      right_params,
+      left_cql,
+      left_params,
+      name,
+      uuid_fields,
+      cql_types
+    )
+  end
+
+  defp uuid_typed_default(
+         op,
+         right,
+         right_params,
+         left_cql,
+         left_params,
+         name,
+         uuid_fields,
+         cql_types
+       ) do
+    {cql_op, cql_val, extra_params} = operator_cql(op, right, right_params)
+
+    final_params =
+      if name in uuid_fields and
+           op not in [
+             :starts_with,
+             :ends_with,
+             :contains,
+             :contains_key,
+             :has,
+             :overlaps
+           ] do
+        [typed_param(name, extract_value(right), uuid_fields, cql_types)]
+      else
+        extra_params
+      end
+
+    {"#{left_cql} #{cql_op} #{cql_val}", left_params ++ final_params}
   end
 
   # Wraps an expression with each remaining conjunct, preserving left-to-right
@@ -1149,7 +1316,11 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   # TOKEN() function support
   # ============================================================================
 
-  @spec build_token_clause(list(), list()) :: {String.t(), list()}
+  @spec build_token_clause(String.t() | list(), list()) :: {String.t(), list()}
+  defp build_token_clause(key, values) when is_binary(key) and is_list(values) do
+    build_token_clause([key], values)
+  end
+
   defp build_token_clause(keys, values) when is_list(keys) and is_list(values) do
     key_list = Enum.map_join(keys, ", ", &cql_identifier(&1))
     placeholder_list = Enum.map_join(Enum.to_list(1..length(values)), ", ", fn _ -> "?" end)
@@ -1432,9 +1603,9 @@ defmodule AshScylla.DataLayer.QueryBuilder do
   @spec secondary_index_scan?(term(), list()) :: boolean()
   def secondary_index_scan?(resource, filters) do
     pk_columns =
-      if Ash.Resource.Info.resource?(resource) do
+      if Info.resource?(resource) do
         resource
-        |> Ash.Resource.Info.primary_key()
+        |> Info.primary_key()
         |> MapSet.new()
       else
         # For non-Ash resources (e.g., test mocks), assume :id is the primary key

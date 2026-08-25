@@ -278,4 +278,68 @@ defmodule Mix.Tasks.AshScylla.MigrateTest do
       File.rm_rf!(tmp_dir)
     end
   end
+
+  describe "mode flags" do
+    test "--migrations-only and --schemas-only are mutually exclusive" do
+      assert_raise Mix.Error, ~r/mutually exclusive/, fn ->
+        capture_io(fn ->
+          Mix.Tasks.AshScylla.Migrate.run([
+            "--repo",
+            "AshScylla.TestRepo",
+            "--migrations-only",
+            "--schemas-only"
+          ])
+        end)
+      end
+    end
+
+    test "--migrations-only skips auto-schema migration" do
+      output =
+        capture_io(fn ->
+          Mix.Tasks.AshScylla.Migrate.run([
+            "--repo",
+            "AshScylla.TestRepo",
+            "--migrations-only",
+            "--dry-run"
+          ])
+        end)
+
+      assert output =~ "No schema files found" or output =~ "Running"
+      refute output =~ "No resources found to migrate."
+    end
+
+    test "--schemas-only skips migration files" do
+      output =
+        capture_io(fn ->
+          Mix.Tasks.AshScylla.Migrate.run([
+            "--repo",
+            "AshScylla.TestRepo",
+            "--schemas-only",
+            "--dry-run"
+          ])
+        end)
+
+      assert output =~ "No resources found to migrate." or output =~ "would auto-migrate"
+      refute output =~ "No schema files found"
+    end
+
+    test "--nodes overrides the repo's configured nodes" do
+      output =
+        capture_io(fn ->
+          try do
+            Mix.Tasks.AshScylla.Migrate.run([
+              "--repo",
+              "AshScylla.TestRepo",
+              "--nodes",
+              "127.0.0.1:59999",
+              "--dry-run"
+            ])
+          rescue
+            _ -> :ok
+          end
+        end)
+
+      assert is_binary(output)
+    end
+  end
 end

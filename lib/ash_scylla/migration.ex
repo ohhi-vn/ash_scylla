@@ -13,7 +13,11 @@
 # limitations under the License.
 
 defmodule AshScylla.Migration do
+  alias Ash.Resource.Info
   alias AshScylla.DataLayer.Dsl
+  alias AshScylla.DataLayer.SchemaUtils
+  alias AshScylla.DataLayer.Types
+  alias AshScylla.DataLayer.Udt
 
   @moduledoc """
   CQL schema generation helpers for ScyllaDB.
@@ -76,7 +80,7 @@ defmodule AshScylla.Migration do
         ks -> "#{quote_name(ks)}.#{quote_name(table_name)}"
       end
 
-    all_attributes = Ash.Resource.Info.attributes(resource)
+    all_attributes = Info.attributes(resource)
 
     # Separate primary key columns from regular columns
     {pk_attrs, regular_attrs} =
@@ -192,32 +196,42 @@ defmodule AshScylla.Migration do
         []
 
       indexes ->
-        table_name = get_table_name(resource)
-        unindexable = unindexable_columns(resource)
-
-        indexes
-        |> Enum.flat_map(fn idx ->
-          # ScyllaDB OSS doesn't support multi-column secondary indexes.
-          # Generate a separate single-column index per column.
-          # Skip the sole partition key column — already indexed by the partitioner.
-          # The table reference is unqualified; the keyspace context is applied
-          # by the connection (via `USE keyspace`) at execution time.
-          qualified = quote_name(table_name)
-
-          idx.columns
-          |> Enum.reject(fn col -> col in unindexable end)
-          |> Enum.map(fn col ->
-            index_name =
-              if idx.name do
-                "#{idx.name}_#{col}"
-              else
-                "idx_#{table_name}_#{col}"
-              end
-
-            "CREATE INDEX IF NOT EXISTS #{index_name} ON #{qualified} (#{AshScylla.Identifier.quote_name(col)})"
-          end)
-        end)
+        secondary_index_statements(
+          get_table_name(resource),
+          indexes,
+          unindexable_columns(resource)
+        )
     end
+  end
+
+  @doc """
+  Generates single-column CREATE INDEX statements for the given secondary index definitions.
+
+  ScyllaDB OSS doesn't support multi-column secondary indexes, so a separate
+  single-column index is generated per column. The sole partition key column is
+  skipped — it is already indexed by the partitioner.
+
+  The table reference is unqualified; the keyspace context is applied by the
+  connection (via `USE keyspace`) at execution time.
+  """
+  @spec secondary_index_statements(String.t(), [term()], [atom()]) :: [String.t()]
+  def secondary_index_statements(table_name, indexes, unindexable_columns) do
+    qualified = quote_name(table_name)
+
+    Enum.flat_map(indexes, fn idx ->
+      idx.columns
+      |> Enum.reject(fn col -> col in unindexable_columns end)
+      |> Enum.map(fn col ->
+        index_name =
+          if idx.name do
+            "#{idx.name}_#{col}"
+          else
+            "idx_#{table_name}_#{col}"
+          end
+
+        "CREATE INDEX IF NOT EXISTS #{index_name} ON #{qualified} (#{AshScylla.Identifier.quote_name(col)})"
+      end)
+    end)
   end
 
   @doc """
@@ -239,12 +253,12 @@ defmodule AshScylla.Migration do
 
   @spec unindexable_columns(module()) :: [atom()]
   defp unindexable_columns(resource) do
-    AshScylla.DataLayer.SchemaUtils.unindexable_columns(resource)
+    SchemaUtils.unindexable_columns(resource)
   end
 
   @spec get_table_name(module()) :: String.t()
   defp get_table_name(resource) do
-    AshScylla.DataLayer.SchemaUtils.get_table_name(resource)
+    SchemaUtils.get_table_name(resource)
   end
 
   # Quotes an identifier for use in CQL, protecting reserved words.
@@ -266,7 +280,7 @@ defmodule AshScylla.Migration do
   """
   @spec keyspace(module()) :: String.t() | nil
   def keyspace(resource) do
-    AshScylla.DataLayer.Dsl.keyspace(resource)
+    Dsl.keyspace(resource)
   end
 
   @doc """
@@ -371,11 +385,11 @@ defmodule AshScylla.Migration do
   end
 
   def alter_type_cql(type_name, :add, fields) when is_binary(type_name) do
-    AshScylla.DataLayer.Udt.alter_type_cql(type_name, :add, fields)
+    Udt.alter_type_cql(type_name, :add, fields)
   end
 
   def alter_type_cql(type_name, :rename, renames) when is_binary(type_name) do
-    AshScylla.DataLayer.Udt.alter_type_cql(type_name, :rename, renames)
+    Udt.alter_type_cql(type_name, :rename, renames)
   end
 
   @doc """
@@ -385,7 +399,7 @@ defmodule AshScylla.Migration do
   """
   @spec list_types_cql() :: String.t()
   def list_types_cql do
-    AshScylla.DataLayer.Udt.list_types_cql()
+    Udt.list_types_cql()
   end
 
   @doc """
@@ -399,8 +413,7 @@ defmodule AshScylla.Migration do
   end
 
   def type_exists_cql(type_name) when is_binary(type_name) do
-    sanitized = AshScylla.DataLayer.SchemaUtils.sanitize_type_name(type_name)
-    "SELECT type_name FROM system_schema.types WHERE type_name = '#{sanitized}'"
+    Udt.type_exists_cql(type_name)
   end
 
   defp attribute_to_cql(attr_or_keyword) do
@@ -437,5 +450,5 @@ defmodule AshScylla.Migration do
   """
   @spec ash_type_to_cql_type(atom(), keyword()) :: String.t()
   def ash_type_to_cql_type(type, opts),
-    do: AshScylla.DataLayer.Types.ash_type_to_cql_type(type, opts)
+    do: Types.ash_type_to_cql_type(type, opts)
 end

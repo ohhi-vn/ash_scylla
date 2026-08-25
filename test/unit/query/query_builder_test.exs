@@ -1335,4 +1335,18 @@ defmodule AshScylla.DataLayer.QueryBuilderTest do
                "SELECT AVG(age) AS average_age, MIN(age) AS minimum_age, MAX(age) AS maximum_age FROM users"
     end
   end
+
+  describe "token filters" do
+    test "renders TOKEN(...) = TOKEN(?, ...) for a single column" do
+      filter = %{operator: :token, left: %{name: :id}, right: [1, 2]}
+
+      assert {"TOKEN(id) = TOKEN(?, ?)", [1, 2]} = QueryBuilder.filter_to_cql(filter)
+    end
+
+    test "renders a token filter given as %{value: keys}" do
+      filter = %{operator: :token, left: %{name: :id}, right: %{value: ["abc"]}}
+
+      assert {"TOKEN(id) = TOKEN(?)", ["abc"]} = QueryBuilder.filter_to_cql(filter)
+    end
+  end
 end

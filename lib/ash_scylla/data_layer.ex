@@ -142,6 +142,7 @@ defmodule AshScylla.DataLayer do
 
   require Logger
 
+  alias Ash.Error.Changes.StaleRecord
   alias Ash.Resource.Info
   alias Ash.Type.UUID
   alias AshScylla.DataLayer.Batch
@@ -149,6 +150,7 @@ defmodule AshScylla.DataLayer do
   alias AshScylla.DataLayer.FilterValidator
   alias AshScylla.DataLayer.QueryBuilder
   alias AshScylla.DataLayer.Types
+  alias AshScylla.Error.ScyllaError
   alias AshScylla.Identifier
   alias AshScylla.Telemetry
 
@@ -470,8 +472,7 @@ defmodule AshScylla.DataLayer do
   @impl Ash.DataLayer
   @spec run_query(t(), Ash.Resource.t()) :: {:ok, [Ash.Resource.t()]} | {:error, term()}
   def run_query(data_layer_query, resource) do
-    %Query{repo: repo, table: table, tenant: tenant, filters: filters, sorts: sorts} =
-      data_layer_query
+    %Query{filters: filters} = data_layer_query
 
     Logger.debug(fn -> "AshScylla: Data Layer query #{inspect(data_layer_query)}" end)
     Logger.debug(fn -> "AshScylla: Filter query: #{inspect(filters)}" end)
@@ -485,17 +486,7 @@ defmodule AshScylla.DataLayer do
         unknown_filter_error!(unknown)
 
       {:ok, {query, params}} ->
-        execute_single_query(
-          data_layer_query,
-          resource,
-          repo,
-          table,
-          tenant,
-          query,
-          params,
-          filters,
-          sorts
-        )
+        execute_single_query(data_layer_query, resource, {query, params})
     end
   rescue
     e in [AshScylla.Error] ->
@@ -509,7 +500,7 @@ defmodule AshScylla.DataLayer do
           with {:ok, left_records} <- run_query(left_query, resource),
                {:ok, right_records} <- run_query(right_query, resource) do
             # Merge and deduplicate by the resource's primary key
-            pkey = Ash.Resource.Info.primary_key(resource)
+            pkey = Info.primary_key(resource)
 
             merged =
               (left_records ++ right_records)
@@ -526,17 +517,10 @@ defmodule AshScylla.DataLayer do
       handle_result({:error, e})
   end
 
-  defp execute_single_query(
-         data_layer_query,
-         resource,
-         repo,
-         table,
-         tenant,
-         query,
-         params,
-         filters,
-         sorts
-       ) do
+  defp execute_single_query(data_layer_query, resource, {query, params}) do
+    %Query{repo: repo, table: table, tenant: tenant, filters: filters, sorts: sorts} =
+      data_layer_query
+
     # Detect if ORDER BY was dropped due to secondary index scan
     order_dropped? =
       resource != nil and sorts != [] and sorts != nil and
@@ -675,14 +659,14 @@ defmodule AshScylla.DataLayer do
     if is_nil(resource) do
       {:ok, %{data_layer_query | tenant: tenant}}
     else
-      strategy = Ash.Resource.Info.multitenancy_strategy(resource)
+      strategy = Info.multitenancy_strategy(resource)
 
       case strategy do
         :context ->
           {:ok, %{data_layer_query | tenant: tenant}}
 
         :attribute ->
-          attribute = Ash.Resource.Info.multitenancy_attribute(resource)
+          attribute = Info.multitenancy_attribute(resource)
 
           if attribute do
             filter(
@@ -835,7 +819,7 @@ defmodule AshScylla.DataLayer do
 
         # Check if resource has a domain (real app resource vs test resource)
         name =
-          if Ash.Resource.Info.domain(resource) do
+          if Info.domain(resource) do
             # Use last two segments (domain_resource) to avoid collisions
             # e.g. Games.Stats -> "games_stats", OfflineGame.Stats -> "offline_game_stats"
             segments
@@ -965,7 +949,7 @@ defmodule AshScylla.DataLayer do
       {:ok, %{data_layer_query | select: select}}
     else
       {:error,
-       AshScylla.Error.ScyllaError.from_error(
+       ScyllaError.from_error(
          "DISTINCT on non-partition-key columns is not supported in ScyllaDB/Cassandra. " <>
            "Distinct columns: #{inspect(distinct_columns)}. " <>
            "Partition key columns: #{inspect(pk_columns)}. " <>
@@ -986,7 +970,7 @@ defmodule AshScylla.DataLayer do
   @spec combination_of(t(), term(), Ash.Resource.t()) :: {:ok, t()} | {:error, term()}
   def combination_of(_data_layer_query, _combination, _resource) do
     {:error,
-     AshScylla.Error.ScyllaError.from_error(
+     ScyllaError.from_error(
        "Combination queries (UNION/INTERSECT) are not supported in ScyllaDB/Cassandra. " <>
          "Ash will fall back to in-memory combination of separate query results."
      )}
@@ -1019,67 +1003,69 @@ defmodule AshScylla.DataLayer do
   @spec run_aggregate_query(t(), [Ash.Query.Aggregate.t()], Ash.Resource.t()) ::
           {:ok, map()} | {:error, term()}
   def run_aggregate_query(data_layer_query, aggregates, resource) do
-    repo = repo(resource)
-    opts = build_opts(resource)
-    sanitized_table = qualified_table(resource)
     %Query{filters: filters} = data_layer_query
 
-    where_result =
-      case filters do
-        nil ->
-          {:ok, {"", []}}
+    ctx = %{
+      table: qualified_table(resource),
+      filters: filters,
+      resource: resource,
+      repo: repo(resource),
+      opts: build_opts(resource)
+    }
 
-        [] ->
-          {:ok, {"", []}}
-
-        _ ->
-          uuid_fields = uuid_attribute_names(resource)
-          cql_types = attr_cql_type_map(resource)
-          QueryBuilder.build_where_clause(filters, uuid_fields, cql_types)
-      end
-
-    case where_result do
+    case aggregate_where_clause(filters, resource) do
       {:error, {:unknown_filter, unknown}} ->
         unknown_filter_error!(unknown)
 
       {:ok, {where_clause, where_params}} ->
-        # Build aggregate queries for each aggregate
-        results =
-          Enum.reduce_while(aggregates, %{}, fn aggregate, acc ->
-            case build_aggregate_query(
-                   aggregate,
-                   sanitized_table,
-                   where_clause,
-                   resource,
-                   filters
-                 ) do
-              {:error, reason} ->
-                {:halt, handle_result({:error, reason})}
+        ctx = Map.merge(ctx, %{where_clause: where_clause, where_params: where_params})
 
-              {query, params} ->
-                case repo.query(query, where_params ++ params, opts) do
-                  {:ok, %Xandra.Page{content: [[value]]}} when not is_nil(value) ->
-                    {:cont, Map.put(acc, aggregate.name, value)}
-
-                  {:ok, %Xandra.Page{content: [[value]]}} when is_nil(value) ->
-                    {:cont, Map.put(acc, aggregate.name, nil)}
-
-                  {:ok, %Xandra.Page{content: []}} ->
-                    {:cont, Map.put(acc, aggregate.name, Map.get(aggregate, :default_value))}
-
-                  {:ok, %Xandra.Page{content: nil}} ->
-                    {:cont, Map.put(acc, aggregate.name, Map.get(aggregate, :default_value))}
-
-                  {:error, error} ->
-                    {:halt, handle_result({:error, error})}
-                end
-            end
-          end)
-
-        case results do
+        case collect_aggregate_values(aggregates, ctx) do
           {:error, _reason} = error -> error
           map -> {:ok, map}
         end
+    end
+  end
+
+  defp aggregate_where_clause(filters, _resource) when filters in [nil, []], do: {:ok, {"", []}}
+
+  defp aggregate_where_clause(filters, resource) do
+    uuid_fields = uuid_attribute_names(resource)
+    cql_types = attr_cql_type_map(resource)
+    QueryBuilder.build_where_clause(filters, uuid_fields, cql_types)
+  end
+
+  defp collect_aggregate_values(aggregates, ctx) do
+    Enum.reduce_while(aggregates, %{}, fn aggregate, acc ->
+      case run_single_aggregate(aggregate, ctx) do
+        {:ok, value} -> {:cont, Map.put(acc, aggregate.name, value)}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp run_single_aggregate(aggregate, ctx) do
+    case build_aggregate_query(aggregate, ctx.table, ctx.where_clause, ctx.resource, ctx.filters) do
+      {:error, reason} ->
+        handle_result({:error, reason})
+
+      {query, params} ->
+        query_aggregate_value(ctx.repo, query, ctx.where_params ++ params, aggregate, ctx.opts)
+    end
+  end
+
+  defp query_aggregate_value(repo, query, params, aggregate, opts) do
+    default_value = Map.get(aggregate, :default_value)
+
+    case repo.query(query, params, opts) do
+      {:ok, %Xandra.Page{content: [[value]]}} ->
+        {:ok, value}
+
+      {:ok, %Xandra.Page{content: content}} when content in [[], nil] ->
+        {:ok, default_value}
+
+      {:error, error} ->
+        handle_result({:error, error})
     end
   end
 
@@ -1196,7 +1182,7 @@ defmodule AshScylla.DataLayer do
 
   defp build_aggregate_query(%{kind: kind}, _table, _where_clause, _resource, _filters) do
     {:error,
-     AshScylla.Error.ScyllaError.from_error(
+     ScyllaError.from_error(
        "Aggregate kind #{kind} is not supported in ScyllaDB/Cassandra. Supported kinds: :count, :sum, :avg, :min, :max"
      )}
   end
@@ -1204,7 +1190,7 @@ defmodule AshScylla.DataLayer do
   defp resolve_aggregate_field(nil, _resource), do: "*"
 
   defp resolve_aggregate_field(field, resource) when is_atom(field) do
-    case Ash.Resource.Info.field(resource, field) do
+    case Info.field(resource, field) do
       %{name: name} -> QueryBuilder.cql_identifier(name)
       nil -> QueryBuilder.cql_identifier(field)
     end
@@ -1229,7 +1215,7 @@ defmodule AshScylla.DataLayer do
     do: records
 
   def attach_aggregates(records, aggregates, resource, repo, opts) do
-    pkey = Ash.Resource.Info.primary_key(resource)
+    pkey = Info.primary_key(resource)
 
     # Compute each record's aggregates concurrently. Relationship aggregates
     # issue one synchronous ScyllaDB query per record, so a page of N records
@@ -1334,8 +1320,8 @@ defmodule AshScylla.DataLayer do
          _agg_query
        ) do
     # Resolve the relationship chain to find the destination resource
-    related = Ash.Resource.Info.related(resource, path)
-    relationship = Ash.Resource.Info.relationship(resource, List.first(path))
+    related = Info.related(resource, path)
+    relationship = Info.relationship(resource, List.first(path))
 
     related_table = qualified_table(related)
 
@@ -1345,7 +1331,7 @@ defmodule AshScylla.DataLayer do
       :belongs_to ->
         # Source has the foreign key that references the destination
         fk_value = Map.get(pk_values, relationship.source_attribute)
-        dest_pkey = Ash.Resource.Info.primary_key(related)
+        dest_pkey = Info.primary_key(related)
 
         if length(dest_pkey) == 1 do
           [pk_col] = dest_pkey
@@ -1392,8 +1378,8 @@ defmodule AshScylla.DataLayer do
   end
 
   defp build_pk_where_clause_from_map(pk_values, resource) do
-    pkey = Ash.Resource.Info.primary_key(resource)
-    attrs = Ash.Resource.Info.attributes(resource)
+    pkey = Info.primary_key(resource)
+    attrs = Info.attributes(resource)
     uuid_fields = uuid_attribute_names(resource)
     atom_fields = atom_attribute_names(resource)
 
@@ -1443,20 +1429,24 @@ defmodule AshScylla.DataLayer do
           {String.t(), list()}
   defp build_insert_statement(table, attrs, ttl, resource) do
     {sanitized_fields, values} = build_field_value_pairs(attrs, resource)
-
-    query =
-      IO.iodata_to_binary([
-        "INSERT INTO ",
-        table,
-        " (",
-        Enum.join(sanitized_fields, ", "),
-        ") VALUES (",
-        Enum.map_join(1..length(sanitized_fields), ", ", fn _ -> "?" end),
-        ")",
-        if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
-      ])
-
+    query = insert_query(table, sanitized_fields, ttl)
     {query, values}
+  end
+
+  # Builds a parameterized INSERT statement shared by insert/upsert/bulk paths.
+  @spec insert_query(String.t(), [String.t()], pos_integer() | nil, iodata()) :: String.t()
+  defp insert_query(table, fields, ttl, suffix \\ []) do
+    IO.iodata_to_binary([
+      "INSERT INTO ",
+      table,
+      " (",
+      Enum.join(fields, ", "),
+      ") VALUES (",
+      Enum.map_join(1..length(fields), ", ", fn _ -> "?" end),
+      ")",
+      suffix,
+      if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
+    ])
   end
 
   @spec normalize_bulk_options(keyword() | map()) :: keyword()
@@ -1492,23 +1482,11 @@ defmodule AshScylla.DataLayer do
     sanitized_table = qualified_table(resource)
 
     {sanitized_fields, values} = build_field_value_pairs(attrs, resource)
-    field_count = length(sanitized_fields)
 
     # Use INSERT ... IF NOT EXISTS for LWT upsert semantics
     lwt_suffix = if lwt?, do: " IF NOT EXISTS", else: ""
 
-    query =
-      IO.iodata_to_binary([
-        "INSERT INTO ",
-        sanitized_table,
-        " (",
-        Enum.join(sanitized_fields, ", "),
-        ") VALUES (",
-        Enum.map_join(1..field_count, ", ", fn _ -> "?" end),
-        ")",
-        lwt_suffix,
-        if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
-      ])
+    query = insert_query(sanitized_table, sanitized_fields, ttl, lwt_suffix)
 
     Logger.debug(fn -> "AshScylla: Executing UPSERT: #{query} with params #{inspect(values)}" end)
 
@@ -1760,17 +1738,7 @@ defmodule AshScylla.DataLayer do
     sanitized_table = qualified_table(resource)
     {sanitized_fields, values} = build_field_value_pairs(attrs, resource)
 
-    query =
-      IO.iodata_to_binary([
-        "INSERT INTO ",
-        sanitized_table,
-        " (",
-        Enum.join(sanitized_fields, ", "),
-        ") VALUES (",
-        Enum.map_join(1..length(sanitized_fields), ", ", fn _ -> "?" end),
-        ")",
-        if(ttl, do: [" USING TTL ", to_string(ttl)], else: [])
-      ])
+    query = insert_query(sanitized_table, sanitized_fields, ttl)
 
     Logger.debug(fn -> "AshScylla: Executing INSERT on #{sanitized_table}" end)
 
@@ -1831,7 +1799,7 @@ defmodule AshScylla.DataLayer do
       {:ok, %Xandra.Page{content: [[false]]}} ->
         # LWT: record didn't exist (stale record)
         {:error,
-         Ash.Error.Changes.StaleRecord.exception(
+         StaleRecord.exception(
            resource: resource,
            filter: changeset.filter
          )}
@@ -1880,7 +1848,7 @@ defmodule AshScylla.DataLayer do
       {:ok, %Xandra.Page{content: [[false]]}} ->
         # LWT: record didn't exist (stale record)
         {:error,
-         Ash.Error.Changes.StaleRecord.exception(
+         StaleRecord.exception(
            resource: resource,
            filter: changeset.filter
          )}
@@ -1944,9 +1912,7 @@ defmodule AshScylla.DataLayer do
 
   defp not_found_error(table, pk) do
     {:error,
-     AshScylla.Error.ScyllaError.from_error(
-       "Record not found in table #{table} with primary key #{inspect(pk)}"
-     )}
+     ScyllaError.from_error("Record not found in table #{table} with primary key #{inspect(pk)}")}
   end
 
   defp fetch_by_pk(changeset, resource, repo) do
@@ -1973,30 +1939,10 @@ defmodule AshScylla.DataLayer do
       case Map.get(changeset, :data) do
         data when is_map(data) ->
           data_attributes = Map.get(data, :attributes, %{})
-
-          pk_from_struct =
-            Enum.reduce(Info.attributes(resource), %{}, fn attr, acc ->
-              if attr.primary_key? do
-                case Map.get(data, attr.name) do
-                  nil -> acc
-                  val -> Map.put(acc, attr.name, val)
-                end
-              else
-                acc
-              end
-            end)
+          pk_from_struct = primary_key_values_from_map(data, resource)
 
           if map_size(data_attributes) > 0 and map_size(pk_from_struct) == 0 do
-            Enum.reduce(Info.attributes(resource), %{}, fn attr, acc ->
-              if attr.primary_key? do
-                case Map.get(data_attributes, attr.name) do
-                  nil -> acc
-                  val -> Map.put(acc, attr.name, val)
-                end
-              else
-                acc
-              end
-            end)
+            primary_key_values_from_map(data_attributes, resource)
           else
             pk_from_struct
           end
@@ -2008,6 +1954,21 @@ defmodule AshScylla.DataLayer do
     # Merge: prefer non-nil attributes, fall back to data values
     pk_from_attrs_non_nil = Map.reject(pk_from_attrs, fn {_k, v} -> is_nil(v) end)
     Map.merge(pk_from_data, pk_from_attrs_non_nil)
+  end
+
+  # Collects non-nil primary key values from a data map (struct or plain map).
+  @spec primary_key_values_from_map(map(), module()) :: map()
+  defp primary_key_values_from_map(data, resource) do
+    Enum.reduce(Info.attributes(resource), %{}, fn attr, acc ->
+      if attr.primary_key? do
+        case Map.get(data, attr.name) do
+          nil -> acc
+          val -> Map.put(acc, attr.name, val)
+        end
+      else
+        acc
+      end
+    end)
   end
 
   # Extract column names once per page. Xandra columns can be 4-tuples:
@@ -2203,7 +2164,7 @@ defmodule AshScylla.DataLayer do
         segments = Module.split(resource)
 
         name =
-          if Ash.Resource.Info.domain(resource) do
+          if Info.domain(resource) do
             segments
             |> Enum.take(-2)
             |> Enum.map_join("_", &Macro.underscore/1)
@@ -2254,7 +2215,7 @@ defmodule AshScylla.DataLayer do
           {:ok, term()} | :ok | {:error, term()}
   defp handle_result({:ok, _} = ok), do: ok
   defp handle_result(:ok), do: :ok
-  defp handle_result({:error, %AshScylla.Error.ScyllaError{}} = error), do: error
+  defp handle_result({:error, %ScyllaError{}} = error), do: error
 
   defp handle_result({:error, %Xandra.Error{} = error}) do
     {:error, AshScylla.Error.wrap_xandra_error(error)}
@@ -2274,9 +2235,9 @@ defmodule AshScylla.DataLayer do
   @spec needs_allow_filtering?(module(), list()) :: boolean()
   defp needs_allow_filtering?(resource, filters) do
     pk_columns =
-      if Ash.Resource.Info.resource?(resource) do
+      if Info.resource?(resource) do
         resource
-        |> Ash.Resource.Info.primary_key()
+        |> Info.primary_key()
         |> MapSet.new()
       else
         MapSet.new()
@@ -2346,30 +2307,27 @@ defmodule AshScylla.DataLayer do
 
   @spec build_set_clauses(map(), module()) :: {[String.t()], [term()]}
   defp build_set_clauses(attrs, resource) do
-    uuid_fields = uuid_attribute_names(resource)
-    cql_types = attr_cql_type_map(resource)
-
-    {clauses, values} =
-      Enum.reduce(attrs, {[], []}, fn {k, v}, {cs, vs} ->
-        {clause, value} = build_set_or_where_clause(k, v, uuid_fields, cql_types, resource)
-        {[clause | cs], [value | vs]}
-      end)
-
-    {Enum.reverse(clauses), :lists.reverse(values)}
+    build_clause_pairs(attrs, resource)
   end
 
   @spec build_where_from_map(map(), module()) :: {String.t(), [term()]}
   defp build_where_from_map(pk_map, resource) do
+    {clauses, values} = build_clause_pairs(pk_map, resource)
+    {Enum.join(clauses, " AND "), values}
+  end
+
+  # Builds quoted "col = ?" clause pairs (and their wrapped values) from a
+  # key-value map, shared by SET and WHERE clause construction.
+  @spec build_clause_pairs(map(), module()) :: {[String.t()], [term()]}
+  defp build_clause_pairs(kv_map, resource) do
     uuid_fields = uuid_attribute_names(resource)
     cql_types = attr_cql_type_map(resource)
 
-    {clauses, values} =
-      Enum.reduce(pk_map, {[], []}, fn {k, v}, {cs, vs} ->
-        {clause, value} = build_set_or_where_clause(k, v, uuid_fields, cql_types, resource)
-        {[clause | cs], [value | vs]}
-      end)
-
-    {Enum.reverse(clauses) |> Enum.join(" AND "), :lists.reverse(values)}
+    kv_map
+    |> Enum.map(fn {k, v} ->
+      build_set_or_where_clause(k, v, uuid_fields, cql_types, resource)
+    end)
+    |> Enum.unzip()
   end
 
   @spec build_pk_where_clause(term(), module()) :: {String.t(), [term()]}
@@ -2404,7 +2362,7 @@ defmodule AshScylla.DataLayer do
   # encoded as 16-byte UUID binaries.
   @spec uuid_attribute_names(module()) :: MapSet.t(atom() | String.t())
   def uuid_attribute_names(resource) do
-    if Ash.Resource.Info.resource?(resource) do
+    if Info.resource?(resource) do
       resource
       |> Info.attributes()
       |> Enum.filter(fn attr ->
@@ -2506,7 +2464,7 @@ defmodule AshScylla.DataLayer do
   @doc false
   @spec attr_cql_type_map(module()) :: %{(atom() | String.t()) => String.t()}
   def attr_cql_type_map(resource) do
-    if Ash.Resource.Info.resource?(resource) do
+    if Info.resource?(resource) do
       resource
       |> Info.attributes()
       |> Enum.reduce(%{}, fn attr, acc ->

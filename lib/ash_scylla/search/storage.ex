@@ -5,8 +5,14 @@ defmodule AshScylla.Search.Storage do
   Provides functions to create and drop the required tables for the inverted
   index. The tables are:
 
-    * `search_post_terms` — maps terms to post IDs with term frequency (TF)
-    * `search_post_fields` — stores the analyzed field text for update/delete diffing
+    * `search_post_terms` — inverted index mapping `(term, shard, post_id)` to
+      the term's total frequency within the document (summed across fields)
+    * `search_post_fields` — per-field term/frequency maps used to compute
+      diff-based updates
+
+  Postings are stored at **document level**: one row per `(term, post_id)`.
+  Queries fetch F× fewer rows than per-field layouts (F = number of fields),
+  which is the dominant cost when reading hot terms.
 
   ## Usage
 
@@ -20,10 +26,10 @@ defmodule AshScylla.Search.Storage do
   Returns the CQL statement to create the `search_post_terms` table.
 
   This is the primary inverted index table. Each row maps a term to a post_id
-  with term frequency for ranking.
+  with the term's total frequency in that document.
 
   Partition key: `(term, shard)` to avoid hotspot partitions for common terms.
-  Clustering key: `post_id` for ordered retrieval.
+  Clustering key: `post_id`.
   """
   @spec create_post_terms_cql(String.t()) :: String.t()
   def create_post_terms_cql(keyspace) do
@@ -35,9 +41,8 @@ defmodule AshScylla.Search.Storage do
       term text,
       shard smallint,
       post_id uuid,
-      field tinyint,
       tf smallint,
-      PRIMARY KEY ((term, shard), post_id, field)
+      PRIMARY KEY ((term, shard), post_id)
     )
     """
   end
@@ -45,8 +50,8 @@ defmodule AshScylla.Search.Storage do
   @doc """
   Returns the CQL statement to create the `search_post_fields` table.
 
-  Stores the raw analyzed text per field for each post. Used during updates
-  to diff old vs new terms and compute additions/removals.
+  Stores the analyzed terms with their frequencies for each post field. Used
+  during updates to diff old vs new content and recompute document-level totals.
   """
   @spec create_post_fields_cql(String.t()) :: String.t()
   def create_post_fields_cql(keyspace) do
@@ -56,8 +61,8 @@ defmodule AshScylla.Search.Storage do
     """
     CREATE TABLE IF NOT EXISTS #{ks}.#{table} (
       post_id uuid,
-      field tinyint,
-      terms set<text>,
+      field text,
+      terms map<text, smallint>,
       PRIMARY KEY (post_id, field)
     )
     """
@@ -117,37 +122,57 @@ defmodule AshScylla.Search.Storage do
   end
 
   @doc """
-  Fetches stored terms for a post (all fields or a specific field) from `search_post_fields`.
+  Fetches every stored field map for a post from `search_post_fields`.
 
-  Returns a MapSet of terms, or an empty MapSet if no terms are found.
+  Returns `%{"field_name" => %{"term" => tf}}`. Empty map if the post has no
+  indexed fields.
   """
-  @spec fetch_terms(module(), String.t(), String.t(), non_neg_integer() | nil) ::
-          {:ok, MapSet.t()} | {:error, term()}
-  def fetch_terms(repo, keyspace, post_id, field \\ nil) do
-    ks = Identifier.quote_name(keyspace)
-    table = Identifier.quote_name("search_post_fields")
+  @spec fetch_field_maps(module(), String.t(), String.t()) ::
+          {:ok, %{String.t() => %{String.t() => pos_integer()}}} | {:error, term()}
+  def fetch_field_maps(repo, keyspace, post_id) do
+    with {:ok, uuid} <- Identifier.validate_uuid(post_id) do
+      ks = Identifier.quote_name(keyspace)
+      table = Identifier.quote_name("search_post_fields")
 
-    cql =
-      if field do
-        "SELECT terms FROM #{ks}.#{table} WHERE post_id = #{post_id} AND field = #{field}"
-      else
-        "SELECT terms FROM #{ks}.#{table} WHERE post_id = #{post_id}"
+      case repo.query("SELECT field, terms FROM #{ks}.#{table} WHERE post_id = ?", [uuid]) do
+        {:ok, %{rows: rows}} ->
+          {:ok, rows_to_field_maps(rows)}
+
+        {:error, reason} ->
+          {:error, reason}
       end
-
-    case repo.query(cql, []) do
-      {:ok, %{rows: []}} ->
-        {:ok, MapSet.new()}
-
-      {:ok, %{rows: rows}} ->
-        all_terms =
-          rows
-          |> Enum.flat_map(fn [terms] -> terms end)
-          |> MapSet.new()
-
-        {:ok, all_terms}
-
-      {:error, reason} ->
-        {:error, reason}
     end
   end
+
+  defp rows_to_field_maps(rows) do
+    Enum.reduce(rows, %{}, fn row, acc ->
+      case row do
+        [field, terms] when is_binary(field) ->
+          Map.put(acc, field, normalize_term_map(terms))
+
+        _ ->
+          acc
+      end
+    end)
+  end
+
+  defp normalize_term_map(terms) when is_map(terms),
+    do: Map.new(terms, fn {k, v} -> {to_string(k), v} end)
+
+  defp normalize_term_map(_other), do: %{}
+
+  @doc false
+  # Field map values may be `%{term => tf}` maps (as fetched from the DB) or
+  # `[{term, tf}]` lists (as produced by the analyzer).
+  @spec sum_field_maps(%{String.t() => %{String.t() => pos_integer()} | list()}) ::
+          %{String.t() => pos_integer()}
+  def sum_field_maps(field_maps) do
+    Enum.reduce(field_maps, %{}, fn {_field, terms}, acc ->
+      Map.merge(acc, to_term_map(terms), fn _term, tf_a, tf_b -> tf_a + tf_b end)
+    end)
+  end
+
+  defp to_term_map(terms) when is_map(terms), do: terms
+  defp to_term_map(terms) when is_list(terms), do: Map.new(terms)
+  defp to_term_map(_other), do: %{}
 end

@@ -18,7 +18,7 @@ defmodule AshScylla.SchemaLoader do
 
   ## Discovery
 
-  `discover/0` scans all apps (current + umbrella) for `.ex` files under
+  `discover/0` scans all apps (current + umbrella) for `.exs` files under
   `priv/<repo>/migrations/` and returns sorted file paths.
 
   ## Loading
@@ -33,18 +33,27 @@ defmodule AshScylla.SchemaLoader do
   @type loaded :: {:ok, module()} | {:error, term()}
 
   @doc """
-  Discovers all `.exs` files under `priv/<repo>/migrations` for the current project.
+  Discovers all `.exs` files under `priv/repo/migrations` for the current project.
+
+  In an umbrella project, child app paths are scanned; otherwise the current
+  project's directory is scanned. The returned paths are sorted.
   """
   @spec discover() :: [String.t()]
   def discover do
-    apps = Mix.Project.apps_paths() || %{}
     migrations_glob = AshScylla.MixHelpers.migration_glob("priv/repo/migrations")
 
-    for {_app, path} <- apps,
-        file <- Path.wildcard(Path.join(path, migrations_glob)),
-        do:
-          file
-          |> Enum.sort()
+    paths =
+      case Mix.Project.apps_paths() do
+        nil ->
+          Path.wildcard(migrations_glob)
+
+        apps_paths ->
+          Enum.flat_map(apps_paths, fn {_app, path} ->
+            Path.wildcard(Path.join(path, migrations_glob))
+          end)
+      end
+
+    Enum.sort(paths)
   end
 
   @doc """

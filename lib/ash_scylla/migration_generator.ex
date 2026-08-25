@@ -840,8 +840,7 @@ defmodule AshScylla.MigrationGenerator do
   # ── Timestamp ────────────────────────────────────────────────────────────
 
   defp timestamp do
-    {{y, m, d}, {hh, mm, ss}} = :calendar.universal_time()
-    current = "#{y}#{pad(m)}#{pad(d)}#{pad(hh)}#{pad(mm)}#{pad(ss)}"
+    current = :calendar.universal_time() |> format_timestamp()
 
     last = Process.get(:ash_scylla_last_migration_timestamp)
 
@@ -866,7 +865,10 @@ defmodule AshScylla.MigrationGenerator do
         {String.to_integer(hh), String.to_integer(mm), String.to_integer(ss)}
       })
 
-    {{y, m, d}, {hh, mm, ss}} = :calendar.gregorian_seconds_to_datetime(seconds + 1)
+    (seconds + 1) |> :calendar.gregorian_seconds_to_datetime() |> format_timestamp()
+  end
+
+  defp format_timestamp({{y, m, d}, {hh, mm, ss}}) do
     "#{y}#{pad(m)}#{pad(d)}#{pad(hh)}#{pad(mm)}#{pad(ss)}"
   end
 

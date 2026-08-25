@@ -11,7 +11,7 @@ defmodule AshScylla.Search.StorageTest do
       assert String.contains?(cql, "CREATE TABLE IF NOT EXISTS")
       assert String.contains?(cql, "my_keyspace")
       assert String.contains?(cql, "search_post_terms")
-      assert String.contains?(cql, "PRIMARY KEY ((term, shard), post_id, field)")
+      assert String.contains?(cql, "PRIMARY KEY ((term, shard), post_id)")
     end
   end
 

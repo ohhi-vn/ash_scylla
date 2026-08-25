@@ -45,13 +45,4 @@ defmodule AshScylla.Search.Analyzer.Tokenizer do
     tokenize(text)
     |> Enum.filter(&(String.length(&1) >= min_length))
   end
-
-  @doc """
-  Tokenizes multiple text fields, returning a flat list of all tokens.
-  """
-  @spec tokenize_fields(%{optional(atom()) => String.t()}) :: [String.t()]
-  def tokenize_fields(fields) when is_map(fields) do
-    fields
-    |> Enum.flat_map(fn {_field, text} -> tokenize(text) end)
-  end
 end

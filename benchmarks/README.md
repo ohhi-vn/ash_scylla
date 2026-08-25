@@ -145,3 +145,37 @@ def run do
   )
 end
 ```
+
+## Search Feature Benchmarks
+
+`search_bench.exs` measures every stage of the inverted-index search
+pipeline. No database required — ScyllaDB-facing paths run against an
+in-memory index, so numbers reflect library overhead (CQL building, result
+shaping, boolean logic, ranking) rather than network latency.
+
+```bash
+make bench-search
+# or directly:
+MIX_ENV=dev mix run benchmarks/search_bench.exs
+
+# Faster iteration:
+SEARCH_BENCH_TIME=0.5 SEARCH_BENCH_WARMUP=0.1 MIX_ENV=dev mix run benchmarks/search_bench.exs
+
+# Scale the corpus (default 10000 documents):
+SEARCH_BENCH_DOCS=100000 MIX_ENV=dev mix run benchmarks/search_bench.exs
+```
+
+Covered stages:
+
+| Stage | What it tells you |
+|-------|-------------------|
+| Analyzer | Indexing-side text analysis cost by document size |
+| Parser | Query parsing across syntax complexity |
+| BooleanEngine | Intersect/union/difference scaling on posting lists |
+| Planner | Query planning overhead against a mock 10k-document index |
+| Builder | UNLOGGED BATCH CQL construction while indexing (10/100/500 terms) |
+| Ranking | TF vs TF-IDF vs BM25 scoring of 1k-doc result sets |
+| Paginator | Pagination metadata over 10k-entry results |
+| End-to-end | Full `Search.search/4` pipeline via the mock repo |
+
+Results land in `benchmarks/results/search.html`.

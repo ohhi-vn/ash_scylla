@@ -99,22 +99,44 @@ defmodule Mix.Tasks.AshScylla.Migrate do
     migrations_only = Keyword.get(opts, :migrations_only, false)
     schemas_only = Keyword.get(opts, :schemas_only, false)
 
-    {schema_count, schema_errors} =
-      if migrations_only do
-        {0, 0}
-      else
-        run_schema_files(repo, opts)
-      end
+    if migrations_only and schemas_only do
+      Mix.raise(
+        "--migrations-only and --schemas-only are mutually exclusive: " <>
+          "each one skips the other half of the work."
+      )
+    end
 
-    {resource_count, resource_errors} =
+    nodes = resolve_nodes(opts, repo)
+
+    # --migrations-only: run migration files, skip auto-schema.
+    # --schemas-only: run auto-schema, skip migration files.
+    {schema_count, schema_errors} =
       if schemas_only do
         {0, 0}
       else
-        run_auto_schema_migrations(repo, opts)
+        run_schema_files(repo, opts, nodes)
       end
 
-    if !migrations_only do
-      report_results(schema_count, schema_errors, resource_count, resource_errors)
+    {resource_count, resource_errors} =
+      if migrations_only do
+        {0, 0}
+      else
+        run_auto_schema_migrations(repo, opts, nodes)
+      end
+
+    report_results(schema_count, schema_errors, resource_count, resource_errors)
+  end
+
+  defp resolve_nodes(opts, repo) do
+    case Keyword.get(opts, :nodes) do
+      nil ->
+        repo.nodes()
+
+      nodes when is_binary(nodes) ->
+        nodes
+        |> String.split(",")
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == ""))
     end
   end
 
@@ -308,7 +330,7 @@ defmodule Mix.Tasks.AshScylla.Migrate do
 
   # ── Schema Files from priv/migrations ─────────────────────────────────────
 
-  defp run_schema_files(repo, opts) do
+  defp run_schema_files(repo, opts, nodes) do
     dry_run = Keyword.get(opts, :dry_run, false)
     step = Keyword.get(opts, :step)
     to_version = Keyword.get(opts, :to)
@@ -337,7 +359,7 @@ defmodule Mix.Tasks.AshScylla.Migrate do
 
       results =
         Enum.map(migration_files, fn {version, file} ->
-          run_schema_file(file, repo, dry_run, version)
+          run_schema_file(file, repo, dry_run, version, nodes)
         end)
 
       count = Enum.count(results, &(&1 == :ok))
@@ -435,7 +457,7 @@ defmodule Mix.Tasks.AshScylla.Migrate do
     {kept, skipped}
   end
 
-  defp run_schema_file(file, repo, dry_run, version) do
+  defp run_schema_file(file, repo, dry_run, version, nodes) do
     Mix.shell().info("  Migration: #{Path.basename(file)} (v#{version})...")
 
     case load_schema_module(file) do
@@ -452,7 +474,7 @@ defmodule Mix.Tasks.AshScylla.Migrate do
             Enum.each(statements, &Mix.shell().info("    #{&1}"))
             :ok
           else
-            case AshScylla.Migrator.run(repo.nodes(), statements,
+            case AshScylla.Migrator.run(nodes, statements,
                    keyspace: repo.keyspace(),
                    connect_timeout: 10_000
                  ) do
@@ -494,7 +516,7 @@ defmodule Mix.Tasks.AshScylla.Migrate do
 
   # ── Auto-Schema Migration (diff resources against snapshots) ─────────────
 
-  defp run_auto_schema_migrations(repo, opts) do
+  defp run_auto_schema_migrations(repo, opts, nodes) do
     dry_run = Keyword.get(opts, :dry_run, false)
     resources = AshScylla.MixHelpers.find_all_resources()
 
@@ -529,7 +551,7 @@ defmodule Mix.Tasks.AshScylla.Migrate do
             {:ok, _} =
               AshScylla.Connection.start_link(
                 name: repo,
-                nodes: repo.nodes(),
+                nodes: nodes,
                 keyspace: repo.keyspace(),
                 connect_timeout: 10_000
               )

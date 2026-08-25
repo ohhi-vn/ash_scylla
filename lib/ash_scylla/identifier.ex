@@ -48,6 +48,36 @@ defmodule AshScylla.Identifier do
 
   @valid_keyspace_regex ~r/^[a-zA-Z_][a-zA-Z0-9_]{0,47}$/
 
+  @uuid_regex ~r/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
+
+  @doc """
+  Validates that the given value is a UUID string suitable for direct use as
+  a CQL `uuid` value.
+
+  Returns `{:ok, downcased_uuid}` if valid, or `{:error, reason}` if not.
+  """
+  @spec validate_uuid(term()) :: {:ok, String.t()} | {:error, String.t()}
+  def validate_uuid(value) when is_binary(value) do
+    if Regex.match?(@uuid_regex, value) do
+      {:ok, String.downcase(value)}
+    else
+      {:error,
+       "Invalid UUID: #{inspect(value)}. Expected the canonical 8-4-4-4-12 hexadecimal form"}
+    end
+  end
+
+  def validate_uuid(value) do
+    {:error, "Invalid UUID: expected a string, got #{inspect(value)}"}
+  end
+
+  @doc """
+  Checks whether the given value is a valid UUID string.
+  """
+  @spec valid_uuid?(term()) :: boolean()
+  def valid_uuid?(value) do
+    match?({:ok, _}, validate_uuid(value))
+  end
+
   @doc """
   Validates that the given string is a safe CQL identifier.
 

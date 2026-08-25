@@ -68,20 +68,20 @@ defmodule Mix.Tasks.AshScylla.MigrateTaskTest do
       end
     end
 
-    test "creates keyspace and skips both schema phases" do
+    test "creates keyspace and runs only migration files with --migrations-only" do
       output =
         capture_io(fn ->
           Mix.Tasks.AshScylla.Migrate.run([
             "--repo",
             "Mix.Tasks.AshScylla.MigrateTaskTest.MigrateMockRepo",
             "--create-keyspace",
-            "--migrations-only",
-            "--schemas-only"
+            "--migrations-only"
           ])
         end)
 
       assert output =~ "Creating keyspace"
       assert output =~ "Keyspace created successfully."
+      refute output =~ "would auto-migrate"
     end
 
     test "dry run reports resources that would auto-migrate" do
@@ -90,8 +90,7 @@ defmodule Mix.Tasks.AshScylla.MigrateTaskTest do
           Mix.Tasks.AshScylla.Migrate.run([
             "--repo",
             "Mix.Tasks.AshScylla.MigrateTaskTest.MigrateMockRepo",
-            "--dry-run",
-            "--migrations-only"
+            "--dry-run"
           ])
         end)
 
@@ -106,7 +105,6 @@ defmodule Mix.Tasks.AshScylla.MigrateTaskTest do
             "--repo",
             "Mix.Tasks.AshScylla.MigrateTaskTest.MigrateMockRepo",
             "--dry-run",
-            "--migrations-only",
             "--resource",
             "AshScylla.TestResource"
           ])

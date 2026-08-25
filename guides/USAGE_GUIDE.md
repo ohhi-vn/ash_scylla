@@ -544,7 +544,7 @@ AshScylla.Search.update(MyApp.Repo, "my_keyspace", post_id, %{
 #=> :ok
 ```
 
-The updater reads the stored term set from `search_post_fields`, computes added/removed terms, and applies only the necessary inserts and deletes. Fields omitted from the map are left unchanged.
+The updater reads the stored term/frequency map from `search_post_fields`, computes added/removed terms **and frequency changes**, and applies only the necessary inserts, deletes, and frequency rewrites. The stored map is rewritten to the exact final state, so no stale entries can accumulate. Fields omitted from the map are left unchanged — fields are identified by name, not position.
 
 ### Deleting Documents
 
@@ -571,21 +571,40 @@ AshScylla.Search.delete(MyApp.Repo, "my_keyspace", post_id)
 # OR search
 {:ok, page} = AshScylla.Search.search(repo, keyspace, "elixir OR phoenix")
 
-# NOT search
+# NOT search (docs mentioning "framework" are removed from the results)
 {:ok, page} = AshScylla.Search.search(repo, keyspace, "phoenix NOT framework")
+
+# Exclusion prefix — same as NOT
+{:ok, page} = AshScylla.Search.search(repo, keyspace, "phoenix -framework")
+
+# Phrase search — matches documents containing all analyzed words of the
+# phrase (unordered; the index does not store token positions)
+{:ok, page} = AshScylla.Search.search(repo, keyspace, ~s("phoenix framework"))
 
 # Bang variant (raises on error)
 page = AshScylla.Search.search!(repo, keyspace, "phoenix")
 ```
 
+Error reasons returned by `search/4`:
+
+| Reason | Meaning |
+|--------|---------|
+| `:empty_query` | The query string is blank |
+| `:missing_positive_term` | No searchable positive terms remain after analysis (only stop words or only exclusions) |
+| `:invalid_num_shards` | The `:num_shards` option is less than 1 |
+
 ### Search Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `:page` | `1` | Page number (1-based) |
+| `:page` | `1` | Page number (1-based); pages beyond the range return empty entries |
 | `:page_size` | `20` | Results per page |
 | `:strategy` | `:tf` | Ranking: `:tf`, `:tfidf`, or `:bm25` |
-| `:num_shards` | `16` | Shards per term partition |
+| `:total_docs` | derived | Total indexed documents (for IDF) |
+| `:doc_freqs` | derived | `%{"stemmed_term" => df}` map (for IDF) |
+| `:avg_doc_length` | derived | Average document length (for BM25) |
+| `:doc_lengths` | `%{}` | `%{post_id => length}` for exact BM25 length normalization |
+| `:num_shards` | `16` | Shards per term partition (must match indexing-time layout) |
 | `:analyzer_opts` | `[]` | Passed to the analyzer (`stem`, `remove_stop_words`, `min_length`) |
 
 ### Ranking Strategies
@@ -594,19 +613,21 @@ page = AshScylla.Search.search!(repo, keyspace, "phoenix")
 # Simple TF (Term Frequency) scoring
 AshScylla.Search.search(repo, keyspace, "distributed web", strategy: :tf)
 
-# TF-IDF (needs document stats)
-AshScylla.Search.search(repo, keyspace, "distributed web",
-  strategy: :tfidf,
-  total_docs: 100_000,
-  doc_freqs: %{"distributed" => 500, "web" => 2000}
-)
+# TF-IDF / BM25 — corpus statistics are optional. Anything you omit is
+# derived from the matched result set (document frequency per term, total
+# documents, average document length), which keeps relative ordering sensible.
+AshScylla.Search.search(repo, keyspace, "distributed web", strategy: :bm25)
 
-# BM25 (Okapi BM25)
+# For the best scores, supply global statistics. Keys in :doc_freqs must be
+# analyzed (stemmed) terms — e.g. produced by Analyzer.analyze_query/2.
 AshScylla.Search.search(repo, keyspace, "distributed web",
   strategy: :bm25,
   total_docs: 100_000,
-  doc_freqs: %{"distributed" => 500, "web" => 2000},
-  avg_doc_length: 50.0
+  doc_freqs: %{"distribut" => 500, "web" => 2000},
+  avg_doc_length: 50.0,
+  # Optional: exact document lengths for BM25 length normalization
+  # (without it, lengths are approximated from matched-term frequencies)
+  doc_lengths: %{"550e8400-e29b-41d4-a716-446655440000" => 42}
 )
 ```
 
@@ -659,24 +680,31 @@ end
 ### Search Tables Schema
 
 ```sql
--- Inverted index (sharded to prevent hotspot partitions)
+-- Inverted index (sharded to prevent hotspot partitions).
+-- Postings are stored at DOCUMENT level: one row per (term, post) with the
+-- term's total frequency across all fields — queries fetch Fx fewer rows.
 CREATE TABLE search_post_terms (
   term text,
   shard smallint,
   post_id uuid,
-  field tinyint,
   tf smallint,
   PRIMARY KEY ((term, shard), post_id)
 );
 
--- Stored term sets for diff-based updates
+-- Stored per-field term/frequency maps for diff-based updates
 CREATE TABLE search_post_fields (
   post_id uuid,
-  field tinyint,
-  terms set<text>,
+  field text,
+  terms map<text, smallint>,
   PRIMARY KEY (post_id, field)
 );
 ```
+
+> **Upgrading from versions before the document-level postings change:** the
+> terms table previously stored one row per `(term, post, field)` and used a
+> positional integer `field` column before that. Drop and recreate both tables
+> (`AshScylla.Search.drop_tables/2` then `create_tables/2`) and re-index your
+> documents — the index is derived data.
 
 ### Performance Characteristics
 
@@ -916,17 +944,27 @@ end
 ### Running Migrations
 
 ```bash
-# Migrate all resources and schema files
+# Run pending migration files AND auto-schema migration for all resources
 mix ash_scylla.migrate
 
-# Migrate specific resource
+# Migrate specific resource (auto-schema only applies to it)
 mix ash_scylla.migrate --resource MyApp.User
 
 # Dry run (show statements without executing)
 mix ash_scylla.migrate --dry-run
 
-# Only schema files from priv/migrations
+# Only run migration files from priv/repo/migrations (skip auto-schema)
+mix ash_scylla.migrate --migrations-only
+
+# Only run auto-schema migration (skip migration files)
 mix ash_scylla.migrate --schemas-only
+
+# Limit which migration files run
+mix ash_scylla.migrate --to 20240101120000   # up to and including a version
+mix ash_scylla.migrate --step 3              # only the first N pending files
+
+# Override the ScyllaDB nodes for this run
+mix ash_scylla.migrate --nodes "127.0.0.1:9042,127.0.0.2:9042"
 ```
 
 ### Generating Migrations from DSL
@@ -934,25 +972,39 @@ mix ash_scylla.migrate --schemas-only
 Run `mix ash_scylla.generate_migrations` to introspect your Ash resources and generate CQL migration files:
 
 ```bash
-mix ash_scylla.generate_migrations
-# Generated migration: priv/repo/migrations/20240101120000_migration.cql
+mix ash_scylla.generate_migrations add_users_table
+# Generated: priv/repo/migrations/<timestamp>_add_users_table.exs
 ```
 
-The generated file contains plain CQL:
+Generated migrations are Elixir modules that use `AshScylla.Schema` and return CQL statements:
 
-```sql
--- 20240101120000_migration.cql
+```elixir
+defmodule MyApp.Migrations.MigrateResources1 do
+  @moduledoc \"\"\"
+  Migration for users.
 
-CREATE TABLE IF NOT EXISTS users (
-  id uuid,
-  email text,
-  name text,
-  age int,
-  created_at timestamp,
-  PRIMARY KEY (id)
-);
+  This file was autogenerated with `mix ash_scylla.generate_migrations`
+  \"\"\"
 
-CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
+  use AshScylla.Schema
+
+  @impl AshScylla.Schema
+  def change do
+    [
+      "CREATE TABLE IF NOT EXISTS \\"users\\" (id UUID PRIMARY KEY, name TEXT)",
+      "CREATE INDEX IF NOT EXISTS idx_users_email ON \\"users\\" (email)"
+    ]
+  end
+end
+```
+
+Useful flags:
+
+```bash
+mix ash_scylla.generate_migrations --dry-run        # print instead of writing files
+mix ash_scylla.generate_migrations --check          # exit non-zero when codegen is pending (CI)
+mix ash_scylla.generate_migrations --snapshots-only # refresh snapshots without new migration files
+mix ash_scylla.generate_migrations --dev            # auto-named dev migration (_dev suffix)
 ```
 
 You can also generate for a specific name:

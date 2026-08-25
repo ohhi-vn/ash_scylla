@@ -88,28 +88,34 @@ defmodule AshScylla.Search.Analyzer.Stemmer do
   #   (v*)  ing  → ""    (motoring → motor)
 
   defp step_1b(word) do
-    cond do
-      String.ends_with?(word, "eed") and byte_size(word) > 3 ->
-        stem = String.replace_suffix(word, "eed", "")
-        if measure(stem) > 0, do: stem <> "ee", else: word
+    stem = String.replace_suffix(word, "eed", "")
 
-      String.ends_with?(word, "ed") and contains_vowel?(String.replace_suffix(word, "ed", "")) ->
-        stem = String.replace_suffix(word, "ed", "")
-        step_1b_extra(stem)
+    if String.ends_with?(word, "eed") and byte_size(word) > 3 do
+      # (m>0) eed → ee (feed → feed, agreed → agree)
+      if measure(stem) > 0, do: stem <> "ee", else: word
+    else
+      case matching_step_1b_suffix(word) do
+        {suffix, _min_size} ->
+          word |> String.replace_suffix(suffix, "") |> step_1b_extra()
 
-      String.ends_with?(word, "ing") and byte_size(word) > 4 and
-          contains_vowel?(String.replace_suffix(word, "ing", "")) ->
-        stem = String.replace_suffix(word, "ing", "")
-        step_1b_extra(stem)
-
-      String.ends_with?(word, "er") and byte_size(word) > 3 and
-          contains_vowel?(String.replace_suffix(word, "er", "")) ->
-        stem = String.replace_suffix(word, "er", "")
-        step_1b_extra(stem)
-
-      true ->
-        word
+        nil ->
+          word
+      end
     end
+  end
+
+  # Suffix rules for step 1b, checked in order: {suffix, minimum word size}.
+  # Each rule also requires the resulting stem to contain a vowel:
+  #   (v*) ed   → ""    (plastered → plaster)
+  #   (v*) ing  → ""    (motoring → motor)
+  #   (v*) er   → ""    (hover → hov)
+  @step_1b_suffixes [{"ed", 0}, {"ing", 4}, {"er", 3}]
+
+  defp matching_step_1b_suffix(word) do
+    Enum.find(@step_1b_suffixes, fn {suffix, min_size} ->
+      byte_size(word) > min_size and String.ends_with?(word, suffix) and
+        contains_vowel?(String.replace_suffix(word, suffix, ""))
+    end)
   end
 
   defp step_1b_extra(stem) do
@@ -191,14 +197,7 @@ defmodule AshScylla.Search.Analyzer.Stemmer do
     {"biliti", "ble"}
   ]
 
-  defp step_2(word) do
-    Enum.find_value(@step_2_suffixes, word, fn {suffix, replacement} ->
-      if String.ends_with?(word, suffix) and byte_size(word) > byte_size(suffix) do
-        stem = String.replace_suffix(word, suffix, "")
-        if measure(stem) > 0, do: stem <> replacement
-      end
-    end)
-  end
+  defp step_2(word), do: apply_suffix_rules(word, @step_2_suffixes)
 
   # Step 3: Handle more suffixes
   @step_3_suffixes [
@@ -211,8 +210,12 @@ defmodule AshScylla.Search.Analyzer.Stemmer do
     {"ness", ""}
   ]
 
-  defp step_3(word) do
-    Enum.find_value(@step_3_suffixes, word, fn {suffix, replacement} ->
+  defp step_3(word), do: apply_suffix_rules(word, @step_3_suffixes)
+
+  # Shared suffix-replacement rule for steps 2 and 3: replace the first matching
+  # suffix (longest-first lists) when the stem has a non-zero measure.
+  defp apply_suffix_rules(word, suffixes) do
+    Enum.find_value(suffixes, word, fn {suffix, replacement} ->
       if String.ends_with?(word, suffix) and byte_size(word) > byte_size(suffix) do
         stem = String.replace_suffix(word, suffix, "")
         if measure(stem) > 0, do: stem <> replacement

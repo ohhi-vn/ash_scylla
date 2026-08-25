@@ -184,23 +184,23 @@ defmodule AshScylla.Search.IntegrationTest do
 
   # ── CQL constructors for manual index operations ──────────────────────────
 
-  defp insert_term(post_id, term, field, tf) do
+  defp insert_term(post_id, term, tf) do
     shard = Storage.shard_for(term)
     escaped = String.replace(term, "'", "''")
 
-    "INSERT INTO #{full_table(@table_terms)} (term, shard, post_id, field, tf) " <>
-      "VALUES ('#{escaped}', #{shard}, #{post_id}, #{field}, #{tf})"
+    "INSERT INTO #{full_table(@table_terms)} (term, shard, post_id, tf) " <>
+      "VALUES ('#{escaped}', #{shard}, #{post_id}, #{tf})"
   end
 
   defp select_term(conn, term) do
     escaped = String.replace(term, "'", "''")
 
-    queries =
-      0..15
-      |> Enum.map(fn shard ->
-        "SELECT post_id, field, tf FROM #{full_table(@table_terms)} " <>
-          "WHERE term = '#{escaped}' AND shard = #{shard}"
-      end)
+    shards = Enum.join(Enum.to_list(0..15), ", ")
+
+    queries = [
+      "SELECT post_id, tf FROM #{full_table(@table_terms)} " <>
+        "WHERE term = '#{escaped}' AND shard IN (#{shards})"
+    ]
 
     queries
     |> Enum.reduce(%{rows: [], num_rows: 0, columns: []}, fn query, acc ->
@@ -392,14 +392,14 @@ defmodule AshScylla.Search.IntegrationTest do
 
       post_id = uid()
 
-      xq(conn, insert_term(post_id, "phoenix", 0, 2))
-      xq(conn, "UPDATE #{full_table(@table_fields)} SET terms = {'phoenix'}
+      xq(conn, insert_term(post_id, "phoenix", 2))
+      xq(conn, "UPDATE #{full_table(@table_fields)} SET terms = {'phoenix': 1}
         WHERE post_id = #{post_id} AND field = 0")
 
       result = select_term(conn, "phoenix")
 
       assert result.num_rows == 1
-      assert Enum.map(result.rows, fn [pid, _, _] -> pid end) |> Enum.member?(post_id)
+      assert Enum.map(result.rows, fn [pid, _] -> pid end) |> Enum.member?(post_id)
     end
 
     test "inserts multiple terms for same post and retrieves all", %{conn: conn} do
@@ -407,10 +407,10 @@ defmodule AshScylla.Search.IntegrationTest do
 
       post_id = uid()
 
-      xq(conn, insert_term(post_id, "elixir", 1, 1))
-      xq(conn, insert_term(post_id, "phoenix", 1, 3))
+      xq(conn, insert_term(post_id, "elixir", 1))
+      xq(conn, insert_term(post_id, "phoenix", 3))
 
-      xq(conn, "UPDATE #{full_table(@table_fields)} SET terms = {'elixir', 'phoenix'}
+      xq(conn, "UPDATE #{full_table(@table_fields)} SET terms = {'elixir': 1, 'phoenix': 3}
         WHERE post_id = #{post_id} AND field = 1")
 
       r1 = select_term(conn, "elixir")
@@ -427,7 +427,7 @@ defmodule AshScylla.Search.IntegrationTest do
       term = "framework"
 
       shard = Storage.shard_for(term)
-      xq(conn, insert_term(post_id, term, 0, 1))
+      xq(conn, insert_term(post_id, term, 1))
 
       cql = "SELECT shard FROM #{full_table(@table_terms)}
         WHERE term = '#{term}' AND shard = #{shard}"
@@ -461,31 +461,28 @@ defmodule AshScylla.Search.IntegrationTest do
 
       post_id = uid()
 
-      xq(conn, insert_term(post_id, "phoenix", 0, 5))
-      xq(conn, insert_term(post_id, "elixir", 0, 2))
+      xq(conn, insert_term(post_id, "phoenix", 5))
+      xq(conn, insert_term(post_id, "elixir", 2))
 
       result = select_term(conn, "phoenix")
 
       assert result.num_rows == 1
-      [[^post_id, 0, tf]] = result.rows
+      [[^post_id, tf]] = result.rows
       assert tf == 5
     end
 
-    test "handles same term in different fields", %{conn: conn} do
+    test "document-level postings upsert the same term to a single row", %{conn: conn} do
       if is_nil(conn), do: skip_scylla()
 
       post_id = uid()
 
-      xq(conn, insert_term(post_id, "phoenix", 0, 3))
-      xq(conn, insert_term(post_id, "phoenix", 1, 2))
+      xq(conn, insert_term(post_id, "phoenix", 3))
+      xq(conn, insert_term(post_id, "phoenix", 2))
 
       result = select_term(conn, "phoenix")
 
-      assert result.num_rows == 2
-
-      tfs = Enum.map(result.rows, fn [_, _, tf] -> tf end)
-      assert 3 in tfs
-      assert 2 in tfs
+      assert result.num_rows == 1
+      assert [[^post_id, 2]] = result.rows
     end
   end
 
@@ -501,18 +498,18 @@ defmodule AshScylla.Search.IntegrationTest do
       post2 = uid()
       post3 = uid()
 
-      xq(conn, insert_term(post1, "phoenix", 0, 2))
-      xq(conn, insert_term(post1, "framework", 0, 1))
+      xq(conn, insert_term(post1, "phoenix", 2))
+      xq(conn, insert_term(post1, "framework", 1))
 
-      xq(conn, insert_term(post2, "phoenix", 0, 3))
+      xq(conn, insert_term(post2, "phoenix", 3))
 
-      xq(conn, insert_term(post3, "framework", 0, 1))
+      xq(conn, insert_term(post3, "framework", 1))
 
       r_phoenix = select_term(conn, "phoenix")
       r_framework = select_term(conn, "framework")
 
-      phoenix_posts = MapSet.new(Enum.map(r_phoenix.rows, fn [pid, _, _] -> pid end))
-      framework_posts = MapSet.new(Enum.map(r_framework.rows, fn [pid, _, _] -> pid end))
+      phoenix_posts = MapSet.new(Enum.map(r_phoenix.rows, fn [pid, _] -> pid end))
+      framework_posts = MapSet.new(Enum.map(r_framework.rows, fn [pid, _] -> pid end))
 
       intersection = MapSet.intersection(phoenix_posts, framework_posts)
 
@@ -527,7 +524,7 @@ defmodule AshScylla.Search.IntegrationTest do
 
       post1 = uid()
 
-      xq(conn, insert_term(post1, "elixir", 0, 1))
+      xq(conn, insert_term(post1, "elixir", 1))
 
       r_elixir = select_term(conn, "elixir")
       r_python = select_term(conn, "python")
@@ -549,9 +546,9 @@ defmodule AshScylla.Search.IntegrationTest do
 
       post_id = uid()
 
-      xq(conn, insert_term(post_id, "phoenix", 0, 2))
-      xq(conn, insert_term(post_id, "elixir", 0, 1))
-      xq(conn, "UPDATE #{full_table(@table_fields)} SET terms = {'phoenix', 'elixir'}
+      xq(conn, insert_term(post_id, "phoenix", 2))
+      xq(conn, insert_term(post_id, "elixir", 1))
+      xq(conn, "UPDATE #{full_table(@table_fields)} SET terms = {'phoenix': 2, 'elixir': 1}
         WHERE post_id = #{post_id} AND field = 0")
 
       r_before = select_term(conn, "phoenix")
@@ -561,15 +558,15 @@ defmodule AshScylla.Search.IntegrationTest do
       xq(conn, "UPDATE #{full_table(@table_fields)} SET terms = terms - {'phoenix'}
         WHERE post_id = #{post_id} AND field = 0")
 
-      xq(conn, insert_term(post_id, "framework", 0, 3))
+      xq(conn, insert_term(post_id, "framework", 3))
       xq(conn, "UPDATE #{full_table(@table_fields)} SET terms = terms + {'framework'}
         WHERE post_id = #{post_id} AND field = 0")
 
       r_after_phoenix = select_term(conn, "phoenix")
       r_after_framework = select_term(conn, "framework")
 
-      phoenix_posts = Enum.map(r_after_phoenix.rows, fn [pid, _, _] -> pid end)
-      framework_posts = Enum.map(r_after_framework.rows, fn [pid, _, _] -> pid end)
+      phoenix_posts = Enum.map(r_after_phoenix.rows, fn [pid, _] -> pid end)
+      framework_posts = Enum.map(r_after_framework.rows, fn [pid, _] -> pid end)
 
       refute post_id in phoenix_posts
       assert post_id in framework_posts
@@ -577,9 +574,9 @@ defmodule AshScylla.Search.IntegrationTest do
       r_fields = xq(conn, "SELECT terms FROM #{full_table(@table_fields)}
         WHERE post_id = #{post_id} AND field = 0")
       [[stored_terms]] = r_fields.rows
-      assert "elixir" in stored_terms
-      assert "framework" in stored_terms
-      refute "phoenix" in stored_terms
+      assert Map.has_key?(stored_terms, "elixir")
+      assert Map.has_key?(stored_terms, "framework")
+      refute Map.has_key?(stored_terms, "phoenix")
     end
   end
 
@@ -593,11 +590,11 @@ defmodule AshScylla.Search.IntegrationTest do
 
       post_id = uid()
 
-      xq(conn, insert_term(post_id, "phoenix", 0, 2))
-      xq(conn, insert_term(post_id, "framework", 1, 1))
-      xq(conn, "UPDATE #{full_table(@table_fields)} SET terms = {'phoenix'}
+      xq(conn, insert_term(post_id, "phoenix", 2))
+      xq(conn, insert_term(post_id, "framework", 1))
+      xq(conn, "UPDATE #{full_table(@table_fields)} SET terms = {'phoenix': 1}
         WHERE post_id = #{post_id} AND field = 0")
-      xq(conn, "UPDATE #{full_table(@table_fields)} SET terms = {'framework'}
+      xq(conn, "UPDATE #{full_table(@table_fields)} SET terms = {'framework': 1}
         WHERE post_id = #{post_id} AND field = 1")
 
       r_before = select_term(conn, "phoenix")
@@ -610,8 +607,8 @@ defmodule AshScylla.Search.IntegrationTest do
       r_after_phoenix = select_term(conn, "phoenix")
       r_after_framework = select_term(conn, "framework")
 
-      phoenix_posts = Enum.map(r_after_phoenix.rows, fn [pid, _, _] -> pid end)
-      framework_posts = Enum.map(r_after_framework.rows, fn [pid, _, _] -> pid end)
+      phoenix_posts = Enum.map(r_after_phoenix.rows, fn [pid, _] -> pid end)
+      framework_posts = Enum.map(r_after_framework.rows, fn [pid, _] -> pid end)
 
       refute post_id in phoenix_posts
       refute post_id in framework_posts
@@ -636,11 +633,11 @@ defmodule AshScylla.Search.IntegrationTest do
       terms = Analyzer.analyze(text)
 
       Enum.each(terms, fn {term, tf} ->
-        xq(conn, insert_term(post_id, term, 0, tf))
+        xq(conn, insert_term(post_id, term, tf))
       end)
 
       unique_terms = Enum.map(terms, &elem(&1, 0))
-      xq(conn, "UPDATE #{full_table(@table_fields)} SET terms = {#{format_set(unique_terms)}}
+      xq(conn, "UPDATE #{full_table(@table_fields)} SET terms = {#{format_map(unique_terms)}}
         WHERE post_id = #{post_id} AND field = 0")
 
       r_run = select_term(conn, "run")
@@ -697,7 +694,7 @@ defmodule AshScylla.Search.IntegrationTest do
       posts = Enum.map(1..25, fn _ -> uid() end)
 
       Enum.each(posts, fn post_id ->
-        xq(conn, insert_term(post_id, "elixir", 0, 1))
+        xq(conn, insert_term(post_id, "elixir", 1))
       end)
 
       result = select_term(conn, "elixir")
@@ -733,7 +730,7 @@ defmodule AshScylla.Search.IntegrationTest do
       cql = Storage.create_post_terms_cql(@keyspace)
       assert String.contains?(cql, "CREATE TABLE IF NOT EXISTS")
       assert String.contains?(cql, @table_terms)
-      assert String.contains?(cql, "PRIMARY KEY ((term, shard), post_id, field)")
+      assert String.contains?(cql, "PRIMARY KEY ((term, shard), post_id)")
 
       xq(conn, cql)
     end
@@ -771,7 +768,7 @@ defmodule AshScylla.Search.IntegrationTest do
       post_id = uid()
       term = "c++"
 
-      xq(conn, insert_term(post_id, term, 0, 3))
+      xq(conn, insert_term(post_id, term, 3))
 
       result = select_term(conn, term)
       assert result.num_rows == 1
@@ -783,11 +780,11 @@ defmodule AshScylla.Search.IntegrationTest do
       post_id = uid()
       term = "テスト"
 
-      xq(conn, insert_term(post_id, term, 0, 1))
+      xq(conn, insert_term(post_id, term, 1))
 
       result = select_term(conn, term)
       assert result.num_rows == 1
-      [[^post_id, 0, 1]] = result.rows
+      [[^post_id, 1]] = result.rows
     end
 
     test "handles duplicate inserts gracefully", %{conn: conn} do
@@ -795,13 +792,13 @@ defmodule AshScylla.Search.IntegrationTest do
 
       post_id = uid()
 
-      xq(conn, insert_term(post_id, "phoenix", 0, 5))
-      xq(conn, insert_term(post_id, "phoenix", 0, 3))
+      xq(conn, insert_term(post_id, "phoenix", 5))
+      xq(conn, insert_term(post_id, "phoenix", 3))
 
       result = select_term(conn, "phoenix")
       assert result.num_rows == 1
 
-      [[^post_id, 0, tf]] = result.rows
+      [[^post_id, tf]] = result.rows
       assert tf == 3
     end
 
@@ -813,7 +810,7 @@ defmodule AshScylla.Search.IntegrationTest do
 
       batch =
         terms
-        |> Enum.map(fn term -> insert_term(post_id, term, 0, 1) end)
+        |> Enum.map(fn term -> insert_term(post_id, term, 1) end)
 
       Enum.each(batch, fn query -> xq(conn, query) end)
 
@@ -826,7 +823,12 @@ defmodule AshScylla.Search.IntegrationTest do
     Logger.warning("No ScyllaDB connection available — skipping test")
   end
 
-  defp format_set(terms) do
-    terms |> Enum.map(&"'#{String.replace(&1, "'", "''")}'") |> Enum.join(", ")
+  defp format_map(terms) do
+    terms
+    |> Enum.map(fn t ->
+      escaped = String.replace(t, "'", "''")
+      "'#{escaped}': 1"
+    end)
+    |> Enum.join(", ")
   end
 end

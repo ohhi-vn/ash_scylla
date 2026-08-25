@@ -46,9 +46,11 @@ defmodule AshScylla.DataLayer.SchemaMigration do
 
   require Logger
 
+  alias Ash.Resource.Info
   alias AshScylla.DataLayer.Dsl
   alias AshScylla.DataLayer.MaterializedView
   alias AshScylla.DataLayer.SchemaUtils
+  alias AshScylla.Identifier
   alias AshScylla.Migration
   alias AshScylla.Migrator
 
@@ -83,7 +85,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
         live_indexes = safe_fetch_indexes(resource, repo)
         live_views = safe_fetch_materialized_views(resource, repo)
 
-        attributes = Ash.Resource.Info.attributes(resource)
+        attributes = Info.attributes(resource)
         live_columns = Map.get(live_schema, :columns, [])
 
         column_diff = diff_columns(attributes, live_columns)
@@ -287,26 +289,9 @@ defmodule AshScylla.DataLayer.SchemaMigration do
 
     case repo.query(query, [keyspace, table_name], consistency: :quorum) do
       {:ok, result} ->
-        cols = Map.get(result, :columns) || []
-
-        col_names =
-          if cols == [] do
-            []
-          else
-            Enum.map(cols, fn
-              {_ks, _tbl, name, _type} -> name
-              {_ks, _tbl, name} -> name
-              name when is_binary(name) -> name
-            end)
-          end
-
         indexes =
           result
-          |> Map.get(:content, [])
-          |> Enum.map(fn
-            row when is_map(row) -> row
-            row when is_list(row) -> Enum.zip(col_names, row) |> Map.new()
-          end)
+          |> result_rows()
           |> Enum.map(fn row ->
             %{
               index_name: row["index_name"],
@@ -341,26 +326,9 @@ defmodule AshScylla.DataLayer.SchemaMigration do
 
     case repo.query(query, [keyspace], consistency: :quorum) do
       {:ok, result} ->
-        cols = Map.get(result, :columns) || []
-
-        col_names =
-          if cols == [] do
-            []
-          else
-            Enum.map(cols, fn
-              {_ks, _tbl, name, _type} -> name
-              {_ks, _tbl, name} -> name
-              name when is_binary(name) -> name
-            end)
-          end
-
         views =
           result
-          |> Map.get(:content, [])
-          |> Enum.map(fn
-            row when is_map(row) -> row
-            row when is_list(row) -> Enum.zip(col_names, row) |> Map.new()
-          end)
+          |> result_rows()
           |> Enum.filter(fn row -> row["base_table_name"] == table_name end)
           |> Enum.map(fn row ->
             %{
@@ -377,6 +345,33 @@ defmodule AshScylla.DataLayer.SchemaMigration do
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  # Normalizes a Xandra query result into a list of string-keyed maps.
+  # Rows may already be maps, or positional lists that must be zipped with the
+  # column names. Xandra columns can be 4-tuples ({keyspace, table, name, type}),
+  # 3-tuples ({keyspace, table, name}) or plain strings (some test fakes).
+  @spec result_rows(term()) :: [map()]
+  defp result_rows(result) do
+    cols = Map.get(result, :columns) || []
+
+    col_names =
+      if cols == [] do
+        []
+      else
+        Enum.map(cols, fn
+          {_ks, _tbl, name, _type} -> name
+          {_ks, _tbl, name} -> name
+          name when is_binary(name) -> name
+        end)
+      end
+
+    result
+    |> Map.get(:content, [])
+    |> Enum.map(fn
+      row when is_map(row) -> row
+      row when is_list(row) -> Enum.zip(col_names, row) |> Map.new()
+    end)
   end
 
   @doc """
@@ -432,15 +427,15 @@ defmodule AshScylla.DataLayer.SchemaMigration do
     qualified_table_name =
       case keyspace do
         nil ->
-          AshScylla.Identifier.quote_name(table_name)
+          Identifier.quote_name(table_name)
 
         ks ->
-          "#{AshScylla.Identifier.quote_name(ks)}.#{AshScylla.Identifier.quote_name(table_name)}"
+          "#{Identifier.quote_name(ks)}.#{Identifier.quote_name(table_name)}"
       end
 
     attributes =
       resource
-      |> Ash.Resource.Info.attributes()
+      |> Info.attributes()
       |> Enum.reduce(%{}, fn attr, acc ->
         Map.put(acc, attr.name, attr)
       end)
@@ -455,7 +450,7 @@ defmodule AshScylla.DataLayer.SchemaMigration do
         attr ->
           type_str = attr.type |> Migration.ash_type_to_cql_type(attr.constraints)
 
-          "ALTER TABLE #{qualified_table_name} ADD #{AshScylla.Identifier.quote_name(col_name)} #{type_str}"
+          "ALTER TABLE #{qualified_table_name} ADD #{Identifier.quote_name(col_name)} #{type_str}"
       end
     end)
     |> Enum.reject(&is_nil/1)
@@ -475,34 +470,21 @@ defmodule AshScylla.DataLayer.SchemaMigration do
       |> Enum.map(fn idx -> idx.index_name end)
       |> MapSet.new()
 
-    resource_indexes
-    |> Enum.filter(fn idx ->
-      idx.columns
-      |> Enum.reject(fn col -> col in unindexable end)
-      |> Enum.all?(fn col ->
-        index_name = if idx.name, do: "#{idx.name}_#{col}", else: "idx_#{table_name}_#{col}"
-        not MapSet.member?(existing_index_names, index_name)
+    new_indexes =
+      Enum.filter(resource_indexes, fn idx ->
+        idx.columns
+        |> Enum.reject(fn col -> col in unindexable end)
+        |> Enum.all?(fn col ->
+          index_name = index_name(idx, table_name, col)
+          not MapSet.member?(existing_index_names, index_name)
+        end)
       end)
-    end)
-    |> Enum.flat_map(fn idx ->
-      # ScyllaDB OSS doesn't support multi-column secondary indexes.
-      # Generate a separate single-column index per column.
-      # Skip the sole partition key column — already indexed by the partitioner.
-      qualified = AshScylla.Identifier.quote_name(table_name)
 
-      idx.columns
-      |> Enum.reject(fn col -> col in unindexable end)
-      |> Enum.map(fn col ->
-        index_name =
-          if idx.name do
-            "#{idx.name}_#{col}"
-          else
-            "idx_#{table_name}_#{col}"
-          end
+    Migration.secondary_index_statements(table_name, new_indexes, unindexable)
+  end
 
-        "CREATE INDEX IF NOT EXISTS #{index_name} ON #{qualified} (#{AshScylla.Identifier.quote_name(col)})"
-      end)
-    end)
+  defp index_name(idx, table_name, col) do
+    if idx.name, do: "#{idx.name}_#{col}", else: "idx_#{table_name}_#{col}"
   end
 
   @spec generate_new_views(module(), [map()]) :: [String.t()]

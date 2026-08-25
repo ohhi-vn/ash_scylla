@@ -45,6 +45,34 @@ defmodule AshScylla.Search.Query.ParserTest do
              } = ast
     end
 
+    test "parses minus prefix as exclusion" do
+      {:ok, ast} = Parser.parse("phoenix -framework")
+
+      assert %Parser.Group{
+               op: :and,
+               terms: [
+                 %Parser.Term{word: "phoenix"},
+                 %Parser.NotExpr{term: %Parser.Term{word: "framework"}}
+               ]
+             } = ast
+    end
+
+    test "parses minus prefix inside OR clause" do
+      {:ok, ast} = Parser.parse("elixir OR phoenix -framework")
+
+      assert %Parser.Group{op: :or} = ast
+
+      assert [
+               %Parser.Group{terms: [%Parser.Term{word: "elixir"}]},
+               %Parser.Group{terms: [%Parser.Term{word: "phoenix"}, %Parser.NotExpr{}]}
+             ] = ast.terms
+    end
+
+    test "bare minus is treated as a word" do
+      {:ok, ast} = Parser.parse("hello -")
+      assert [%Parser.Term{word: "hello"}, %Parser.Term{word: "-"}] = ast.terms
+    end
+
     test "parses phrase queries" do
       {:ok, ast} = Parser.parse(~s("phoenix framework"))
 

@@ -214,18 +214,17 @@ defmodule AshScylla.ConnectionUnitTest do
                Connection.handle_call(:ensure_keyspace, nil, state)
     end
 
-    test "raises while processing an invalid configured keyspace" do
+    test "replies {:error, :invalid_keyspace} for an invalid configured keyspace" do
       state = %Connection{conn: nil, keyspace: "bad keyspace", cluster?: false}
 
-      assert_raise ArgumentError, ~r/Invalid CQL identifier/, fn ->
-        Connection.handle_call(:ensure_keyspace, nil, state)
-      end
+      assert {:reply, {:error, :invalid_keyspace}, ^state} =
+               Connection.handle_call(:ensure_keyspace, nil, state)
     end
 
-    test "returns the execution error for an invalid replacement keyspace" do
+    test "replies {:error, :invalid_keyspace} for an invalid replacement keyspace" do
       state = %Connection{conn: nil, cluster?: false}
 
-      assert {:reply, {:error, %Xandra.ConnectionError{}}, ^state} =
+      assert {:reply, {:error, :invalid_keyspace}, ^state} =
                Connection.handle_call({:set_keyspace, "bad keyspace"}, nil, state)
     end
   end

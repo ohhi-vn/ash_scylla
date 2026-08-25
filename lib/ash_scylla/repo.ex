@@ -100,6 +100,20 @@ defmodule AshScylla.Repo do
         AshScylla.Connection.query!(__MODULE__, cql, params, opts)
       end
 
+      @doc """
+      Executes a CQL query and drains all result pages.
+
+      Unlike `query/3`, which returns a single `%Xandra.Page{}` (large result
+      sets are truncated at one page), `query_all/3` follows every page and
+      returns `{:ok, %{rows: rows}}` with the complete result set.
+      """
+      @impl AshScylla.Repo
+      @spec query_all(String.t(), list(), keyword()) ::
+              {:ok, %{rows: list()}} | {:error, term()}
+      def query_all(cql, params, opts \\ []) do
+        AshScylla.Connection.query_all(__MODULE__, cql, params, opts)
+      end
+
       @doc "Prepares a CQL statement."
       @impl AshScylla.Repo
       @spec prepare(String.t(), keyword()) :: {:ok, Xandra.Prepared.t()} | {:error, term()}
@@ -236,6 +250,8 @@ defmodule AshScylla.Repo do
   @callback connection() :: AshScylla.Connection.t() | nil
   @callback query(String.t(), list(), keyword()) :: {:ok, term()} | {:error, term()}
   @callback query!(String.t(), list(), keyword()) :: term() | no_return()
+  @callback query_all(String.t(), list(), keyword()) ::
+              {:ok, %{rows: list()}} | {:error, term()}
   @callback prepare(String.t(), keyword()) :: {:ok, Xandra.Prepared.t()} | {:error, term()}
   @callback prepare!(String.t(), keyword()) :: Xandra.Prepared.t() | no_return()
   @callback create_keyspace(String.t() | nil, keyword()) :: {:ok, term()} | {:error, term()}

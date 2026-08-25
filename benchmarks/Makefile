@@ -1,4 +1,4 @@
-.PHONY: bench bench-perf bench-workload bench-integration bench-integration-container bench-all clean-results help
+.PHONY: bench bench-perf bench-workload bench-search bench-integration bench-integration-container bench-all clean-results help
 
 # Run all benchmarks (performance + workload, no ScyllaDB needed)
 bench: bench-all
@@ -7,6 +7,11 @@ bench: bench-all
 bench-perf:
 	@echo "Running performance benchmarks..."
 	@mix run benchmarks/performance_bench.exs
+
+# Run search feature benchmarks only (no ScyllaDB needed)
+bench-search:
+	@echo "Running search feature benchmarks..."
+	@MIX_ENV=dev mix run benchmarks/search_bench.exs
 
 # Run workload benchmarks only (no ScyllaDB needed)
 bench-workload:
@@ -46,6 +51,7 @@ bench-deps:
 help:
 	@echo "AshScylla Benchmark Commands:"
 	@echo "  make bench-perf                 - Run performance benchmarks (no DB needed)"
+	@echo "  make bench-search               - Run search feature benchmarks (no DB needed)"
 	@echo "  make bench-workload             - Run workload benchmarks (no DB needed)"
 	@echo "  make bench-integration          - Run integration benchmarks (needs ScyllaDB)"
 	@echo "  make bench-integration-container - Run integration benchmarks (test container)"

@@ -293,9 +293,10 @@ mix run benchmarks/run_benchmarks.exs
 
 # ── Database ─────────────────────────────────────────────────────────────────
 mix ash_scylla.setup                        # Create keyspace
-mix ash_scylla.migrate                      # Run all migrations
-mix ash_scylla.migrate --schemas-only       # Run only schema files
-mix ash_scylla.migrate --resource MyApp.User # Run migrations for one resource
+mix ash_scylla.migrate                      # Run migration files + auto-schema
+mix ash_scylla.migrate --migrations-only    # Run only migration files
+mix ash_scylla.migrate --schemas-only       # Run only auto-schema migration
+mix ash_scylla.migrate --resource MyApp.User # Auto-migrate one resource
 
 # ── Schema Generation ────────────────────────────────────────────────────────
 mix ash_scylla.generate_migrations           # Generate CQL from Ash resource DSL

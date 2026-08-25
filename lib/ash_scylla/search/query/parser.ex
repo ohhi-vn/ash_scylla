@@ -7,7 +7,9 @@ defmodule AshScylla.Search.Query.Parser do
     * AND queries: `learning AND phoenix` or implicit AND between words
     * OR queries: `learning OR phoenix`
     * NOT queries: `phoenix NOT framework`
-    * Phrase queries: `"phoenix framework"` (V2)
+    * Exclusion prefix: `phoenix -framework` (same as `NOT`)
+    * Phrase queries: `"phoenix framework"` (matched as an unordered AND of
+      the phrase words — see `Planner`)
 
   Returns a parsed query structure representing the boolean logic.
   """
@@ -92,9 +94,15 @@ defmodule AshScylla.Search.Query.Parser do
       "AND" -> [{:and, nil}]
       "OR" -> [{:or, nil}]
       "NOT" -> [{:not, nil}]
-      _ -> [{:word, token}]
+      _ -> classify_word(token)
     end
   end
+
+  defp classify_word("-" <> word) when word != "" do
+    [{:minus_word, word}]
+  end
+
+  defp classify_word(word), do: [{:word, word}]
 
   defp parse_tokens(tokens, acc \\ [])
   defp parse_tokens([], acc), do: %Group{terms: Enum.reverse(acc), op: :and}
@@ -116,6 +124,11 @@ defmodule AshScylla.Search.Query.Parser do
     parse_tokens(rest, [%NotExpr{term: term} | acc])
   end
 
+  defp parse_tokens([{:minus_word, word} | rest], acc) do
+    term = %Term{word: word}
+    parse_tokens(rest, [%NotExpr{term: term} | acc])
+  end
+
   defp parse_tokens([{:not, _}, {:phrase, phrase} | rest], acc) do
     term = %Phrase{words: String.split(phrase)}
     parse_tokens(rest, [%NotExpr{term: term} | acc])
@@ -124,6 +137,12 @@ defmodule AshScylla.Search.Query.Parser do
   defp parse_tokens([{:phrase, phrase} | rest], acc) do
     words = String.split(phrase)
     parse_tokens(rest, [%Phrase{words: words} | acc])
+  end
+
+  # A trailing/dangling NOT (e.g. "elixir NOT") has nothing to negate; drop it
+  # instead of crashing, mirroring how bare AND/OR tokens are tolerated.
+  defp parse_tokens([{:not, _} | rest], acc) do
+    parse_tokens(rest, acc)
   end
 
   defp parse_tokens([{:word, word} | rest], acc) do
@@ -160,6 +179,10 @@ defmodule AshScylla.Search.Query.Parser do
     parse_until_or(rest, [%NotExpr{term: %Term{word: word}} | acc])
   end
 
+  defp parse_until_or([{:minus_word, word} | rest], acc) do
+    parse_until_or(rest, [%NotExpr{term: %Term{word: word}} | acc])
+  end
+
   defp parse_until_or([{:not, _}, {:phrase, phrase} | rest], acc) do
     parse_until_or(rest, [%NotExpr{term: %Phrase{words: String.split(phrase)}} | acc])
   end
@@ -173,6 +196,12 @@ defmodule AshScylla.Search.Query.Parser do
   end
 
   defp parse_until_or([{:and, _} | rest], acc) do
+    parse_until_or(rest, acc)
+  end
+
+  # Dangling NOT inside an OR branch (e.g. "a OR b NOT") — nothing follows to
+  # negate, so drop it.
+  defp parse_until_or([{:not, _} | rest], acc) do
     parse_until_or(rest, acc)
   end
 
