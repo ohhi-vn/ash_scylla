@@ -4,7 +4,7 @@ defmodule AshScylla.MixProject do
   def project do
     [
       app: :ash_scylla,
-      version: "1.9.0",
+      version: "1.10.0",
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -141,8 +141,8 @@ defmodule AshScylla.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ash, "~> 3.30"},
-      {:xandra, "~> 0.19"},
+      {:ash, "~> 3.32"},
+      {:xandra, "~> 0.20"},
       # Dev/test-only pins with override to keep dependency resolution stable
       # for credo/dialyzer tooling without affecting the published package.
       {:decimal, "~> 3.1", override: true, only: [:dev, :test]},
